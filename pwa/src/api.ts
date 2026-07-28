@@ -191,6 +191,21 @@ export interface EstadisticasOperador {
   saldoTotalMonederosXaf: number;
 }
 
+export interface RecargaOperador {
+  id: number;
+  referencia: string;
+  importe_xaf: number;
+  metodo: 'muni_dinero' | 'efectivo';
+  estado: string;
+  solicitada_en: string;
+  resuelta_en: string | null;
+  resuelta_por: string | null;
+  nota: string | null;
+  conductor_id: number;
+  conductor_nombre: string;
+  conductor_telefono: string;
+}
+
 export interface AltaConductor {
   nombre: string;
   telefono: string;
@@ -397,6 +412,23 @@ export const api = {
 
   estadisticasOperador: () =>
     pedirJson<EstadisticasOperador>('/api/operador/estadisticas'),
+
+  recargasOperador: (estado?: string) =>
+    pedirJson<{ recargas: RecargaOperador[] }>(
+      `/api/operador/recargas${estado ? `?estado=${estado}` : ''}`,
+    ),
+
+  confirmarRecarga: (referencia: string) =>
+    pedirJson<{ recargaId: number; importeXaf: number; saldoXaf: number; yaEstaba: boolean }>(
+      `/api/operador/recargas/${referencia}/confirmar`,
+      { method: 'POST', body: '{}' },
+    ),
+
+  rechazarRecarga: (referencia: string, motivo: string) =>
+    pedirJson<{ rechazada: boolean }>(
+      `/api/operador/recargas/${referencia}/rechazar`,
+      { method: 'POST', body: JSON.stringify({ motivo }) },
+    ),
 };
 
 // Solo en localhost: ?gps=<lat>,<lng> finge la ubicación del dispositivo.

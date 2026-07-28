@@ -9,9 +9,13 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
+import { enTransaccion } from '../bd/conexion.js';
+import { ErrorEntidadInexistente } from '../dominio/errores.js';
+import { confirmarRecarga, rechazarRecarga } from '../dominio/recargas.js';
 
 const PATRON_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ESTADOS_VALIDOS = ['pendiente', 'verificado', 'suspendido', 'bloqueado'];
+const ESTADOS_RECARGA_VALIDOS = ['pendiente', 'confirmada', 'rechazada', 'caducada'];
 
 function errorHttp(codigo: number, mensaje: string): Error & { statusCode: number } {
   const error = new Error(mensaje) as Error & { statusCode: number };
@@ -124,5 +128,60 @@ export function registrarRutasOperador(app: FastifyInstance, pool: pg.Pool): voi
       pasajeros: pasajeros.rows[0].n,
       saldoTotalMonederosXaf: saldo.rows[0].n,
     };
+  });
+
+  // --- Verificar pagos (migración 018) -------------------------------------
+  // Recordatorio del propio dominio: la plataforma NO comprueba ningún pago
+  // sola. Esto es la cola de recargas que un conductor dice haber pagado
+  // (Muni Dinero o efectivo) y que alguien tiene que mirar y confirmar —o
+  // rechazar— a mano antes de que el saldo suba.
+
+  app.get('/api/operador/recargas', async (req) => {
+    exigirOperador(req);
+    const { estado } = (req.query ?? {}) as { estado?: string };
+    if (estado && !ESTADOS_RECARGA_VALIDOS.includes(estado)) {
+      throw errorHttp(400, `Estado no válido. Opciones: ${ESTADOS_RECARGA_VALIDOS.join(', ')}.`);
+    }
+    const filas = await pool.query(
+      `SELECT r.id, r.referencia, r.importe_xaf, r.metodo, r.estado,
+              r.solicitada_en, r.resuelta_en, r.resuelta_por, r.nota,
+              c.id AS conductor_id, c.nombre AS conductor_nombre, c.telefono AS conductor_telefono
+       FROM recarga r
+       JOIN conductor c ON c.id = r.conductor_id
+       WHERE $1::text IS NULL OR r.estado = $1
+       ORDER BY r.solicitada_en DESC
+       LIMIT 200`,
+      [estado ?? 'pendiente'],
+    );
+    return { recargas: filas.rows };
+  });
+
+  app.post('/api/operador/recargas/:referencia/confirmar', async (req) => {
+    const uuid = uuidDesde(req);
+    exigirOperador(req);
+    const { referencia } = req.params as { referencia: string };
+    try {
+      const resultado = await enTransaccion(pool, (cliente) => confirmarRecarga(cliente, referencia, uuid));
+      return resultado;
+    } catch (error) {
+      if (error instanceof ErrorEntidadInexistente) throw errorHttp(404, error.message);
+      if (error instanceof Error) throw errorHttp(409, error.message);
+      throw error;
+    }
+  });
+
+  app.post('/api/operador/recargas/:referencia/rechazar', async (req) => {
+    const uuid = uuidDesde(req);
+    exigirOperador(req);
+    const { referencia } = req.params as { referencia: string };
+    const { motivo } = (req.body ?? {}) as { motivo?: string };
+    if (!motivo?.trim()) throw errorHttp(400, 'Hace falta un motivo para rechazar la recarga.');
+    try {
+      await enTransaccion(pool, (cliente) => rechazarRecarga(cliente, referencia, uuid, motivo.trim()));
+      return { rechazada: true };
+    } catch (error) {
+      if (error instanceof Error) throw errorHttp(409, error.message);
+      throw error;
+    }
   });
 }
