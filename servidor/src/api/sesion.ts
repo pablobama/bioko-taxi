@@ -13,6 +13,7 @@ import type pg from 'pg';
 import { enTransaccion } from '../bd/conexion.js';
 import { ocupacionDe } from '../dominio/ocupacion.js';
 import { reputacionDe } from '../dominio/reputacion.js';
+import { esOperador } from './operador.js';
 
 const PATRON_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CARROCERIAS = ['turismo', '4x4'];
@@ -36,6 +37,11 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
   // muestra la elección de rol, la interfaz del pasajero o la del taxista.
   app.get('/api/sesion', async (req) => {
     const uuid = uuidDesde(req);
+    // El operador no tiene fila en `dispositivo`: es una lista aparte
+    // (UUIDS_OPERADOR), así que se resuelve antes de mirar esa tabla.
+    if (esOperador(uuid)) {
+      return { rol: 'operador' };
+    }
     const dispositivo = await pool.query(
       `SELECT id, tipo, conductor_id, bloqueado_en FROM dispositivo WHERE uuid_persistente = $1`,
       [uuid],

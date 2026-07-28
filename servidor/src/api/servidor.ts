@@ -21,6 +21,7 @@ import { crearSolicitud, transicionarConductor, transicionarSolicitud } from '..
 import type { ConexionesSse } from '../eventos/adaptador-sse.js';
 import { registrarRutasConductor } from './conductor.js';
 import { registrarRutasLlamadas } from './llamadas.js';
+import { registrarRutasOperador } from './operador.js';
 import { registrarRutasSesion } from './sesion.js';
 
 interface DispositivoCliente {
@@ -70,6 +71,7 @@ export function crearServidor(
   registrarRutasSesion(app, pool);
   registrarRutasConductor(app, pool, emisor, conexionesSse);
   registrarRutasLlamadas(app, pool, conexionesSse);
+  registrarRutasOperador(app, pool);
 
   // Resuelve (y da de alta si es nuevo) el dispositivo del cliente.
   async function dispositivoDesde(req: FastifyRequest): Promise<DispositivoCliente> {

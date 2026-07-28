@@ -26,6 +26,7 @@ type T = ReturnType<typeof crearT>;
 import Mapa from './Mapa';
 import PanelCliente from './PanelCliente';
 import PanelConductor from './PanelConductor';
+import PanelOperador from './PanelOperador';
 import { alternarSilencio, estaSilenciado, prepararSonido } from './sonidos';
 
 const IDIOMAS: Array<{ id: Idioma; etiqueta: string }> = [
@@ -55,7 +56,8 @@ function SelectorIdioma({ idioma, alCambiar }: { idioma: Idioma; alCambiar: (i: 
 
 type Pantalla =
   | 'cargando' | 'elegir_rol' | 'alta_cliente' | 'alta_conductor'
-  | 'cliente' | 'conductor' | 'ajustes_conductor' | 'estadisticas_conductor';
+  | 'cliente' | 'conductor' | 'ajustes_conductor' | 'estadisticas_conductor'
+  | 'operador';
 
 // Última sesión conocida, para poder abrir la aplicación sin cobertura.
 //
@@ -105,7 +107,11 @@ export default function App() {
       // cambia de un minuto a otro, al revés que el estado de un viaje: esto
       // sí se puede recordar sin mentirle a nadie.
       guardarSesionLocal(sesion);
-      if (sesion.rol === 'conductor' && sesion.conductor) {
+      if (sesion.rol === 'operador') {
+        // No se guarda como «última sesión»: es un dispositivo de trabajo,
+        // no tiene sentido recordarlo sin cobertura como a un pasajero.
+        setPantalla('operador');
+      } else if (sesion.rol === 'conductor' && sesion.conductor) {
         setConductor(sesion.conductor);
         setPantalla('conductor');
       } else if (sesion.rol === 'cliente' && sesion.cliente) {
@@ -164,6 +170,10 @@ export default function App() {
 
   if (pantalla === 'cargando') {
     return <main className="lienzo">{cinta}{bandaSinConexion}<div className="cargando">{t('app.cargando')}</div></main>;
+  }
+
+  if (pantalla === 'operador') {
+    return <PanelOperador alSalir={() => setPantalla('elegir_rol')} />;
   }
 
   if (pantalla === 'cliente' && perfil) {

@@ -163,9 +163,32 @@ export interface DatosConductor {
 }
 
 export interface Sesion {
-  rol: 'cliente' | 'conductor' | null;
+  rol: 'cliente' | 'conductor' | 'operador' | null;
   cliente?: Perfil & { bloqueado: boolean };
   conductor?: DatosConductor;
+}
+
+export interface ConductorOperador {
+  id: number;
+  nombre: string;
+  telefono: string;
+  correo: string | null;
+  estado_verificacion: string;
+  matricula: string | null;
+  marca: string | null;
+  color: string | null;
+  carroceria: string | null;
+}
+
+export interface EstadisticasOperador {
+  conductores: {
+    total: number; pendientes: number; verificados: number;
+    suspendidos: number; bloqueados: number;
+  };
+  enServicioAhora: number;
+  solicitudes: { total: number; completadas: number; sin_taxi: number; ultimas_24h: number };
+  pasajeros: number;
+  saldoTotalMonederosXaf: number;
 }
 
 export interface AltaConductor {
@@ -359,6 +382,21 @@ export const api = {
     pedirJson<{ servidores: RTCIceServer[]; hayTurn: boolean }>(
       `/api/solicitudes/${solicitudId}/llamada/configuracion`,
     ),
+
+  // --- Panel de operador ---------------------------------------------------
+  conductoresOperador: (estado?: string) =>
+    pedirJson<{ conductores: ConductorOperador[] }>(
+      `/api/operador/conductores${estado ? `?estado=${estado}` : ''}`,
+    ),
+
+  cambiarEstadoConductor: (conductorId: number, estado: string) =>
+    pedirJson<{ id: number; nombre: string; estado_verificacion: string }>(
+      `/api/operador/conductores/${conductorId}/estado`,
+      { method: 'POST', body: JSON.stringify({ estado }) },
+    ),
+
+  estadisticasOperador: () =>
+    pedirJson<EstadisticasOperador>('/api/operador/estadisticas'),
 };
 
 // Solo en localhost: ?gps=<lat>,<lng> finge la ubicación del dispositivo.

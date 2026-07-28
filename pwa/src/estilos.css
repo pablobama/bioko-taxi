@@ -142,6 +142,16 @@ body {
   overflow-y: auto;
 }
 
+/* Para pantallas sin plano detrás (el panel de operador): la hoja deja de
+   ser una lámina sobre el mapa y pasa a ocupar toda la pantalla, sin el tope
+   de 62dvh que existe justamente para no tapar el plano. */
+.hoja-completa {
+  max-height: none;
+  min-height: 100dvh;
+  border-radius: 0;
+  border-top: none;
+}
+
 .hoja h1 {
   font-size: 1.65rem;
   font-weight: 700;

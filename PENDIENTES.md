@@ -200,14 +200,19 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   Ventaja: no se molesta dos veces; coste: en zonas pequeñas la re-emisión
   puede quedarse sin candidatos. Decidir con datos reales si conviene relajar.
 
-- **[P21-01] Panel de operador — pendiente de crear.** No existe ninguna
-  interfaz para verificar taxistas ni resolver reclamaciones: la única forma
-  de tocar esos datos hoy es una consulta SQL directa. Mientras no exista, el
-  alta de conductor se acepta como `verificado` sin revisión (ver
-  `sesion.ts`, alta de conductor) — cuando se construya el panel, eso vuelve a
-  nacer `pendiente`. El panel se detectará por el dispositivo que lo usa (una
-  lista de uuids de operador, igual que hoy se distingue cliente de
-  conductor), no por login con contraseña.
+- **[P21-01] Panel de operador — primera versión.** `PanelOperador.tsx` +
+  `api/operador.ts`: verificar/suspender/bloquear conductores y ver números
+  gruesos del sistema (conductores por estado, en servicio, solicitudes,
+  pasajeros, saldo total). Se detecta al operador por el dispositivo
+  (`UUIDS_OPERADOR`, uuids separados por comas), no por contraseña. Queda
+  fuera de esta primera versión, todavía sin hacer:
+  - Resolver reclamaciones (incidencias declaradas tras la recogida).
+  - Paginación de verdad en la lista de conductores (hoy un `LIMIT 200` sin
+    ordenar por relevancia; suficiente mientras la lista sea corta).
+  - El alta de conductor sigue naciendo `verificado` sin revisión (decisión
+    explícita del 2026-07-28, «por ahora»): con el panel ya montado, decidir
+    si conviene que vuelva a nacer `pendiente` para que la verificación
+    signifique algo.
 
 ## Resueltos
 
