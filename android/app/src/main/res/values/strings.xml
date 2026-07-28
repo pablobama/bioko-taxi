@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_nombre">🚕 Taxi Conductor</string>
+    <string name="pista_url">Dirección del servidor (http://…)</string>
+    <string name="pista_telefono">Tu teléfono de conductor (+240…)</string>
+    <string name="accion_registrar">Registrar este teléfono</string>
+    <string name="accion_entrar_servicio">ENTRAR EN SERVICIO</string>
+    <string name="accion_salir_servicio">SALIR DE SERVICIO</string>
+    <string name="titulo_oferta">¡Nueva carrera!</string>
+    <string name="accion_aceptar">ACEPTAR</string>
+    <string name="accion_rechazar">Rechazar</string>
+    <string name="accion_llamar">📞 LLAMAR AL PASAJERO</string>
+    <string name="accion_salir">VOY DE CAMINO</string>
+    <string name="accion_llegado">HE LLEGADO</string>
+    <string name="accion_ausente">El pasajero no aparece</string>
+    <string name="accion_recoger">PASAJERO RECOGIDO</string>
+    <string name="accion_completar">VIAJE TERMINADO</string>
+    <string name="ocupacion">Pasajeros: %1$d de %2$d plazas</string>
+    <string name="canal_ofertas">Ofertas de carrera</string>
+    <string name="canal_servicio">En servicio</string>
+    <string name="notificacion_en_servicio">En servicio — esperando carreras</string>
+</resources>

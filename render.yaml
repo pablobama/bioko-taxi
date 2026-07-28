@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: taxi-malabo
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: "cd servidor && npm install && cd ../pwa && npm install && npm run construir"
+    startCommand: "cd servidor && npm run bd:migrar && npm run servir"
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: BD_URL
+        sync: false

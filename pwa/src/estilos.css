@@ -1,0 +1,1392 @@
+/* Panel del pasajero. El mapa ocupa la pantalla; toda la interacción vive en
+   una hoja inferior. Pensado para pantallas pequeñas, sol directo y prisa:
+   contraste alto, texto grande, un botón principal por fase. */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+:root {
+  --ambar: #ffb020;
+  --ambar-claro: #ffd489;
+  --tinta: #08080a;
+  --carbon: #121216;
+  --tarjeta: #1c1c21;
+  --borde: rgba(255, 255, 255, 0.08);
+  --humo: #8b8b8a;
+  --hueso: #f7f5f2;
+  /* Bloqueos e información neutral (verificación pendiente, sin cuota): un
+     azul apagado a propósito, para que no lea como error del usuario. */
+  --info: #8fa6b8;
+  --info-texto: #cbd9e4;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
+}
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--tinta);
+  color: var(--hueso);
+  font-size: 17px;
+  overscroll-behavior: none;
+}
+
+.lienzo {
+  position: relative;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+}
+
+.cargando {
+  margin: auto;
+  color: var(--humo);
+}
+
+/* ---------------------------------------------------------------- mapa --- */
+
+/* El plano ocupa exactamente la franja que queda por encima de la hoja: es un
+   hermano flexible, no un bloque de altura fija. Así la cámara del mapa sabe
+   de cuánto sitio dispone de verdad y lo que encuadra no acaba tapado, crezca
+   la hoja lo que crezca. */
+.capa-mapa {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--tinta);
+  /* Contexto de apilado propio: la hoja se dibuja siempre por encima. */
+  z-index: 0;
+}
+
+/* Pegado a los cuatro lados de la capa en lugar de `height: 100%`: la altura
+   de la capa la decide `flex-grow`, y un porcentaje contra una altura que
+   todavía no es definitiva se resuelve a cero. */
+.mapa-svg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.mapa-svg svg {
+  display: block;
+}
+
+.mapa-cargando {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--humo);
+  font-size: 0.85rem;
+}
+
+/* Atribución de OpenStreetMap: obligatoria por la licencia ODbL de los datos. */
+.mapa-atribucion {
+  position: absolute;
+  right: 6px;
+  bottom: 5px;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: rgba(247, 245, 242, 0.4);
+  background: rgba(8, 8, 10, 0.55);
+  padding: 2px 5px;
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+/* Número de las paradas del taxi compartido: vive en el SVG, así que se
+   colorea con `fill` desde el componente, no aquí. Los pines ya no llevan
+   texto: llevan pictograma. */
+.parada-numero {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 8.5px;
+}
+
+/* Pulso sobre el punto de recogida mientras se busca taxi. Es la única
+   animación continua de la aplicación: en un teléfono flojo, cada una cuesta. */
+.pulso-origen {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pulso-origen 1.8s ease-out infinite;
+}
+
+@keyframes pulso-origen {
+  0% { transform: scale(0.35); opacity: 0.42; }
+  70% { opacity: 0; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+
+/* --------------------------------------------------------------- hoja --- */
+
+.hoja {
+  position: relative;
+  /* Por encima del contexto del mapa (z-index 0): la hoja siempre recibe sus
+     clics, aunque se solape con el plano. */
+  z-index: 10;
+  background: var(--carbon);
+  border-top: 1px solid var(--borde);
+  border-radius: 24px 24px 0 0;
+  padding: 22px 18px calc(22px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 0 -18px 40px rgba(0, 0, 0, 0.55);
+  /* Tope con desplazamiento interno: con cuatro pasajeros a bordo la hoja
+     crecería hasta comerse el plano entero, y el taxista dejaría de ver por
+     dónde va. Antes que eso, la hoja se desplaza por dentro. */
+  max-height: 62dvh;
+  overflow-y: auto;
+}
+
+.hoja h1 {
+  font-size: 1.65rem;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.hoja h1.latiendo {
+  animation: respirar 1.8s ease-in-out infinite;
+}
+
+@keyframes respirar {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+h1.eta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-weight: 400;
+}
+
+h1.eta strong {
+  font-family: var(--mono);
+  font-size: 3.6rem;
+  font-weight: 700;
+  color: var(--ambar);
+  letter-spacing: -0.03em;
+}
+
+h1.eta small {
+  font-size: 0.95rem;
+  color: var(--humo);
+  margin-left: 4px;
+}
+
+.nota {
+  color: var(--humo);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.cabecera {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Selector de idioma: ES / FR / EN, el mismo trío en la elección de rol y en
+   ajustes. Se elige de un toque, sin menú. */
+.selector-idioma {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--tarjeta);
+  border: 1px solid var(--borde);
+  border-radius: 11px;
+}
+
+.selector-idioma button {
+  border: none;
+  background: none;
+  color: var(--humo);
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.selector-idioma button.idioma-activo {
+  background: var(--ambar);
+  color: var(--tinta);
+}
+
+.ajustes {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1px solid var(--borde);
+  background: var(--tarjeta);
+  color: var(--humo);
+  font-size: 1.15rem;
+  cursor: pointer;
+}
+
+.fila {
+  display: flex;
+  gap: 10px;
+}
+
+.acciones-cabecera {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+.identidad {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.nota.pie {
+  font-size: 0.85rem;
+  margin-top: 4px;
+}
+
+/* ------------------------------------------------- oferta y pasajeros --- */
+
+.oferta,
+.pasajero {
+  background: var(--tarjeta);
+  border-radius: 16px;
+  padding: 14px 16px 14px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.oferta {
+  border: 1px solid var(--ambar);
+}
+
+/* Franja de color a la izquierda del bloque, una por fase del pasajero. Se
+   lee en el espejo retrovisor sin enfocar el texto: el taxista sabe si va de
+   camino, si ya llegó o si el pasajero está a bordo por el color solo, igual
+   que un semáforo. Antes la única señal era una palabra en mayúsculas a
+   0,76rem —«DE CAMINO», «A BORDO»— y encima decía «de camino» aunque llevara
+   tres minutos parado esperando en la puerta. */
+.pasajero {
+  border-left: 4px solid var(--borde);
+}
+
+.pasajero.fase-aceptado { border-left-color: var(--humo); }
+.pasajero.fase-camino { border-left-color: var(--ambar-claro); }
+
+.pasajero.fase-esperando {
+  border-left-color: var(--ambar);
+  background: rgba(255, 176, 32, 0.08);
+}
+
+.pasajero.fase-bordo {
+  border-left-color: var(--ambar);
+  background: rgba(255, 176, 32, 0.1);
+}
+
+.oferta-ruta {
+  font-size: 1.12rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.boton-llamar {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+  padding: 15px;
+  border-radius: 15px;
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------ estadísticas --- */
+
+.rejilla {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.dato {
+  background: var(--tarjeta);
+  border-radius: 14px;
+  padding: 13px 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dato-valor {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--ambar);
+  letter-spacing: -0.02em;
+}
+
+.dato-etiqueta {
+  font-size: 0.82rem;
+  color: var(--humo);
+  line-height: 1.25;
+}
+
+select {
+  flex: 1;
+  font-size: 1.05rem;
+  padding: 15px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--borde);
+  background: var(--tarjeta);
+  color: var(--hueso);
+  font-family: inherit;
+}
+
+select:focus {
+  outline: none;
+  border-color: var(--ambar);
+}
+
+/* ------------------------------------------------------- formularios --- */
+
+input {
+  width: 100%;
+  font-size: 1.1rem;
+  padding: 15px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--borde);
+  background: var(--tarjeta);
+  color: var(--hueso);
+  font-family: inherit;
+}
+
+input::placeholder {
+  color: #6d6d66;
+}
+
+input:focus {
+  outline: none;
+  border-color: var(--ambar);
+}
+
+.buscador {
+  position: relative;
+}
+
+.sugerencias {
+  list-style: none;
+  padding: 6px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 34dvh;
+  overflow-y: auto;
+}
+
+.sugerencias button {
+  width: 100%;
+  text-align: left;
+  background: var(--tarjeta);
+  border: none;
+  color: var(--hueso);
+  padding: 13px 16px;
+  border-radius: 12px;
+  font-size: 1.02rem;
+  font-family: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.sugerencias button:active {
+  background: #2e2e28;
+}
+
+.sug-zona {
+  color: var(--humo);
+  font-size: 0.85rem;
+}
+
+/* Destinos de un toque: lo primero que se ve al pedir taxi. Botones grandes
+   porque son la alternativa a escribir, y quien no escribe con soltura suele
+   tampoco apuntar fino con el dedo. */
+.sugeridos {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sugeridos button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  background: var(--tarjeta);
+  border: 1px solid var(--borde);
+  border-radius: 14px;
+  padding: 14px 16px;
+  color: var(--hueso);
+  font-family: inherit;
+  cursor: pointer;
+  min-height: 62px;
+}
+
+.sugeridos button:active {
+  border-color: var(--ambar);
+  background: rgba(255, 176, 32, 0.1);
+}
+
+.sugerido-nombre {
+  font-size: 1.08rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.fila-sugerencia {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Hueco del pictograma en las listas. Antes llevaba dos letras en
+   monoespaciada; ahora un dibujo, que se entiende sin leer. */
+.sug-sigla {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icono-categoria {
+  display: block;
+}
+
+.sug-textos {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.elegido {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 10px;
+  text-align: left;
+  background: var(--tarjeta);
+  border: 1px solid var(--borde);
+  border-radius: 14px;
+  padding: 12px 16px;
+  color: var(--hueso);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.elegido-etiqueta {
+  grid-column: 1;
+  color: var(--humo);
+  font-size: 0.8rem;
+}
+
+.elegido-valor {
+  grid-column: 1;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.elegido-cambiar {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  color: var(--ambar);
+  font-size: 0.9rem;
+}
+
+.ubicacion-ok {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--humo);
+  font-size: 0.95rem;
+}
+
+.ubicacion-ok strong {
+  color: var(--hueso);
+}
+
+.punto-verde {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #4cd07d;
+  flex: none;
+}
+
+.enlace {
+  background: none;
+  border: none;
+  color: var(--ambar);
+  font-size: 0.9rem;
+  padding: 0 0 0 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+/* ----------------------------------------------------------- botones --- */
+
+button.principal,
+button.secundario {
+  width: 100%;
+  font-size: 1.12rem;
+  font-weight: 700;
+  padding: 17px;
+  border-radius: 15px;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+button.principal {
+  background: var(--ambar);
+  color: var(--tinta);
+}
+
+button.principal:disabled {
+  background: #3a382f;
+  color: #75736a;
+  cursor: default;
+}
+
+button.secundario {
+  background: transparent;
+  color: var(--humo);
+  border: 1px solid var(--borde);
+  font-weight: 500;
+}
+
+/* -------------------------------------------------- ficha del taxista --- */
+
+.ficha {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--tarjeta);
+  border-radius: 16px;
+  padding: 14px 16px;
+}
+
+.matricula {
+  font-family: var(--mono);
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  background: var(--hueso);
+  color: var(--tinta);
+  border: 2px solid var(--tinta);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  padding: 7px 11px;
+  border-radius: 7px;
+  white-space: nowrap;
+}
+
+.ficha-datos {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.conductor {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.coche,
+.reputacion {
+  color: var(--humo);
+  font-size: 0.88rem;
+}
+
+.estrellas {
+  color: var(--ambar);
+  letter-spacing: 1px;
+  margin-right: 5px;
+}
+
+.reputacion.nueva {
+  color: var(--humo);
+  font-style: italic;
+}
+
+/* ---------------------------------------------------- taxi compartido --- */
+
+.compartido {
+  background: var(--tarjeta);
+  border-radius: 16px;
+  padding: 12px 16px;
+}
+
+.etiqueta-compartido {
+  color: var(--ambar);
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ruta {
+  list-style: none;
+  padding: 8px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ruta li {
+  position: relative;
+  padding-left: 18px;
+  color: var(--humo);
+  font-size: 0.95rem;
+}
+
+.ruta li::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4a4a42;
+}
+
+.ruta li.tuya {
+  color: var(--hueso);
+  font-weight: 600;
+}
+
+.ruta li.tuya::before {
+  background: var(--ambar);
+}
+
+/* -------------------------------------------------------- valoración --- */
+
+.valorar {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.valorar button {
+  flex: 1;
+  font-size: 2rem;
+  line-height: 1;
+  padding: 10px 0;
+  background: var(--tarjeta);
+  border: 1px solid var(--borde);
+  border-radius: 12px;
+  color: #4a4a42;
+  cursor: pointer;
+}
+
+.valorar button:active {
+  color: var(--ambar);
+  border-color: var(--ambar);
+}
+
+/* ---------------------------------------- número que confirma el taxi --- */
+
+/* Se dicta en voz alta, a veces por la ventanilla y con ruido de calle: va en
+   monoespaciada y grande, con las cifras separadas, igual que la referencia de
+   pago del monedero. Es el mismo gesto. */
+.pin {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--tarjeta);
+  border: 1px dashed rgba(255, 176, 32, 0.45);
+  border-radius: 16px;
+  padding: 12px 16px;
+}
+
+.pin-etiqueta {
+  font-size: 0.78rem;
+  color: var(--humo);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 600;
+}
+
+.pin-numero {
+  font-family: var(--mono);
+  font-size: 2.3rem;
+  font-weight: 700;
+  color: var(--ambar);
+  letter-spacing: 0.18em;
+  line-height: 1.15;
+  user-select: all;
+}
+
+/* Teclado del taxista para comprobarlo. Solo aparece si lo pide. */
+.comprobar-pin {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.comprobar-pin label {
+  font-size: 0.85rem;
+  color: var(--humo);
+}
+
+.comprobar-pin input {
+  font-family: var(--mono);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-align: center;
+}
+
+/* ------------------------------------------------------------ llamada --- */
+
+/* Botón de llamar, en las dos vistas. La coletilla «sin dar tu número» va
+   dentro del propio botón: es la razón de que exista y hay que verla justo
+   cuando se decide pulsarlo, no en una pantalla de ayuda. */
+button.llamar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+button.llamar small {
+  font-size: 0.76rem;
+  font-weight: 400;
+  color: var(--humo);
+}
+
+/* Tapa la pantalla entera: cuando suena, no hay nada más que hacer, y el
+   taxista tiene que poder colgar sin buscar. */
+.capa-llamada {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(8, 8, 10, 0.94);
+  display: flex;
+  align-items: flex-end;
+}
+
+.llamada {
+  width: 100%;
+  padding: 34px 20px calc(30px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.llamada-con {
+  font-size: 0.82rem;
+  color: var(--humo);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+}
+
+.llamada-titulo {
+  font-size: 1.9rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+/* Los segundos en monoespaciada y grandes: en este mercado hablar cuesta
+   datos, y el gasto tiene que estar a la vista, no escondido. */
+.llamada-reloj {
+  font-family: var(--mono);
+  font-size: 3.4rem;
+  font-weight: 700;
+  color: var(--ambar);
+  letter-spacing: -0.02em;
+}
+
+.llamada-nota {
+  color: var(--humo);
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.llamada-botones {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+/* Colgar es lo único en rojo de toda la aplicación. Se lo puede permitir:
+   es la acción que se busca a tientas. */
+button.colgar {
+  width: 100%;
+  min-height: 62px;
+  border: none;
+  border-radius: 15px;
+  background: #8c2f22;
+  color: var(--hueso);
+  font-family: inherit;
+  font-size: 1.12rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* ------------------------------------------------------------- avisos --- */
+
+.aviso {
+  background: #3a1f1a;
+  color: #ffb4a6;
+  padding: 11px 14px;
+  border-radius: 12px;
+  font-size: 0.93rem;
+}
+
+/* ------------------------------------------------- refinado de la hoja --- */
+
+.nombre-propio {
+  font-size: 1.06rem;
+  font-weight: 600;
+}
+
+button.principal.grande {
+  padding: 19px;
+  font-size: 1.18rem;
+}
+
+/* Acción secundaria discreta: cancelar, rechazar, «no aparece». Deliberadamente
+   apagada para que no compita con la acción principal. */
+button.tenue {
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--humo);
+  font-size: 1rem;
+  padding: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: #3d3d35;
+  text-underline-offset: 4px;
+}
+
+/* Aviso de bloqueo: sin verificar, sin cuota. No es un error del usuario, así
+   que usa un azul-gris neutro, no el ámbar de acción ni el rojo de los
+   avisos. */
+.bloqueo {
+  background: rgba(143, 166, 184, 0.1);
+  border: 1px solid rgba(143, 166, 184, 0.28);
+  border-radius: 14px;
+  padding: 13px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bloqueo-titulo {
+  font-weight: 700;
+  font-size: 0.98rem;
+  color: var(--info-texto);
+}
+
+.bloqueo .nota {
+  color: rgba(203, 217, 228, 0.7);
+}
+
+.etiqueta-viva {
+  color: var(--ambar);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+/* Aviso de que el taxi ya está en el punto de recogida: además del aviso
+   hablado, una confirmación visible para quien no puede oírlo. */
+.llegado {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 176, 32, 0.12);
+  border: 1px solid rgba(255, 176, 32, 0.4);
+  color: var(--ambar-claro);
+  font-weight: 700;
+  font-size: 1.02rem;
+}
+
+.llegado .punto-pulso {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ambar);
+  animation: respirar 1.2s ease-in-out infinite;
+}
+
+/* Ruta de un pasajero: origen y destino con un hilo entre ellos. */
+.pasajero-ruta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ruta-desde,
+.ruta-hasta {
+  position: relative;
+  padding-left: 16px;
+  font-size: 0.97rem;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ruta-desde::before,
+.ruta-hasta::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.ruta-desde::before {
+  background: var(--ambar);
+}
+
+.ruta-hasta::before {
+  background: none;
+  border: 2px solid var(--hueso);
+  width: 5px;
+  height: 5px;
+}
+
+.ruta-desde::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 15px;
+  width: 1px;
+  height: 12px;
+  background: #45443a;
+}
+
+.ruta-hasta {
+  font-weight: 600;
+}
+
+.pasajero-ruta.grande .ruta-desde,
+.pasajero-ruta.grande .ruta-hasta {
+  font-size: 1.1rem;
+}
+
+.pasajero-cabecera {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 10px;
+}
+
+.numero-pasajero {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #35342c;
+  color: var(--hueso);
+  font-size: 0.84rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+.pasajero.a-bordo .numero-pasajero {
+  background: var(--ambar);
+  color: var(--tinta);
+}
+
+/* Ya no es texto pequeño metido en la esquina de la cabecera: es su propia
+   línea, con un punto del color de la fase delante. El tamaño es el mismo
+   que el de la ruta, no el de una etiqueta secundaria: es lo primero que hay
+   que leer del bloque, antes que a dónde va. */
+.pasajero-estado {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--hueso);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pasajero-estado::before {
+  content: '';
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--humo);
+}
+
+.fase-aceptado .pasajero-estado::before { background: var(--humo); }
+.fase-camino .pasajero-estado::before { background: var(--ambar-claro); }
+
+.fase-esperando .pasajero-estado,
+.fase-bordo .pasajero-estado {
+  color: var(--ambar);
+}
+
+.fase-esperando .pasajero-estado::before {
+  background: var(--ambar);
+  /* El pulso solo en esta fase: es la única en la que hay que actuar YA
+     —el pasajero está esperando en la puerta— y es la única con animación
+     entre las cuatro, para que siga significando urgencia. */
+  animation: respirar 1.2s ease-in-out infinite;
+}
+
+.fase-bordo .pasajero-estado::before { background: var(--ambar); }
+
+.nota.reloj {
+  display: flex;
+  flex-direction: column;
+  color: var(--ambar);
+  font-weight: 600;
+}
+
+.nota.reloj small {
+  color: var(--humo);
+  font-weight: 400;
+}
+
+.campo-zona {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.campo-zona span {
+  font-size: 0.85rem;
+  color: var(--humo);
+}
+
+/* Zonas de trabajo en fila que se arrastra, no en desplegable: son cuarenta y
+   siete barrios y esto se usa conduciendo. Vienen ordenadas por cercanía, así
+   que la buena suele ser la primera y no hay que arrastrar nada. */
+.zonas {
+  list-style: none;
+  padding: 0 0 4px;
+  margin: 0;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  /* Cada zona se queda encajada al soltar, en vez de a medio ver. */
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+
+.zonas li {
+  flex: none;
+  scroll-snap-align: start;
+}
+
+.zonas button {
+  min-height: 52px;
+  padding: 0 18px;
+  border-radius: 13px;
+  border: 1px solid var(--borde);
+  background: var(--tarjeta);
+  color: var(--hueso);
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.zonas button.zona-elegida {
+  background: var(--ambar);
+  border-color: var(--ambar);
+  color: var(--tinta);
+}
+
+.tira-estado {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.88rem;
+  color: var(--humo);
+  flex-wrap: wrap;
+}
+
+.separador {
+  color: #45443a;
+}
+
+/* Sin conexión. Va arriba del todo y se queda ahí: no es un error que se
+   descarta, es un estado que dura hasta que vuelve la cobertura. En azul-gris
+   informativo y no en rojo, porque quedarse sin señal en Malabo no es que la
+   persona haya hecho nada mal. */
+.sin-conexion {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 800;
+  background: rgba(143, 166, 184, 0.16);
+  border-bottom: 1px solid rgba(143, 166, 184, 0.34);
+  color: var(--info-texto);
+  text-align: center;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 7px 10px;
+  backdrop-filter: blur(6px);
+}
+
+/* Cinta de pruebas locales: solo aparece con ?dispositivo= en localhost. */
+.cinta-pruebas {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: #4b3f12;
+  color: #ffd970;
+  text-align: center;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px;
+  font-family: var(--mono);
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------ recarga --- */
+
+.pago {
+  background: var(--tarjeta);
+  border-radius: 16px;
+  padding: 15px 17px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pago.referencia {
+  border: 1px dashed var(--ambar);
+  background: rgba(255, 176, 32, 0.1);
+}
+
+.pago-etiqueta {
+  font-size: 0.78rem;
+  color: var(--humo);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 600;
+}
+
+/* Número y referencia: son para copiar o dictar, así que van grandes, en
+   monoespaciada y con las cifras separadas. */
+.pago-numero {
+  font-family: var(--mono);
+  font-size: 1.85rem;
+  font-weight: 700;
+  color: var(--ambar);
+  letter-spacing: 0.06em;
+  user-select: all;
+}
+
+.pago-titular {
+  color: var(--humo);
+  font-size: 0.92rem;
+}
+
+.importes {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 9px;
+}
+
+button.importe {
+  background: var(--tarjeta);
+  border: 1px solid var(--borde);
+  border-radius: 14px;
+  padding: 13px 10px;
+  color: var(--hueso);
+  font-family: inherit;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+button.importe.elegido-importe {
+  border-color: var(--ambar);
+  background: rgba(255, 176, 32, 0.1);
+}
+
+.importe-cifra {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.importe-semanas {
+  font-size: 0.8rem;
+  color: var(--humo);
+}
+
+/* ------------------------------------------------- galería de diseños --- */
+
+.galeria {
+  padding: 28px 24px 60px;
+  max-width: 1500px;
+}
+
+.galeria-cabecera {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.galeria-cabecera h1 {
+  font-size: 1.6rem;
+  letter-spacing: -0.02em;
+}
+
+.galeria-cabecera p {
+  color: var(--humo);
+  font-size: 0.94rem;
+  max-width: 46ch;
+  margin-top: 6px;
+  line-height: 1.45;
+}
+
+.galeria-filtros {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+.galeria-filtros button {
+  background: var(--tarjeta);
+  border: 1px solid var(--borde);
+  color: var(--humo);
+  padding: 9px 16px;
+  border-radius: 999px;
+  font-size: 0.92rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.galeria-filtros button.activo {
+  background: var(--ambar);
+  border-color: var(--ambar);
+  color: var(--tinta);
+  font-weight: 600;
+}
+
+.galeria-grupo {
+  margin-top: 34px;
+}
+
+.galeria-grupo h2 {
+  font-size: 1.05rem;
+  color: var(--ambar);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #2a2a24;
+  margin-bottom: 22px;
+}
+
+.galeria-rejilla {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 26px;
+}
+
+.marco figcaption {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 9px;
+}
+
+.marco-titulo {
+  font-weight: 700;
+  font-size: 0.98rem;
+}
+
+.marco-descripcion {
+  color: var(--humo);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+/* Marco con la proporción de un teléfono. El contenido es la hoja real. */
+.pantalla-telefono {
+  position: relative;
+  height: 620px;
+  border-radius: 22px;
+  overflow: hidden;
+  border: 1px solid #2e2e27;
+  background: var(--tinta);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.pantalla-telefono .capa-mapa {
+  inset: 0;
+}
+
+.pantalla-telefono .hoja {
+  max-height: 92%;
+  overflow-y: auto;
+}
+
+.fondo-mapa {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Campo de solo lectura para la galería: parece un campo, no responde. */
+.campo-falso {
+  padding: 15px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--borde);
+  background: var(--tarjeta);
+  color: #6d6d66;
+  font-size: 1.05rem;
+}

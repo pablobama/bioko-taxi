@@ -1,0 +1,10 @@
+node_modules/
+.bd-dev/
+.claude/scheduled_tasks.lock
+*.log
+dist/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/app/google-services.json

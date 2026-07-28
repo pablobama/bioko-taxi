@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Una sola pantalla con secciones que se muestran u ocultan según el
+     estado. Texto grande y botones enormes: se usa conduciendo un taxi. -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:id="@+id/texto_titulo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/app_nombre"
+            android:textSize="24sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/texto_aviso"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#8A1F11"
+            android:textSize="16sp"
+            android:visibility="gone" />
+
+        <!-- ················ Registro ················ -->
+        <LinearLayout
+            android:id="@+id/seccion_registro"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <EditText
+                android:id="@+id/campo_url"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/pista_url"
+                android:inputType="textUri" />
+
+            <EditText
+                android:id="@+id/campo_telefono"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/pista_telefono"
+                android:inputType="phone" />
+
+            <Button
+                android:id="@+id/boton_registrar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/accion_registrar" />
+        </LinearLayout>
+
+        <!-- ················ Estado y servicio ················ -->
+        <LinearLayout
+            android:id="@+id/seccion_principal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/texto_nombre"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="18sp" />
+
+            <TextView
+                android:id="@+id/texto_saldo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/texto_estado"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="16sp" />
+
+            <Spinner
+                android:id="@+id/selector_zona"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
+
+            <Button
+                android:id="@+id/boton_servicio"
+                android:layout_width="match_parent"
+                android:layout_height="64dp"
+                android:text="@string/accion_entrar_servicio" />
+        </LinearLayout>
+
+        <!-- ················ Oferta entrante ················ -->
+        <LinearLayout
+            android:id="@+id/seccion_oferta"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/titulo_oferta"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/texto_oferta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="20sp" />
+
+            <TextView
+                android:id="@+id/texto_oferta_banda"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="16sp" />
+
+            <Button
+                android:id="@+id/boton_aceptar"
+                android:layout_width="match_parent"
+                android:layout_height="72dp"
+                android:text="@string/accion_aceptar" />
+
+            <Button
+                android:id="@+id/boton_rechazar"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="@string/accion_rechazar" />
+        </LinearLayout>
+
+        <!-- ········ Pasajeros a bordo (taxi compartido) ········
+             Un bloque por pasajero con sus propios botones, construido en
+             código: hasta 4 y cada uno en un punto distinto del viaje. -->
+        <TextView
+            android:id="@+id/texto_ocupacion"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingTop="12dp"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <LinearLayout
+            android:id="@+id/contenedor_pasajeros"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </LinearLayout>
+</ScrollView>

@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "servidor",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "servidor", "run", "servir"],
+      "port": 8080,
+      "autoPort": false
+    },
+    {
+      "name": "pwa",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "pwa", "run", "dev"],
+      "port": 5173
+    }
+  ]
+}

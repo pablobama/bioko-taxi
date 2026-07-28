@@ -1,0 +1,456 @@
+// Raíz de la aplicación: decide QUÉ interfaz se muestra según lo que sea este
+// dispositivo (migración 016).
+//
+//   sin registrar → elección de rol → registro de pasajero o de taxista
+//   pasajero      → PanelCliente
+//   taxista       → PanelConductor
+//
+// Las dos interfaces conviven aquí a propósito, para poder ver el sistema
+// completo en localhost. Cuando se separen serán dos aplicaciones distintas:
+// el pasajero seguirá siendo esta PWA y el taxista la app Android de
+// android/, que ya existe.
+//
+// Un dispositivo es de un rol o del otro, nunca de los dos: el historial y los
+// strikes cuelgan del dispositivo, así que cambiar de rol es cosa del operador.
+
+import { useEffect, useState } from 'react';
+import {
+  api, enPruebasLocales, uuidDispositivo,
+  type DatosConductor, type Perfil, type PuntoMapa,
+} from './api';
+import { mensajeDeError, useConexion } from './conexion';
+import Estadisticas from './Estadisticas';
+import { crearT, fijarIdioma, idiomaActual, type Idioma } from './i18n';
+
+type T = ReturnType<typeof crearT>;
+import Mapa from './Mapa';
+import PanelCliente from './PanelCliente';
+import PanelConductor from './PanelConductor';
+import { alternarSilencio, estaSilenciado, prepararSonido } from './sonidos';
+
+const IDIOMAS: Array<{ id: Idioma; etiqueta: string }> = [
+  { id: 'es', etiqueta: 'ES' },
+  { id: 'fr', etiqueta: 'FR' },
+  { id: 'en', etiqueta: 'EN' },
+];
+
+// Selector de idioma: se usa en la elección de rol (lo primero que se ve) y
+// en ajustes de cada rol, para poder cambiarlo más tarde.
+function SelectorIdioma({ idioma, alCambiar }: { idioma: Idioma; alCambiar: (i: Idioma) => void }) {
+  return (
+    <div className="selector-idioma">
+      {IDIOMAS.map((i) => (
+        <button
+          key={i.id}
+          type="button"
+          className={i.id === idioma ? 'idioma-activo' : undefined}
+          onClick={() => alCambiar(i.id)}
+        >
+          {i.etiqueta}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+type Pantalla =
+  | 'cargando' | 'elegir_rol' | 'alta_cliente' | 'alta_conductor'
+  | 'cliente' | 'conductor' | 'ajustes_conductor' | 'estadisticas_conductor';
+
+// Última sesión conocida, para poder abrir la aplicación sin cobertura.
+//
+// Se guarda solo QUÉ ES este dispositivo (pasajero o taxista) y su ficha, que
+// es información estable. El estado de los viajes no se guarda nunca: eso
+// cambia solo y enseñarlo viejo sería mentir.
+const CLAVE_SESION = 'ultimaSesion';
+
+type Sesion = Awaited<ReturnType<typeof api.sesion>>;
+
+function guardarSesionLocal(sesion: Sesion): void {
+  try {
+    localStorage.setItem(CLAVE_SESION, JSON.stringify(sesion));
+  } catch {
+    // Almacenamiento lleno o bloqueado: se sigue sin recordar nada.
+  }
+}
+
+function sesionGuardada(): Sesion | null {
+  try {
+    const crudo = localStorage.getItem(CLAVE_SESION);
+    return crudo ? (JSON.parse(crudo) as Sesion) : null;
+  } catch {
+    return null;
+  }
+}
+
+export default function App() {
+  const [pantalla, setPantalla] = useState<Pantalla>('cargando');
+  const [perfil, setPerfil] = useState<Perfil | null>(null);
+  const [conductor, setConductor] = useState<DatosConductor | null>(null);
+  const [puntos, setPuntos] = useState<PuntoMapa[]>([]);
+  const [aviso, setAviso] = useState('');
+  const [idioma, setIdioma] = useState<Idioma>(idiomaActual());
+  const enLinea = useConexion();
+  const t = crearT(idioma);
+
+  function cambiarIdioma(nuevo: Idioma) {
+    fijarIdioma(nuevo);
+    setIdioma(nuevo);
+  }
+
+  async function cargarSesion() {
+    try {
+      const sesion = await api.sesion();
+      // Se guarda para poder abrir sin cobertura. Quién eres y qué eres no
+      // cambia de un minuto a otro, al revés que el estado de un viaje: esto
+      // sí se puede recordar sin mentirle a nadie.
+      guardarSesionLocal(sesion);
+      if (sesion.rol === 'conductor' && sesion.conductor) {
+        setConductor(sesion.conductor);
+        setPantalla('conductor');
+      } else if (sesion.rol === 'cliente' && sesion.cliente) {
+        setPerfil(sesion.cliente);
+        setPantalla('cliente');
+      } else {
+        setPantalla('elegir_rol');
+      }
+    } catch (error) {
+      // Sin red se tira de la última sesión conocida. Mandar a la pantalla de
+      // «¿quién eres?» a alguien que lleva meses usando la aplicación parece
+      // que se le ha borrado la cuenta, cuando lo único que pasa es que ahora
+      // mismo no hay cobertura.
+      const guardada = sesionGuardada();
+      if (guardada?.rol === 'conductor' && guardada.conductor) {
+        setConductor(guardada.conductor);
+        setPantalla('conductor');
+      } else if (guardada?.rol === 'cliente' && guardada.cliente) {
+        setPerfil(guardada.cliente);
+        setPantalla('cliente');
+      } else {
+        setPantalla('elegir_rol');
+      }
+      // Si fue la red, ya lo dice la banda de arriba; repetirlo aquí sería
+      // decir dos veces lo mismo.
+      setAviso(mensajeDeError(error, t('app.sinServidor')));
+    }
+  }
+
+  useEffect(() => {
+    api.mapa().then((m) => setPuntos(m.referencias)).catch(() => undefined);
+    void cargarSesion();
+  }, []);
+
+  // Aviso visible cuando la identidad o la ubicación vienen forzadas por la
+  // URL, para que no se confunda una sesión de pruebas con una de verdad.
+  const parametros = new URLSearchParams(window.location.search);
+  const identidadForzada = enPruebasLocales() && parametros.has('dispositivo');
+  const gpsFingido = enPruebasLocales() ? parametros.get('gps') : null;
+  const cinta = identidadForzada || gpsFingido
+    ? (
+      <div className="cinta-pruebas">
+        pruebas · {uuidDispositivo().slice(0, 8)}
+        {gpsFingido && ` · gps fingido ${gpsFingido}`}
+      </div>
+    )
+    : null;
+
+  // Banda de «sin conexión». Va aquí arriba, fuera de cada pantalla, porque el
+  // problema no es de una pantalla concreta: es que ahora mismo no se llega al
+  // servidor. Lo que ya estaba en pantalla se queda —la matrícula del taxi
+  // sigue siendo válida sin cobertura— en vez de vaciarse.
+  const bandaSinConexion = enLinea
+    ? null
+    : <div className="sin-conexion">{t('conexion.sinConexion')}</div>;
+
+  if (pantalla === 'cargando') {
+    return <main className="lienzo">{cinta}{bandaSinConexion}<div className="cargando">{t('app.cargando')}</div></main>;
+  }
+
+  if (pantalla === 'cliente' && perfil) {
+    return <>{cinta}{bandaSinConexion}<PanelCliente perfilInicial={perfil} puntos={puntos} idioma={idioma} /></>;
+  }
+
+  if (pantalla === 'conductor' && conductor) {
+    return (
+      <>
+        {cinta}
+        {bandaSinConexion}
+        <PanelConductor
+          conductor={conductor}
+          puntos={puntos}
+          idioma={idioma}
+          alAbrirAjustes={() => setPantalla('ajustes_conductor')}
+          alAbrirEstadisticas={() => setPantalla('estadisticas_conductor')}
+          alRecargarSesion={() => { void cargarSesion(); }}
+        />
+      </>
+    );
+  }
+
+  // Pantallas con el plano de fondo y la hoja inferior.
+  return (
+    <main className="lienzo">
+      {cinta}
+      {bandaSinConexion}
+      <div className="capa-mapa"><Mapa puntos={puntos} /></div>
+      <section className="hoja">
+        {aviso && <p className="aviso">{aviso}</p>}
+
+        {pantalla === 'elegir_rol' && (
+          <>
+            <div className="cabecera">
+              <h1>{t('rol.titulo')}</h1>
+              <SelectorIdioma idioma={idioma} alCambiar={cambiarIdioma} />
+            </div>
+            <p className="nota">{t('rol.pregunta')}</p>
+            <button
+              type="button"
+              className="principal"
+              onClick={() => { prepararSonido(); setAviso(''); setPantalla('alta_cliente'); }}
+            >
+              {t('rol.pasajero')}
+            </button>
+            <button
+              type="button"
+              className="secundario"
+              onClick={() => { prepararSonido(); setAviso(''); setPantalla('alta_conductor'); }}
+            >
+              {t('rol.taxista')}
+            </button>
+            <p className="nota pie">{t('rol.nota')}</p>
+          </>
+        )}
+
+        {pantalla === 'alta_cliente' && (
+          <AltaCliente
+            t={t}
+            alTerminar={() => { setAviso(''); void cargarSesion(); }}
+            alFallar={setAviso}
+            alVolver={() => { setAviso(''); setPantalla('elegir_rol'); }}
+          />
+        )}
+
+        {pantalla === 'alta_conductor' && (
+          <AltaConductorFormulario
+            t={t}
+            alTerminar={() => { setAviso(''); void cargarSesion(); }}
+            alFallar={setAviso}
+            alVolver={() => { setAviso(''); setPantalla('elegir_rol'); }}
+          />
+        )}
+
+        {pantalla === 'ajustes_conductor' && conductor && (
+          <AjustesConductor
+            conductor={conductor}
+            t={t}
+            idioma={idioma}
+            alCambiarIdioma={cambiarIdioma}
+            alTerminar={() => { setAviso(''); void cargarSesion(); }}
+            alFallar={setAviso}
+            alVolver={() => { setAviso(''); setPantalla('conductor'); }}
+          />
+        )}
+
+        {pantalla === 'estadisticas_conductor' && (
+          <Estadisticas t={t} idioma={idioma} alVolver={() => setPantalla('conductor')} />
+        )}
+      </section>
+    </main>
+  );
+}
+
+// --- Alta del pasajero: teléfono y/o correo, nada más ----------------------
+
+function AltaCliente({
+  t, alTerminar, alFallar, alVolver,
+}: { t: T; alTerminar: () => void; alFallar: (m: string) => void; alVolver: () => void }) {
+  const [telefono, setTelefono] = useState('');
+  const [correo, setCorreo] = useState('');
+  const [guardando, setGuardando] = useState(false);
+  const listo = telefono.trim().length > 0 || correo.trim().length > 0;
+
+  async function guardar() {
+    setGuardando(true);
+    try {
+      await api.guardarPerfil({
+        telefono: telefono.trim() || null,
+        correo: correo.trim() || null,
+      });
+      alTerminar();
+    } catch (error) {
+      alFallar(error instanceof Error ? error.message : t('aviso.faltaContacto'));
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <>
+      <h1>{t('altaCliente.titulo')}</h1>
+      <p className="nota">{t('altaCliente.nota')}</p>
+      <input type="tel" value={telefono} placeholder={t('campo.telefono')}
+        onChange={(e) => setTelefono(e.target.value)} />
+      <input type="email" value={correo} placeholder={t('campo.correo')}
+        onChange={(e) => setCorreo(e.target.value)} />
+      <button type="button" className="principal" disabled={!listo || guardando} onClick={guardar}>
+        {guardando ? t('accion.guardando') : t('accion.empezar')}
+      </button>
+      <button type="button" className="secundario" onClick={alVolver}>{t('accion.volver')}</button>
+    </>
+  );
+}
+
+// --- Alta del taxista -----------------------------------------------------
+
+function AltaConductorFormulario({
+  t, alTerminar, alFallar, alVolver,
+}: { t: T; alTerminar: () => void; alFallar: (m: string) => void; alVolver: () => void }) {
+  const [nombre, setNombre] = useState('');
+  const [telefono, setTelefono] = useState('');
+  const [correo, setCorreo] = useState('');
+  const [matricula, setMatricula] = useState('');
+  const [marca, setMarca] = useState('');
+  const [carroceria, setCarroceria] = useState<'turismo' | '4x4'>('turismo');
+  const [guardando, setGuardando] = useState(false);
+
+  const listo = [nombre, telefono, matricula, marca].every((v) => v.trim().length > 0);
+
+  async function guardar() {
+    setGuardando(true);
+    try {
+      const respuesta = await api.altaConductor({
+        nombre: nombre.trim(),
+        telefono: telefono.trim(),
+        correo: correo.trim() || undefined,
+        matricula: matricula.trim(),
+        marca: marca.trim(),
+        carroceria,
+      });
+      if (respuesta.aviso) alFallar(respuesta.aviso);
+      alTerminar();
+    } catch (error) {
+      alFallar(error instanceof Error ? error.message : t('altaConductor.titulo'));
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <>
+      <h1>{t('altaConductor.titulo')}</h1>
+      <p className="nota">{t('altaConductor.nota')}</p>
+      <input type="text" value={nombre} placeholder={t('campo.nombreCompleto')}
+        onChange={(e) => setNombre(e.target.value)} />
+      <input type="tel" value={telefono} placeholder={t('campo.telefono')}
+        onChange={(e) => setTelefono(e.target.value)} />
+      <input type="email" value={correo} placeholder={t('campo.correoOpcionalSolo')}
+        onChange={(e) => setCorreo(e.target.value)} />
+      <input type="text" value={matricula} placeholder={t('campo.matricula')}
+        onChange={(e) => setMatricula(e.target.value)} />
+      <input type="text" value={marca} placeholder={t('campo.marcaModelo')}
+        onChange={(e) => setMarca(e.target.value)} />
+      <div className="fila">
+        <button
+          type="button"
+          className={carroceria === 'turismo' ? 'principal' : 'secundario'}
+          onClick={() => setCarroceria('turismo')}
+        >
+          {t('carroceria.turismo')}
+        </button>
+        <button
+          type="button"
+          className={carroceria === '4x4' ? 'principal' : 'secundario'}
+          onClick={() => setCarroceria('4x4')}
+        >
+          {t('carroceria.4x4')}
+        </button>
+      </div>
+      <button type="button" className="principal" disabled={!listo || guardando} onClick={guardar}>
+        {guardando ? t('accion.enviando') : t('accion.darseDeAlta')}
+      </button>
+      <button type="button" className="secundario" onClick={alVolver}>{t('accion.volver')}</button>
+    </>
+  );
+}
+
+// --- Ajustes del taxista --------------------------------------------------
+
+function AjustesConductor({
+  conductor, t, idioma, alCambiarIdioma, alTerminar, alFallar, alVolver,
+}: {
+  conductor: DatosConductor;
+  t: T;
+  idioma: Idioma;
+  alCambiarIdioma: (i: Idioma) => void;
+  alTerminar: () => void;
+  alFallar: (m: string) => void;
+  alVolver: () => void;
+}) {
+  const [nombre, setNombre] = useState(conductor.nombre);
+  const [correo, setCorreo] = useState(conductor.correo ?? '');
+  const [matricula, setMatricula] = useState(conductor.matricula ?? '');
+  const [marca, setMarca] = useState(conductor.marca ?? '');
+  const [carroceria, setCarroceria] = useState<'turismo' | '4x4'>(
+    conductor.carroceria === '4x4' ? '4x4' : 'turismo',
+  );
+  const [silencio, setSilencio] = useState(estaSilenciado());
+  const [guardando, setGuardando] = useState(false);
+
+  async function guardar() {
+    setGuardando(true);
+    try {
+      // Se reenvía el alta: el teléfono es la clave, así que actualiza en
+      // lugar de duplicar.
+      await api.altaConductor({
+        nombre: nombre.trim(),
+        telefono: conductor.telefono,
+        correo: correo.trim() || undefined,
+        matricula: matricula.trim(),
+        marca: marca.trim(),
+        carroceria,
+      });
+      alTerminar();
+    } catch (error) {
+      alFallar(error instanceof Error ? error.message : t('accion.guardar'));
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="cabecera">
+        <h1>{t('ajustesConductor.titulo')}</h1>
+        <SelectorIdioma idioma={idioma} alCambiar={alCambiarIdioma} />
+      </div>
+      <p className="nota">{t('ajustesConductor.telefono', { telefono: conductor.telefono })}</p>
+      <input type="text" value={nombre} placeholder={t('campo.nombre')}
+        onChange={(e) => setNombre(e.target.value)} />
+      <input type="email" value={correo} placeholder={t('campo.correo2')}
+        onChange={(e) => setCorreo(e.target.value)} />
+      <input type="text" value={matricula} placeholder={t('campo.matricula')}
+        onChange={(e) => setMatricula(e.target.value)} />
+      <input type="text" value={marca} placeholder={t('campo.marcaModelo')}
+        onChange={(e) => setMarca(e.target.value)} />
+      <div className="fila">
+        <button type="button" className={carroceria === 'turismo' ? 'principal' : 'secundario'}
+          onClick={() => setCarroceria('turismo')}>{t('carroceria.turismo')}</button>
+        <button type="button" className={carroceria === '4x4' ? 'principal' : 'secundario'}
+          onClick={() => setCarroceria('4x4')}>{t('carroceria.4x4')}</button>
+      </div>
+
+      <button
+        type="button"
+        className="secundario"
+        onClick={() => setSilencio(alternarSilencio())}
+      >
+        {silencio ? t('sonido.apagado') : t('sonido.encendido')}
+      </button>
+
+      <button type="button" className="principal" disabled={guardando} onClick={guardar}>
+        {guardando ? t('accion.guardando') : t('accion.guardar')}
+      </button>
+      <button type="button" className="secundario" onClick={alVolver}>{t('accion.volver')}</button>
+    </>
+  );
+}

@@ -1,0 +1,35 @@
+{
+  "name": "taxi-servidor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Backend de la plataforma de intermediación de taxis (Malabo)",
+  "type": "module",
+  "scripts": {
+    "bd:dev": "tsx scripts/bd-dev.ts",
+    "bd:migrar": "tsx src/bd/migrar.ts aplicar",
+    "bd:revertir": "tsx src/bd/migrar.ts revertir",
+    "bd:estado": "tsx src/bd/migrar.ts estado",
+    "bd:semilla": "tsx scripts/datos-prueba.ts",
+    "servir": "tsx src/api/arranque.ts",
+    "probar": "tsx --test --test-concurrency=1 src/dominio/transiciones.prueba.ts src/dominio/monedero.prueba.ts src/dominio/gazetteer.prueba.ts src/dominio/despacho.prueba.ts src/dominio/proximidad.prueba.ts src/dominio/compartido.prueba.ts src/eventos/bus.prueba.ts src/api/servidor.prueba.ts src/api/conductor.prueba.ts",
+    "gazetteer": "tsx scripts/gazetteer.ts",
+    "bd:pois-reales": "tsx scripts/importar-pois-reales.ts",
+    "bd:barrios": "tsx scripts/importar-barrios.ts",
+    "limpiar": "tsx scripts/limpiar-pruebas.ts"
+  },
+  "dependencies": {
+    "@fastify/static": "^10.1.2",
+    "fastify": "^5.10.0",
+    "firebase-admin": "^14.2.0",
+    "pg": "^8.13.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.11.10"
+  },
+  "optionalDependencies": {
+    "@embedded-postgres/windows-x64": "^16.14.0-beta.17"
+  }
+}

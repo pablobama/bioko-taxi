@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- App del conductor (paso 8, decisión 3.2/3.3): Android nativo, FCM de
+     prioridad alta para las ofertas y foreground service mientras está en
+     servicio para que Doze no mate el proceso. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <!-- Lectura GPS puntual en «he llegado» y al validar el PIN (señal
+         antifraude). Nunca seguimiento continuo. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <application
+        android:label="Taxi Conductor"
+        android:usesCleartextTraffic="true"
+        android:theme="@android:style/Theme.Material.Light">
+        <!-- usesCleartextTraffic: el piloto habla con el VPS por http hasta
+             que haya TLS delante; quitarlo cuando el servidor tenga https. -->
+
+        <activity
+            android:name=".ActividadPrincipal"
+            android:exported="true"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".ServicioEnServicio"
+            android:exported="false"
+            android:foregroundServiceType="dataSync|location" />
+
+        <service
+            android:name=".ServicioMensajes"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>
