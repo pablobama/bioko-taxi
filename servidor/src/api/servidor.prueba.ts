@@ -145,8 +145,8 @@ test('sesión: dice qué es el dispositivo, y el alta del taxista queda verifica
     },
   });
   assert.equal(alta.statusCode, 200, alta.body);
-  // Sin panel de operador todavía (PENDIENTES.md P21-01) no hay quién revise
-  // los datos, así que el alta se acepta verificada de entrada.
+  // Decisión del 2026-07-28, «por ahora» (PENDIENTES.md P21-01): sin revisión
+  // manual obligatoria, el alta se acepta verificada de entrada.
   assert.equal(alta.json().estadoVerificacion, 'verificado');
   assert.equal(alta.json().aviso, null);
 
@@ -157,6 +157,51 @@ test('sesión: dice qué es el dispositivo, y el alta del taxista queda verifica
   assert.equal(datos.conductor.carroceria, '4x4');
   assert.equal(datos.conductor.plazas, 4);
   assert.equal(datos.conductor.reputacion.media, null);
+});
+
+test('reenviar el alta también auto-verifica (P21-01): a quien quedó pendiente antes de la decisión no se le olvida', async () => {
+  const uuid = randomUUID();
+  const telefono = `+2402222${sufijoUnico()}`;
+  const alta1 = await app.inject({
+    method: 'POST',
+    url: '/api/conductor/alta',
+    headers: cabeceras(uuid),
+    payload: {
+      nombre: 'Ana Ondo', telefono, matricula: `GE-A${sufijoUnico()}`,
+      marca: 'Kia Rio', carroceria: 'turismo',
+    },
+  });
+  const conductorId = alta1.json().conductorId;
+
+  // Simula una fila de antes de la decisión de auto-verificar: 'pendiente' a
+  // mano, saltándose la API.
+  await pool.query(`UPDATE conductor SET estado_verificacion = 'pendiente' WHERE id = $1`, [conductorId]);
+
+  const alta2 = await app.inject({
+    method: 'POST',
+    url: '/api/conductor/alta',
+    headers: cabeceras(uuid),
+    payload: {
+      nombre: 'Ana Ondo', telefono, matricula: `GE-A${sufijoUnico()}`,
+      marca: 'Kia Rio', carroceria: 'turismo',
+    },
+  });
+  assert.equal(alta2.statusCode, 200, alta2.body);
+  assert.equal(alta2.json().estadoVerificacion, 'verificado', 'reenviar el alta también saca de pendiente');
+
+  // Pero a un conductor que el operador suspendió o bloqueó, reenviar el
+  // formulario no le sirve para saltárselo.
+  await pool.query(`UPDATE conductor SET estado_verificacion = 'suspendido' WHERE id = $1`, [conductorId]);
+  const alta3 = await app.inject({
+    method: 'POST',
+    url: '/api/conductor/alta',
+    headers: cabeceras(uuid),
+    payload: {
+      nombre: 'Ana Ondo', telefono, matricula: `GE-A${sufijoUnico()}`,
+      marca: 'Kia Rio', carroceria: 'turismo',
+    },
+  });
+  assert.equal(alta3.json().estadoVerificacion, 'suspendido', 'un suspendido no se reactiva solo con reenviar');
 });
 
 test('alta de taxista: valida los datos y no deja robar una matrícula ajena', async () => {

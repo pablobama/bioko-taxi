@@ -146,8 +146,18 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
       let conductorId: number;
       if ((existente.rowCount ?? 0) > 0) {
         conductorId = existente.rows[0].id;
+        // Auto-aceptar (decisión del 2026-07-28, «por ahora», ver
+        // PENDIENTES.md P21-01) también al reenviar el alta, no solo al
+        // crearla: si no, alguien que ya tenía una fila 'pendiente' de antes
+        // de esta decisión se quedaba pendiente para siempre, porque el
+        // único sitio donde se ponía 'verificado' era el INSERT. No toca
+        // 'suspendido' ni 'bloqueado': eso lo decide el operador, y volver a
+        // enviar el formulario no puede servir para saltárselo.
         await cliente.query(
-          `UPDATE conductor SET nombre = $2, correo = COALESCE($3, correo) WHERE id = $1`,
+          `UPDATE conductor SET nombre = $2, correo = COALESCE($3, correo),
+             estado_verificacion = CASE WHEN estado_verificacion = 'pendiente'
+               THEN 'verificado' ELSE estado_verificacion END
+           WHERE id = $1`,
           [conductorId, nombre, correo],
         );
       } else {
