@@ -145,9 +145,12 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
           [conductorId, nombre, correo],
         );
       } else {
+        // Verificado de entrada, sin revisión manual: todavía no hay panel de
+        // operador desde el que comprobar los datos (pendiente, ver
+        // PENDIENTES.md). Cuando exista, esto vuelve a nacer 'pendiente'.
         const creado = await cliente.query(
           `INSERT INTO conductor (telefono, nombre, correo, estado_verificacion)
-           VALUES ($1, $2, $3, 'pendiente') RETURNING id`,
+           VALUES ($1, $2, $3, 'verificado') RETURNING id`,
           [telefono, nombre, correo],
         );
         conductorId = creado.rows[0].id;

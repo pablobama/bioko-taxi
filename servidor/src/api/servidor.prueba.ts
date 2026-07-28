@@ -129,7 +129,7 @@ test('API: pedir taxi crea la solicitud, la despacha y es idempotente en la vent
   assert.equal(segunda.solicitudId, primera.solicitudId);
 });
 
-test('sesión: dice qué es el dispositivo, y el alta del taxista queda pendiente de verificar', async () => {
+test('sesión: dice qué es el dispositivo, y el alta del taxista queda verificada sin revisión (P21-01)', async () => {
   const uuid = randomUUID();
   const sinRol = await app.inject({ method: 'GET', url: '/api/sesion', headers: cabeceras(uuid) });
   assert.equal(sinRol.json().rol, null, 'un dispositivo nuevo no tiene rol');
@@ -145,13 +145,15 @@ test('sesión: dice qué es el dispositivo, y el alta del taxista queda pendient
     },
   });
   assert.equal(alta.statusCode, 200, alta.body);
-  assert.equal(alta.json().estadoVerificacion, 'pendiente');
-  assert.match(alta.json().aviso, /pendiente de verificación/);
+  // Sin panel de operador todavía (PENDIENTES.md P21-01) no hay quién revise
+  // los datos, así que el alta se acepta verificada de entrada.
+  assert.equal(alta.json().estadoVerificacion, 'verificado');
+  assert.equal(alta.json().aviso, null);
 
   const sesion = await app.inject({ method: 'GET', url: '/api/sesion', headers: cabeceras(uuid) });
   const datos = sesion.json();
   assert.equal(datos.rol, 'conductor');
-  assert.equal(datos.conductor.verificado, false, 'sin verificar no puede trabajar');
+  assert.equal(datos.conductor.verificado, true, 'verificado de entrada: puede trabajar ya');
   assert.equal(datos.conductor.carroceria, '4x4');
   assert.equal(datos.conductor.plazas, 4);
   assert.equal(datos.conductor.reputacion.media, null);

@@ -200,6 +200,15 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   Ventaja: no se molesta dos veces; coste: en zonas pequeñas la re-emisión
   puede quedarse sin candidatos. Decidir con datos reales si conviene relajar.
 
+- **[P21-01] Panel de operador — pendiente de crear.** No existe ninguna
+  interfaz para verificar taxistas ni resolver reclamaciones: la única forma
+  de tocar esos datos hoy es una consulta SQL directa. Mientras no exista, el
+  alta de conductor se acepta como `verificado` sin revisión (ver
+  `sesion.ts`, alta de conductor) — cuando se construya el panel, eso vuelve a
+  nacer `pendiente`. El panel se detectará por el dispositivo que lo usa (una
+  lista de uuids de operador, igual que hoy se distingue cliente de
+  conductor), no por login con contraseña.
+
 ## Resueltos
 
 - **[P5-01] Entrega de eventos tras el commit** — resuelto en el paso 6 con
