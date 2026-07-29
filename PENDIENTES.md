@@ -118,11 +118,12 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   reales deben usar la app Android (`android/`), que tiene FCM y servicio en
   primer plano: la web no recibe avisos con la pantalla apagada.
 
-- **[P20-01] Las rutas no conocen los sentidos únicos.** El plano compilado
-  solo trae geometría, no la etiqueta `oneway`, así que una ruta dibujada
-  puede ir a contramano. Tampoco hay giros prohibidos ni semáforos. Sirve
-  como guía visual de por dónde va el coche, no como navegación paso a paso.
-  Añadir `oneway` al compilador es fácil; que el grafo lo respete, también.
+- **[P20-01] Las rutas y los sentidos únicos** — parcialmente resuelto el
+  2026-07-29: el plano (versión 3) trae la etiqueta `oneway` de OSM (466 vías
+  de sentido único en Malabo, rotondas incluidas) y el grafo la respeta, con
+  reintento de rescate si los datos no dejan ningún camino legal. Sigue sin
+  haber giros prohibidos ni semáforos: sigue siendo guía visual, no
+  navegación paso a paso.
 
 - **[P20-02] El tiempo estimado sigue usando la línea recta.** Ahora que hay
   ruta por carretera podría calcularse sobre su distancia real, que es bastante

@@ -6,16 +6,21 @@
 // conexión, igual que el mapa.
 //
 // Límites honestos, porque el plano compilado no los incluye:
-//   - No se conocen los sentidos únicos: una ruta puede ir a contramano.
 //   - No se conocen giros prohibidos ni semáforos.
 //   - Las calles se simplificaron a 8 m, así que la línea corta ligeramente
 //     las curvas cerradas.
+// Los sentidos únicos SÍ se conocen (plano versión 3, etiqueta oneway de
+// OSM) y la ruta los respeta. Con una salvedad: si el único camino posible
+// va a contramano —un hueco en los datos, o un sentido único cortado por el
+// borde del recuadro— se prefiere enseñar esa ruta a no enseñar nada, igual
+// que antes de conocer los sentidos.
 // Es una guía visual de por dónde va el coche, no una navegación paso a paso.
 // Si no hay camino (calles sin conectar en los datos), quien llama dibuja la
 // línea recta de siempre.
 
 type Plano = {
-  vias: Array<{ c: number; p: number[] }>;
+  // s: 1 → solo se circula en el orden de los puntos (sentido único).
+  vias: Array<{ c: number; p: number[]; s?: number }>;
 };
 
 export interface Punto {
@@ -35,6 +40,10 @@ type Grafo = {
   inicio: Int32Array;
   vecinos: Int32Array;
   pesos: Float32Array;
+  // 1 si la arista se puede recorrer respetando el sentido de circulación;
+  // 0 si existe solo como marcha atrás de un sentido único (se usa únicamente
+  // en el reintento de rescate, cuando no hay ningún camino legal).
+  legales: Uint8Array;
 };
 
 const clave = (lat: number, lng: number): string => `${lat.toFixed(5)},${lng.toFixed(5)}`;
@@ -54,7 +63,8 @@ function construir(plano: Plano): Grafo {
   const indices = new Map<string, number>();
   const lats: number[] = [];
   const lngs: number[] = [];
-  const aristas: Array<[number, number, number]> = [];
+  // [desde, hasta, metros, legal]
+  const aristas: Array<[number, number, number, number]> = [];
 
   const indiceDe = (lat: number, lng: number): number => {
     const k = clave(lat, lng);
@@ -69,14 +79,16 @@ function construir(plano: Plano): Grafo {
   };
 
   for (const via of plano.vias) {
+    const unico = via.s === 1;
     let anterior = -1;
     for (let i = 0; i < via.p.length; i += 2) {
       const actual = indiceDe(via.p[i], via.p[i + 1]);
       if (anterior >= 0 && anterior !== actual) {
         const d = metros(lats[anterior], lngs[anterior], lats[actual], lngs[actual]);
-        // Sin datos de sentido único: el grafo es bidireccional.
-        aristas.push([anterior, actual, d]);
-        aristas.push([actual, anterior, d]);
+        // En sentido único la vuelta existe pero marcada como ilegal: solo la
+        // usa el reintento de rescate cuando no hay ningún camino legal.
+        aristas.push([anterior, actual, d, 1]);
+        aristas.push([actual, anterior, d, unico ? 0 : 1]);
       }
       anterior = actual;
     }
@@ -92,10 +104,12 @@ function construir(plano: Plano): Grafo {
   const cursor = cuenta.slice();
   const vecinos = new Int32Array(aristas.length);
   const pesos = new Float32Array(aristas.length);
-  for (const [desde, hasta, peso] of aristas) {
+  const legales = new Uint8Array(aristas.length);
+  for (const [desde, hasta, peso, legal] of aristas) {
     const pos = cursor[desde]++;
     vecinos[pos] = hasta;
     pesos[pos] = peso;
+    legales[pos] = legal;
   }
 
   return {
@@ -105,6 +119,7 @@ function construir(plano: Plano): Grafo {
     inicio,
     vecinos,
     pesos,
+    legales,
   };
 }
 
@@ -222,50 +237,62 @@ export async function calcularRuta(desde: Punto, hasta: Punto): Promise<Ruta | n
   if (inicio.indice === fin.indice) return null;
 
   const n = g.lat.length;
-  const coste = new Float64Array(n).fill(Infinity);
-  const previo = new Int32Array(n).fill(-1);
-  const cerrado = new Uint8Array(n);
-  const cola = new Monticulo();
 
-  const heuristica = (i: number): number =>
-    metros(g.lat[i], g.lng[i], g.lat[fin.indice], g.lng[fin.indice]);
+  const buscar = (respetarSentido: boolean): { puntos: Punto[]; metros: number } | null => {
+    const coste = new Float64Array(n).fill(Infinity);
+    const previo = new Int32Array(n).fill(-1);
+    const cerrado = new Uint8Array(n);
+    const cola = new Monticulo();
 
-  coste[inicio.indice] = 0;
-  cola.meter(inicio.indice, heuristica(inicio.indice));
+    const heuristica = (i: number): number =>
+      metros(g.lat[i], g.lng[i], g.lat[fin.indice], g.lng[fin.indice]);
 
-  let encontrado = false;
-  while (!cola.vacio) {
-    const actual = cola.sacar();
-    if (cerrado[actual]) continue;
-    cerrado[actual] = 1;
-    if (actual === fin.indice) {
-      encontrado = true;
-      break;
-    }
-    for (let a = g.inicio[actual]; a < g.inicio[actual + 1]; a += 1) {
-      const vecino = g.vecinos[a];
-      if (cerrado[vecino]) continue;
-      const nuevo = coste[actual] + g.pesos[a];
-      if (nuevo < coste[vecino]) {
-        coste[vecino] = nuevo;
-        previo[vecino] = actual;
-        cola.meter(vecino, nuevo + heuristica(vecino));
+    coste[inicio.indice] = 0;
+    cola.meter(inicio.indice, heuristica(inicio.indice));
+
+    let encontrado = false;
+    while (!cola.vacio) {
+      const actual = cola.sacar();
+      if (cerrado[actual]) continue;
+      cerrado[actual] = 1;
+      if (actual === fin.indice) {
+        encontrado = true;
+        break;
+      }
+      for (let a = g.inicio[actual]; a < g.inicio[actual + 1]; a += 1) {
+        if (respetarSentido && g.legales[a] === 0) continue;
+        const vecino = g.vecinos[a];
+        if (cerrado[vecino]) continue;
+        const nuevo = coste[actual] + g.pesos[a];
+        if (nuevo < coste[vecino]) {
+          coste[vecino] = nuevo;
+          previo[vecino] = actual;
+          cola.meter(vecino, nuevo + heuristica(vecino));
+        }
       }
     }
-  }
-  if (!encontrado) return null;
+    if (!encontrado) return null;
 
-  const puntos: Punto[] = [];
-  for (let i = fin.indice; i >= 0; i = previo[i]) {
-    puntos.push({ lat: g.lat[i], lng: g.lng[i] });
-  }
-  puntos.reverse();
+    const puntos: Punto[] = [];
+    for (let i = fin.indice; i >= 0; i = previo[i]) {
+      puntos.push({ lat: g.lat[i], lng: g.lng[i] });
+    }
+    puntos.reverse();
+    return { puntos, metros: coste[fin.indice] };
+  };
+
+  // Primero respetando los sentidos únicos; si los datos no dejan ningún
+  // camino legal (hueco de OSM o sentido único cortado por el borde del
+  // plano), se reintenta ignorándolos: enseñar una ruta a contramano es
+  // mejor que no enseñar nada, que era el comportamiento de siempre.
+  const camino = buscar(true) ?? buscar(false);
+  if (!camino) return null;
 
   // Se cosen los extremos reales: del punto pedido a la calle y viceversa.
   const aproximada = inicio.distanciaM > 25 || fin.distanciaM > 25;
   return {
-    puntos: [desde, ...puntos, hasta],
-    distanciaM: coste[fin.indice] + inicio.distanciaM + fin.distanciaM,
+    puntos: [desde, ...camino.puntos, hasta],
+    distanciaM: camino.metros + inicio.distanciaM + fin.distanciaM,
     aproximada,
   };
 }

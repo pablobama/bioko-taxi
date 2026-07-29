@@ -29,6 +29,21 @@ const CLASES = {
 const DECIMALES = 5; // ~1 m: de sobra para dibujar un plano de ciudad
 const TOLERANCIA_M = 8; // simplificación Douglas-Peucker
 
+// Sentido único, según el etiquetado de OSM. Devuelve:
+//   1  → solo se circula en el orden en que vienen los puntos
+//   -1 → solo al revés (el compilador lo normaliza dando la vuelta a la vía)
+//   0  → en ambos sentidos
+// Las rotondas son de sentido único por convención aunque no lleven la
+// etiqueta; es la implicación de OSM más relevante en Malabo.
+function sentidoUnico(tags) {
+  const oneway = tags?.oneway;
+  if (oneway === 'yes' || oneway === '1' || oneway === 'true') return 1;
+  if (oneway === '-1' || oneway === 'reverse') return -1;
+  if (oneway === 'no') return 0;
+  if (tags?.junction === 'roundabout' || tags?.junction === 'circular') return 1;
+  return 0;
+}
+
 function redondear(n) {
   return Number(n.toFixed(DECIMALES));
 }
@@ -171,7 +186,15 @@ async function principal() {
       .filter(Boolean)
       .map((p) => ({ lat: redondear(p.lat), lon: redondear(p.lon) }));
     if (crudos.length < 2) continue;
-    trazados.push({ clase: CLASES[elemento.tags?.highway] ?? 4, puntos: crudos });
+    // oneway=-1 (contra el orden de los puntos) se normaliza aquí dando la
+    // vuelta a la vía: el fichero final solo conoce «único» o «ambos».
+    const sentido = sentidoUnico(elemento.tags);
+    if (sentido === -1) crudos.reverse();
+    trazados.push({
+      clase: CLASES[elemento.tags?.highway] ?? 4,
+      puntos: crudos,
+      unico: sentido !== 0,
+    });
   }
 
   // Cruces: todo punto que aparece en más de un sitio. Hay que conservarlos
@@ -194,7 +217,8 @@ async function principal() {
   let puntosOriginales = 0;
   let puntosFinales = 0;
   let cruces = 0;
-  for (const { clase, puntos } of trazados) {
+  let deSentidoUnico = 0;
+  for (const { clase, puntos, unico } of trazados) {
     puntosOriginales += puntos.length;
 
     // Se simplifica por tramos entre cruces: como Douglas-Peucker respeta los
@@ -220,7 +244,10 @@ async function principal() {
       planas.push(p.lat, p.lon);
       if (esCruce(p)) cruces += 1;
     }
-    vias.push({ c: clase, p: planas });
+    // «s: 1» solo en las de sentido único: omitir el campo en el resto ahorra
+    // unos KB y deja el formato compatible con lo que ya había.
+    if (unico) deSentidoUnico += 1;
+    vias.push(unico ? { c: clase, p: planas, s: 1 } : { c: clase, p: planas });
   }
 
   const agua = [];
@@ -234,7 +261,7 @@ async function principal() {
   }
 
   const salida = {
-    version: 2,
+    version: 3,
     fuente: 'OpenStreetMap contributors (ODbL)',
     recuadro: RECUADRO,
     vias,
@@ -257,7 +284,7 @@ async function principal() {
   writeFileSync(ruta, json);
 
   const kb = (n) => `${(n / 1024).toFixed(1)} KB`;
-  console.log(`Vías: ${vias.length}`);
+  console.log(`Vías: ${vias.length} (${deSentidoUnico} de sentido único)`);
   console.log(`Costa: ${agua.length} tramos (${puntosCosta} puntos originales)`);
   console.log(`Puntos: ${puntosOriginales} → ${puntosFinales} (simplificado a ${TOLERANCIA_M} m)`);
   console.log(`Cruces conservados: ${cruces}`);

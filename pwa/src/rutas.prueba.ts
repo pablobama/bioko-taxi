@@ -80,3 +80,57 @@ test('calcular una ruta es rápido: el conductor no puede esperar', async () => 
   assert.ok(porRuta < 150, `cada ruta tarda ${porRuta.toFixed(0)} ms; demasiado para un móvil lento`);
   console.log(`      (${porRuta.toFixed(1)} ms por ruta)`);
 });
+
+// --- Sentidos únicos (plano versión 3) --------------------------------------
+//
+// Con un plano sintético diminuto: una manzana cuadrada donde el lado A-B es
+// de sentido único (solo A→B) y el rodeo A-D-C-B es de doble sentido.
+//
+//   B ←—— C
+//   ↑↕     ↕      A→B: único (la ↑ del lado izquierdo)
+//   A ——→ D      resto: ambos sentidos
+//
+// Cada lado mide ~111 m (0.001° de latitud).
+const A = { lat: 3.75, lng: 8.78 };
+const B = { lat: 3.751, lng: 8.78 };
+const C = { lat: 3.751, lng: 8.781 };
+const D = { lat: 3.75, lng: 8.781 };
+const aplanar = (...puntos: Array<{ lat: number; lng: number }>) =>
+  puntos.flatMap((p) => [p.lat, p.lng]);
+
+test('la ruta respeta un sentido único: a favor va directa, en contra rodea la manzana', async () => {
+  try {
+    cargarPlano({
+      vias: [
+        { c: 3, p: aplanar(A, B), s: 1 },
+        { c: 3, p: aplanar(A, D, C, B) },
+      ],
+    });
+    const aFavor = await calcularRuta(A, B);
+    const enContra = await calcularRuta(B, A);
+    assert.notEqual(aFavor, null);
+    assert.notEqual(enContra, null);
+    // A favor: los ~111 m del lado único. En contra: los ~333 m del rodeo.
+    assert.ok(aFavor!.distanciaM < 150, `directa: ${Math.round(aFavor!.distanciaM)} m`);
+    assert.ok(enContra!.distanciaM > 300, `el rodeo debe medir ~333 m, mide ${Math.round(enContra!.distanciaM)} m`);
+    // Y el rodeo pasa de verdad por la otra esquina de la manzana.
+    assert.ok(
+      enContra!.puntos.some((p) => Math.abs(p.lat - D.lat) < 1e-9 && Math.abs(p.lng - D.lng) < 1e-9),
+      'la ruta en contra debe pasar por D',
+    );
+  } finally {
+    cargarPlano(plano);
+  }
+});
+
+test('rescate: si el ÚNICO camino va a contramano, se enseña igual antes que nada', async () => {
+  try {
+    // Solo existe el lado único A→B: de B a A no hay camino legal.
+    cargarPlano({ vias: [{ c: 3, p: aplanar(A, B), s: 1 }] });
+    const enContra = await calcularRuta(B, A);
+    assert.notEqual(enContra, null, 'el reintento sin sentidos debe encontrar el camino');
+    assert.ok(enContra!.distanciaM < 150);
+  } finally {
+    cargarPlano(plano);
+  }
+});
