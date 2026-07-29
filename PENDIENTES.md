@@ -201,19 +201,24 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   Ventaja: no se molesta dos veces; coste: en zonas pequeñas la re-emisión
   puede quedarse sin candidatos. Decidir con datos reales si conviene relajar.
 
-- **[P21-01] Panel de operador — primera versión.** `PanelOperador.tsx` +
-  `api/operador.ts`: verificar/suspender/bloquear conductores y ver números
-  gruesos del sistema (conductores por estado, en servicio, solicitudes,
-  pasajeros, saldo total). Se detecta al operador por el dispositivo
-  (`UUIDS_OPERADOR`, uuids separados por comas), no por contraseña. Queda
-  fuera de esta primera versión, todavía sin hacer:
-  - Resolver reclamaciones (incidencias declaradas tras la recogida).
-  - Paginación de verdad en la lista de conductores (hoy un `LIMIT 200` sin
-    ordenar por relevancia; suficiente mientras la lista sea corta).
+- **[P21-01] Panel de operador — segunda versión (2026-07-30).** Cinco
+  secciones: Resumen (números con contadores de trabajo pendiente),
+  Incidencias (la cola de revisión manual, con perdonar/sancionar y el log
+  de transiciones del viaje), Conductores (búsqueda por nombre/teléfono/
+  matrícula y ficha completa: vehículo, saldo, suscripción, reputación,
+  historial, recargas), Pasajeros (búsqueda, ficha con strikes y viajes,
+  desbloquear) y Pagos (confirmar/rechazar recargas). Sigue pendiente:
+  - Bloques 1, 4, 5 y 6 de la propuesta del 2026-07-30: cuadro de mandos
+    con las alarmas `alarma_*` (siguen sin consumidor), central telefónica
+    (crear solicitud en nombre de quien llama; el dominio ya lo soporta),
+    editor del gazetteer, bandas de precio y parámetros del sistema.
+  - Cambiar el rol de un dispositivo (cliente ↔ conductor): el esquema exige
+    hoy que `tipo` no sea NULL y las solicitudes cuelgan del dispositivo;
+    pide diseño propio, no un simple UPDATE.
+  - Paginación de verdad en las listas (hoy LIMIT 100-200).
   - El alta de conductor sigue naciendo `verificado` sin revisión (decisión
-    explícita del 2026-07-28, «por ahora»): con el panel ya montado, decidir
-    si conviene que vuelva a nacer `pendiente` para que la verificación
-    signifique algo.
+    explícita del 2026-07-28, «por ahora»): con la verificación ya cómoda en
+    el panel, decidir si vuelve a nacer `pendiente`.
 
 - **[P21-02] Las llamadas necesitan un TURN configurado para conectar entre
   redes móviles.** Sin puente, dos teléfonos detrás del NAT de su operador no
@@ -225,6 +230,27 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   Hasta que una de las dos esté puesta en Render, las llamadas solo conectan
   entre dispositivos que pueden verse directamente (misma red, o NAT
   benigno).
+
+- **[P22-01] Taxis en vivo en el mapa del pasajero.** Pedido el 2026-07-30:
+  al abrir la app, el pasajero debería ver los taxis EN SERVICIO de su zona
+  moviéndose por el plano (como hacen las grandes apps de VTC). Hoy el mapa
+  solo enseña el taxi propio cuando ya hay viaje. Requiere: un endpoint que
+  dé las posiciones recientes de los conductores DISPONIBLES de la zona (sin
+  identificarlos: puntos anónimos), refresco periódico o SSE, y cuidado con
+  la privacidad del conductor (posición redondeada o retrasada, nunca su
+  identidad). El heartbeat ya guarda posición, así que los datos existen.
+
+- **[P22-02] Pasajeros en vivo en el mapa del taxista.** Pedido el
+  2026-07-30, el espejo de P22-01: el taxista debería ver a los usuarios
+  activos de su zona moviéndose por el plano, dibujados con forma de persona
+  (muñeco) en color ROJO. Ojo, aquí la privacidad pesa más todavía: la
+  posición del pasajero solo se conoce mientras la app está abierta
+  (enviarPosicion existe solo durante un viaje activo hoy), así que haría
+  falta que la PWA del pasajero comparta posición también en reposo — eso
+  pide consentimiento explícito, anonimato total (puntos sin identidad, con
+  redondeo) y apagarse solo al cerrar la app. Valorar si de verdad compensa
+  frente a enseñar solo «cuánta gente pide en cada zona» (calor por zonas,
+  sin puntos individuales).
 
 ## Resueltos
 

@@ -159,6 +159,18 @@ body {
   flex-wrap: wrap;
 }
 
+/* Una tarjeta del panel que además es botón (abre la ficha): mismo aspecto
+   que .oferta, pero comportamiento de botón sin heredar el centrado. */
+.oferta-boton {
+  border: 1px solid var(--borde);
+  text-align: left;
+  align-items: flex-start;
+  font-family: inherit;
+  font-size: 1rem;
+  color: var(--hueso);
+  cursor: pointer;
+}
+
 .hoja-completa .fila button {
   flex: 1 1 30%;
   width: auto;

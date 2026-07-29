@@ -189,6 +189,93 @@ export interface EstadisticasOperador {
   solicitudes: { total: number; completadas: number; sin_taxi: number; ultimas_24h: number };
   pasajeros: number;
   saldoTotalMonederosXaf: number;
+  incidenciasPendientes: number;
+  recargasPendientes: number;
+}
+
+export interface ViajeResumenOperador {
+  id: number;
+  estado: string;
+  creada_en: string;
+  origen: string;
+  destino: string;
+  conductor?: string | null;
+}
+
+export interface FichaConductorOperador {
+  id: number;
+  nombre: string;
+  telefono: string;
+  correo: string | null;
+  estado_verificacion: string;
+  suscrito_hasta: string | null;
+  suscripcionVigente: boolean;
+  matricula: string | null;
+  marca: string | null;
+  color: string | null;
+  carroceria: string | null;
+  plazas: number | null;
+  presencia: string | null;
+  saldo_xaf: number;
+  reputacion: { media: number | null; valoraciones: number };
+  viajes: { completados: number; cancelados: number; ausencias: number; aceptados: number };
+  ofertas: { recibidas: number; aceptadas: number; rechazadas: number };
+  ultimosViajes: ViajeResumenOperador[];
+  recargas: Array<{
+    id: number; importeXaf: number; metodo: string; referencia: string;
+    estado: string; solicitadaEn: string;
+  }>;
+}
+
+export interface PasajeroOperador {
+  dispositivo_id: number;
+  telefono: string | null;
+  correo: string | null;
+  nombre: string | null;
+  strikes: number;
+  bloqueado_en: string | null;
+  creado_en: string;
+  viajes: number;
+}
+
+export interface FichaPasajeroOperador {
+  dispositivo_id: number;
+  telefono: string | null;
+  correo: string | null;
+  nombre: string | null;
+  edad: number | null;
+  genero: string | null;
+  strikes: number;
+  bloqueado_en: string | null;
+  creado_en: string;
+  viajes: { pedidos: number; completados: number; cancelados: number; ausencias: number };
+  ultimosViajes: ViajeResumenOperador[];
+}
+
+export interface IncidenciaOperador {
+  id: number;
+  tipo: string;
+  descripcion: string | null;
+  creada_en: string;
+  resuelta_por: string | null;
+  resuelta_en: string | null;
+  resolucion: string | null;
+  solicitud_id: number;
+  estado_viaje: string;
+  telefono_cliente: string;
+  dispositivo_cliente_id: number;
+  strikes: number;
+  bloqueado_en: string | null;
+  conductor: string;
+  origen: string;
+  destino: string;
+}
+
+export interface TransicionOperador {
+  estado_anterior: string | null;
+  estado_nuevo: string;
+  actor: string;
+  creado_en: string;
 }
 
 export interface RecargaOperador {
@@ -399,9 +486,45 @@ export const api = {
     ),
 
   // --- Panel de operador ---------------------------------------------------
-  conductoresOperador: (estado?: string) =>
-    pedirJson<{ conductores: ConductorOperador[] }>(
-      `/api/operador/conductores${estado ? `?estado=${estado}` : ''}`,
+  conductoresOperador: (estado?: string, q?: string) => {
+    const partes = [
+      estado ? `estado=${estado}` : '',
+      q ? `q=${encodeURIComponent(q)}` : '',
+    ].filter(Boolean);
+    return pedirJson<{ conductores: ConductorOperador[] }>(
+      `/api/operador/conductores${partes.length ? `?${partes.join('&')}` : ''}`,
+    );
+  },
+
+  fichaConductorOperador: (id: number) =>
+    pedirJson<FichaConductorOperador>(`/api/operador/conductores/${id}`),
+
+  pasajerosOperador: (q?: string) =>
+    pedirJson<{ pasajeros: PasajeroOperador[] }>(
+      `/api/operador/pasajeros${q ? `?q=${encodeURIComponent(q)}` : ''}`,
+    ),
+
+  fichaPasajeroOperador: (dispositivoId: number) =>
+    pedirJson<FichaPasajeroOperador>(`/api/operador/pasajeros/${dispositivoId}`),
+
+  desbloquearPasajero: (dispositivoId: number) =>
+    pedirJson<{ dispositivo_id: number; strikes: number; bloqueado_en: string | null }>(
+      `/api/operador/pasajeros/${dispositivoId}/desbloquear`,
+      { method: 'POST', body: '{}' },
+    ),
+
+  incidenciasOperador: (estado?: 'pendientes' | 'resueltas') =>
+    pedirJson<{ incidencias: IncidenciaOperador[] }>(
+      `/api/operador/incidencias${estado === 'resueltas' ? '?estado=resueltas' : ''}`,
+    ),
+
+  historialIncidencia: (id: number) =>
+    pedirJson<{ transiciones: TransicionOperador[] }>(`/api/operador/incidencias/${id}/historial`),
+
+  resolverIncidencia: (id: number, accion: 'sancionar' | 'perdonar') =>
+    pedirJson<{ incidenciaId: number; resolucion: string; strikes: number | null; bloqueado: boolean }>(
+      `/api/operador/incidencias/${id}/resolver`,
+      { method: 'POST', body: JSON.stringify({ accion }) },
     ),
 
   cambiarEstadoConductor: (conductorId: number, estado: string) =>
