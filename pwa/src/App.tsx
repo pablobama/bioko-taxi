@@ -134,6 +134,38 @@ function sesionGuardada(): Sesion | null {
   }
 }
 
+// Enlace de activación del operador: ?operador=<uuid>. Existe porque en un
+// navegador móvil no hay consola donde pegar el uuid a mano.
+//
+// A diferencia de ?dispositivo= (solo pruebas locales, sería regalar la
+// suplantación), esto sí funciona en producción — pero con una salvaguarda:
+// no se toca NADA hasta que el servidor confirma que ese uuid es de
+// operador. Un enlace con un uuid inventado no puede costarle su identidad a
+// un pasajero que lo abra por error o por malicia: se ignora y ya.
+//
+// El uuid se borra de la barra de direcciones al activarse, para que no se
+// quede en el historial de navegación a la vista de cualquiera.
+async function activarOperadorPorUrl(): Promise<boolean> {
+  const candidato = new URLSearchParams(window.location.search).get('operador');
+  if (!candidato || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidato)) {
+    return false;
+  }
+  try {
+    const respuesta = await fetch('/api/sesion', {
+      headers: { 'x-dispositivo': candidato.toLowerCase() },
+    });
+    const sesion = (await respuesta.json()) as { rol?: string };
+    if (sesion.rol !== 'operador') return false;
+  } catch {
+    return false;
+  }
+  localStorage.setItem('dispositivo', candidato.toLowerCase());
+  localStorage.removeItem(CLAVE_SESION);
+  localStorage.removeItem('solicitudActiva');
+  window.history.replaceState(null, '', window.location.pathname);
+  return true;
+}
+
 export default function App() {
   const [pantalla, setPantalla] = useState<Pantalla>('cargando');
   const [perfil, setPerfil] = useState<Perfil | null>(null);
@@ -195,7 +227,9 @@ export default function App() {
 
   useEffect(() => {
     api.mapa().then((m) => setPuntos(m.referencias)).catch(() => undefined);
-    void cargarSesion();
+    // El enlace de activación tiene que resolverse ANTES de preguntar quién
+    // soy: si no, la primera sesión se pediría con la identidad vieja.
+    void activarOperadorPorUrl().then(() => cargarSesion());
   }, []);
 
   // Aviso visible cuando la identidad o la ubicación vienen forzadas por la
