@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
-import { anunciarLlamadaEntrante, sonarTimbreLlamada } from './sonidos';
+import { anunciarLlamadaEntrante, sonarTimbreLlamada, sonarTonoLlamando } from './sonidos';
 
 export type EstadoLlamada =
   // Sin llamada.
@@ -344,6 +344,15 @@ export function useLlamada({ vivo, locale = 'es-ES' }: { vivo: boolean; locale?:
     const t = setInterval(sonarTimbreLlamada, 2400);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [estado]);
+
+  // Tono de retorno para quien llama: el «tuuu… tuuu» de espera. La cadencia
+  // clásica es un segundo de tono y unos tres de silencio.
+  useEffect(() => {
+    if (estado !== 'saliente') return;
+    sonarTonoLlamando();
+    const t = setInterval(sonarTonoLlamando, 4000);
+    return () => clearInterval(t);
   }, [estado]);
 
   // Si el viaje termina, la llamada se cae con él.

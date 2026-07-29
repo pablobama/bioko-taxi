@@ -208,17 +208,33 @@ export function registrarRutasLlamadas(
       throw errorHttp(409, 'Solo se puede llamar mientras el viaje está en curso.');
     }
 
-    const servidores: Array<{ urls: string; username?: string; credential?: string }> = [
+    const servidores: Array<{ urls: string | string[]; username?: string; credential?: string }> = [
       { urls: process.env.STUN_URL ?? 'stun:stun.l.google.com:19302' },
     ];
-    if (process.env.TURN_URL && process.env.TURN_SECRETO) {
-      servidores.push({
-        urls: process.env.TURN_URL,
-        ...credencialesEfimeras(process.env.TURN_SECRETO),
-      });
+    // Dos maneras de tener puente, excluyentes:
+    //   - TURN_SECRETO: coturn propio con credenciales efímeras (HMAC), la
+    //     opción buena para producción (ver infraestructura/turn/LEEME.md).
+    //   - TURN_USUARIO + TURN_CLAVE: credenciales fijas de un TURN alquilado
+    //     (Metered, Twilio…). Peor —usuario y clave son eternos y un tercero
+    //     ve los metadatos— pero se monta en cinco minutos y sin máquina
+    //     propia. Para el piloto vale; el LEEME explica el paso a coturn.
+    // TURN_URL admite varias URLs separadas por comas (los alquilados dan
+    // udp, tcp y tls a la vez, y cada red deja pasar una distinta).
+    if (process.env.TURN_URL) {
+      const urls = process.env.TURN_URL.split(',').map((u) => u.trim()).filter(Boolean);
+      if (process.env.TURN_SECRETO) {
+        servidores.push({ urls, ...credencialesEfimeras(process.env.TURN_SECRETO) });
+      } else if (process.env.TURN_USUARIO && process.env.TURN_CLAVE) {
+        servidores.push({
+          urls,
+          username: process.env.TURN_USUARIO,
+          credential: process.env.TURN_CLAVE,
+        });
+      }
     }
+    const hayTurn = servidores.length > 1;
     // Sin caché: cada llamada recibe credenciales nuevas y caducas.
     void reply.header('cache-control', 'no-store');
-    return { servidores, hayTurn: Boolean(process.env.TURN_URL) };
+    return { servidores, hayTurn };
   });
 }

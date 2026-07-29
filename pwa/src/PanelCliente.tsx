@@ -230,6 +230,9 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
   const gracia = useRef<{ seg: number; recibidaEn: number } | null>(null);
   const cerrarSse = useRef<(() => void) | null>(null);
   const avisoLlegadaDado = useRef(false);
+  // Ver el efecto que deduce el origen por GPS: si se quitó a mano, no se
+  // vuelve a deducir hasta el siguiente viaje.
+  const origenQuitadoAMano = useRef(false);
   // Avisos sonoros: se disparan al CAMBIAR de estado, no en cada refresco.
   const estadoAnterior = useRef<string | null>(null);
 
@@ -257,6 +260,8 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
     avisoLlegadaDado.current = false;
     estadoAnterior.current = null;
     gracia.current = null;
+    // Viaje nuevo, sitio probablemente nuevo: se vuelve a deducir el origen.
+    origenQuitadoAMano.current = false;
     setPedidoEn(null);
     setFase('destino');
   }, []);
@@ -359,8 +364,14 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
   }, []);
 
   // Con GPS y mapa cargados, el origen se deduce: la referencia más cercana.
+  //
+  // Salvo si la persona acaba de quitarlo a mano: sin esta marca, el botón
+  // «cambiar» borraba el origen y este efecto lo volvía a rellenar en el
+  // mismo instante con la misma referencia — parecía que el botón no
+  // respondía, cuando en realidad respondía y se deshacía solo.
   useEffect(() => {
     if (origen || !coordenadas || puntos.length === 0) return;
+    if (origenQuitadoAMano.current) return;
     let mejor: PuntoMapa | null = null;
     let mejorDistancia = Number.POSITIVE_INFINITY;
     for (const punto of puntos) {
@@ -610,7 +621,7 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
             alCancelar: cancelar,
             alLimpiar: limpiar,
             alValorar: valorar,
-            alQuitarOrigen: () => setOrigen(null),
+            alQuitarOrigen: () => { origenQuitadoAMano.current = true; setOrigen(null); },
             alElegirDestino: (elegido) => { setDestino(elegido); setAviso(''); },
             alEscribirDestino: () => setEscribiendo(true),
             alLlamar: () => { if (detalle) llamada.llamar(detalle.solicitudId); },

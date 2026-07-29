@@ -214,6 +214,17 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
     si conviene que vuelva a nacer `pendiente` para que la verificación
     signifique algo.
 
+- **[P21-02] Las llamadas necesitan un TURN configurado para conectar entre
+  redes móviles.** Sin puente, dos teléfonos detrás del NAT de su operador no
+  pueden verse y la llamada acaba en «No se pudo conectar» (el código lo dice
+  en vez de dejar el «llamando…» eterno, pero no conecta). El servidor acepta
+  dos configuraciones: coturn propio (`TURN_URL` + `TURN_SECRETO`, ver
+  `infraestructura/turn/LEEME.md`) o un TURN alquilado con credenciales fijas
+  (`TURN_URL` + `TURN_USUARIO` + `TURN_CLAVE`), suficiente para el piloto.
+  Hasta que una de las dos esté puesta en Render, las llamadas solo conectan
+  entre dispositivos que pueden verse directamente (misma red, o NAT
+  benigno).
+
 ## Resueltos
 
 - **[P5-01] Entrega de eventos tras el commit** — resuelto en el paso 6 con

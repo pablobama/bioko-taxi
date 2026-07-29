@@ -118,10 +118,13 @@ export default function Mapa({
       ultimoCalculoTaxi.current = null;
       return;
     }
+    // ~22 m: suficiente para que la ruta siga al coche calle a calle ahora
+    // que el GPS del taxista llega en continuo, sin recalcular con el baile
+    // de un GPS parado. El cálculo en sí es barato (milisegundos).
     const previo = ultimoCalculoTaxi.current;
     const movido = previo === null
-      || Math.abs(previo.lat - taxi.lat) > 0.0004
-      || Math.abs(previo.lng - taxi.lng) > 0.0004;
+      || Math.abs(previo.lat - taxi.lat) > 0.0002
+      || Math.abs(previo.lng - taxi.lng) > 0.0002;
     if (!movido) return;
     ultimoCalculoTaxi.current = { lat: taxi.lat, lng: taxi.lng };
 

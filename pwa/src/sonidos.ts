@@ -275,3 +275,15 @@ export function anunciarLlamadaEntrante(locale = 'es-ES'): void {
   const f = FRASES[locale] ?? FRASES['es-ES'];
   hablar(f.llamadaEntrante, locale);
 }
+
+// Tono de retorno para quien LLAMA, mientras espera respuesta. Sin él, llamar
+// era mirar un «Llamando…» en silencio absoluto: imposible saber si la
+// llamada va, y de hecho la gente colgaba pensando que no funcionaba. Un
+// zumbido largo y grave, como el de un teléfono de verdad; se repite desde
+// llamada.ts mientras dure la espera. Sin vibración: quien llama ya tiene el
+// teléfono en la mano.
+export function sonarTonoLlamando(): void {
+  tocar([
+    { hz: 425.0, desdeSeg: 0, duracionSeg: 1.0, volumen: 0.14 },
+  ]);
+}

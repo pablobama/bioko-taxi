@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  abrirEventosConductor, api, coordenadasOportunistas,
+  abrirEventosConductor, api, coordenadasOportunistas, enPruebasLocales,
   type DatosConductor, type EstadoConductor, type PuntoMapa, type Zona,
 } from './api';
 import { mensajeDeError } from './conexion';
@@ -41,7 +41,25 @@ export default function PanelConductor({
   const [ocupado, setOcupado] = useState(false);
   const [enRecarga, setEnRecarga] = useState(false);
   const coordenadas = useRef<{ lat: number; lng: number } | null>(null);
+  // La misma posición, pero como estado: es lo que mueve el coche en el mapa.
+  // La referencia sola no basta — mutarla no repinta nada, y el mapa del
+  // taxista se quedaba con el coche clavado hasta el siguiente latido
+  // (20-30 s, más otros 60 de caché del GPS): conduciendo, eso es quedarse
+  // quieto en otra calle.
+  const [posicionCoche, setPosicionCoche] = useState<{ lat: number; lng: number } | null>(null);
   const ofertasAvisadas = useRef<Set<number>>(new Set());
+
+  // Cambia el estado solo si el coche se ha movido de verdad (~13 m): las
+  // lecturas de GPS parado bailan unos metros y repintarían el mapa en balde.
+  const moverCoche = useCallback((nueva: { lat: number; lng: number } | null) => {
+    if (!nueva) return;
+    setPosicionCoche((previa) => {
+      if (previa
+        && Math.abs(previa.lat - nueva.lat) < 0.00012
+        && Math.abs(previa.lng - nueva.lng) < 0.00012) return previa;
+      return nueva;
+    });
+  }, []);
 
   const llamada = useLlamada({ vivo: true, locale: localeVoz(idioma) });
   const recibirSenal = useRef<((id: number, s: SenalRecibida) => void) | null>(null);
@@ -130,6 +148,7 @@ export default function PanelConductor({
       // trabajar. Antes solo se leía estando dentro, así que a la hora de
       // elegir zona nunca se sabía dónde estaba el coche.
       coordenadas.current = await coordenadasOportunistas();
+      moverCoche(coordenadas.current);
       if (enServicio) {
         try {
           await api.heartbeat(coordenadas.current);
@@ -140,9 +159,36 @@ export default function PanelConductor({
       void refrescar();
     };
     void latir();
-    const temporizador = setInterval(latir, enServicio ? 20_000 : 30_000);
+    // Con pasajeros, el latido se acelera: es lo que actualiza la posición
+    // del coche que ve el pasajero en su mapa. A 20 s el taxi avanzaba a
+    // saltos de dos manzanas; a 10 s se mueve como un coche.
+    const conPasajeros = (estado?.pasajeros.length ?? 0) > 0;
+    const cadaMs = conPasajeros ? 10_000 : enServicio ? 20_000 : 30_000;
+    const temporizador = setInterval(latir, cadaMs);
     return () => clearInterval(temporizador);
-  }, [estado?.estado, refrescar]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [estado?.estado, estado?.pasajeros.length, refrescar]);
+
+  // GPS continuo mientras el panel está abierto: cada lectura mueve el coche
+  // en el mapa (y deja la posición fresca para el siguiente latido). El
+  // latido de 20-30 s sigue siendo quien habla con el servidor; esto solo
+  // alimenta la pantalla, que es donde 30 segundos de retraso se notan.
+  useEffect(() => {
+    // Con ?gps= forzado en localhost manda la posición fingida: el GPS real
+    // del ordenador (o su ausencia) no debe pisarla.
+    if (enPruebasLocales() && new URLSearchParams(window.location.search).has('gps')) return;
+    if (!('geolocation' in navigator)) return;
+    const vigilante = navigator.geolocation.watchPosition(
+      (p) => {
+        const nueva = { lat: p.coords.latitude, lng: p.coords.longitude };
+        coordenadas.current = nueva;
+        moverCoche(nueva);
+      },
+      () => undefined,
+      { enableHighAccuracy: true, maximumAge: 5000 },
+    );
+    return () => navigator.geolocation.clearWatch(vigilante);
+  }, [moverCoche]);
 
   async function accion(
     solicitudId: number,
@@ -206,7 +252,7 @@ export default function PanelConductor({
   //
   // Sin GPS se quedan en orden alfabético: es lo único honesto que se puede
   // hacer sin saber dónde está.
-  const posicion = coordenadas.current;
+  const posicion = posicionCoche ?? coordenadas.current;
   const zonasOrdenadas = posicion ? porCercaniaA(posicion, zonas) : zonas;
 
   // La zona por defecto es la más cercana, no la primera de la lista. Antes se
@@ -243,7 +289,7 @@ export default function PanelConductor({
       <div className="capa-mapa">
         <Mapa
           puntos={puntos}
-          taxi={coordenadas.current}
+          taxi={posicion}
           origen={siguienteParada}
           destino={primerPendiente
             ? {
