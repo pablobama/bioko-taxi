@@ -218,10 +218,13 @@ export function registrarRutasLlamadas(
     //     (Metered, Twilio…). Peor —usuario y clave son eternos y un tercero
     //     ve los metadatos— pero se monta en cinco minutos y sin máquina
     //     propia. Para el piloto vale; el LEEME explica el paso a coturn.
-    // TURN_URL admite varias URLs separadas por comas (los alquilados dan
-    // udp, tcp y tls a la vez, y cada red deja pasar una distinta).
+    // TURN_URL admite varias URLs separadas por comas O por saltos de línea
+    // (los alquilados dan udp, tcp y tls a la vez, y su panel las enseña una
+    // por línea: pegar tal cual tiene que funcionar). Con solo comas, un
+    // valor pegado con saltos llegaba al navegador como una URL inválida y
+    // la llamada moría al construir la conexión — peor que sin puente.
     if (process.env.TURN_URL) {
-      const urls = process.env.TURN_URL.split(',').map((u) => u.trim()).filter(Boolean);
+      const urls = process.env.TURN_URL.split(/[\s,]+/).map((u) => u.trim()).filter(Boolean);
       if (process.env.TURN_SECRETO) {
         servidores.push({ urls, ...credencialesEfimeras(process.env.TURN_SECRETO) });
       } else if (process.env.TURN_USUARIO && process.env.TURN_CLAVE) {
