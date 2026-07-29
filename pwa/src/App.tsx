@@ -59,6 +59,55 @@ type Pantalla =
   | 'cliente' | 'conductor' | 'ajustes_conductor' | 'estadisticas_conductor'
   | 'operador';
 
+// El teléfono del operador puede cambiar de papel sin tocar la consola:
+// pasajero ↔ taxista ↔ operador. Cada papel guarda su PROPIO uuid de
+// dispositivo (la identidad del servidor no se toca: tres papeles son tres
+// dispositivos) y el conmutador solo los intercambia en localStorage.
+//
+// Únicamente aparece en un teléfono que haya entrado como operador alguna
+// vez: para cualquier otro usuario no existe.
+function ConmutadorRol({ actual }: { actual: 'cliente' | 'conductor' | 'operador' | null }) {
+  const uuidOperador = localStorage.getItem('uuidOperador');
+  if (!uuidOperador) return null;
+
+  function cambiarA(rol: 'cliente' | 'conductor' | 'operador') {
+    let uuid: string;
+    if (rol === 'operador') {
+      uuid = uuidOperador!;
+    } else {
+      const almacen = rol === 'cliente' ? 'uuidRolCliente' : 'uuidRolConductor';
+      let guardado = localStorage.getItem(almacen);
+      if (!guardado) {
+        guardado = crypto.randomUUID();
+        localStorage.setItem(almacen, guardado);
+      }
+      uuid = guardado;
+    }
+    // La sesión cacheada y el viaje activo pertenecen al papel anterior.
+    localStorage.removeItem('ultimaSesion');
+    localStorage.removeItem('solicitudActiva');
+    localStorage.setItem('dispositivo', uuid);
+    // Sin la query: en pruebas locales ?dispositivo= volvería a imponer la
+    // identidad que se acaba de dejar.
+    window.location.replace(window.location.pathname);
+  }
+
+  return (
+    <div className="conmutador-rol">
+      {([['cliente', 'Pasajero'], ['conductor', 'Taxista'], ['operador', 'Operador']] as const).map(([rol, etiqueta]) => (
+        <button
+          key={rol}
+          type="button"
+          className={rol === actual ? 'rol-activo' : undefined}
+          onClick={() => { if (rol !== actual) cambiarA(rol); }}
+        >
+          {etiqueta}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // Última sesión conocida, para poder abrir la aplicación sin cobertura.
 //
 // Se guarda solo QUÉ ES este dispositivo (pasajero o taxista) y su ficha, que
@@ -110,6 +159,9 @@ export default function App() {
       if (sesion.rol === 'operador') {
         // No se guarda como «última sesión»: es un dispositivo de trabajo,
         // no tiene sentido recordarlo sin cobertura como a un pasajero.
+        // Sí se recuerda QUÉ uuid es el del operador, para que el conmutador
+        // de papeles pueda volver a él desde los otros dos.
+        localStorage.setItem('uuidOperador', uuidDispositivo());
         setPantalla('operador');
       } else if (sesion.rol === 'conductor' && sesion.conductor) {
         setConductor(sesion.conductor);
@@ -168,16 +220,27 @@ export default function App() {
     ? null
     : <div className="sin-conexion">{t('conexion.sinConexion')}</div>;
 
+  // El conmutador de papeles del operador. Para quien no es operador es null
+  // y no pinta nada, así que puede ir en todas las pantallas.
+  const rolActual = pantalla === 'operador'
+    ? 'operador' as const
+    : pantalla === 'cliente'
+      ? 'cliente' as const
+      : ['conductor', 'ajustes_conductor', 'estadisticas_conductor'].includes(pantalla)
+        ? 'conductor' as const
+        : null;
+  const conmutador = <ConmutadorRol actual={rolActual} />;
+
   if (pantalla === 'cargando') {
     return <main className="lienzo">{cinta}{bandaSinConexion}<div className="cargando">{t('app.cargando')}</div></main>;
   }
 
   if (pantalla === 'operador') {
-    return <PanelOperador alSalir={() => setPantalla('elegir_rol')} />;
+    return <>{conmutador}<PanelOperador /></>;
   }
 
   if (pantalla === 'cliente' && perfil) {
-    return <>{cinta}{bandaSinConexion}<PanelCliente perfilInicial={perfil} puntos={puntos} idioma={idioma} /></>;
+    return <>{cinta}{bandaSinConexion}{conmutador}<PanelCliente perfilInicial={perfil} puntos={puntos} idioma={idioma} /></>;
   }
 
   if (pantalla === 'conductor' && conductor) {
@@ -185,6 +248,7 @@ export default function App() {
       <>
         {cinta}
         {bandaSinConexion}
+        {conmutador}
         <PanelConductor
           conductor={conductor}
           puntos={puntos}
@@ -202,6 +266,7 @@ export default function App() {
     <main className="lienzo">
       {cinta}
       {bandaSinConexion}
+      {conmutador}
       <div className="capa-mapa"><Mapa puntos={puntos} /></div>
       <section className="hoja">
         {aviso && <p className="aviso">{aviso}</p>}

@@ -152,6 +152,53 @@ body {
   border-top: none;
 }
 
+/* Botonera compacta del panel de operador: tres acciones por fila tienen que
+   caber en la pantalla de un móvil, donde los botones a tamaño completo
+   (17px de relleno, 1.12rem) desbordan. */
+.hoja-completa .fila {
+  flex-wrap: wrap;
+}
+
+.hoja-completa .fila button {
+  flex: 1 1 30%;
+  width: auto;
+  padding: 12px 8px;
+  font-size: 0.92rem;
+}
+
+/* Conmutador de papel del teléfono del operador: pasajero ↔ taxista ↔
+   operador. Flotante y siempre visible, porque tiene que poder volverse al
+   panel desde cualquier pantalla de los otros dos papeles. */
+.conmutador-rol {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  z-index: 1100;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: rgba(28, 28, 33, 0.92);
+  border: 1px solid var(--borde);
+  border-radius: 11px;
+}
+
+.conmutador-rol button {
+  border: none;
+  background: none;
+  color: var(--humo);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 5px 9px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.conmutador-rol button.rol-activo {
+  background: var(--ambar);
+  color: var(--tinta);
+}
+
 .hoja h1 {
   font-size: 1.65rem;
   font-weight: 700;

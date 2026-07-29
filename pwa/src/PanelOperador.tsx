@@ -127,7 +127,7 @@ const SECCIONES = ['conductores', 'pagos'] as const;
 const FILTROS_CONDUCTOR = ['pendiente', 'verificado', 'suspendido', 'bloqueado', 'todos'] as const;
 const FILTROS_RECARGA = ['pendiente', 'confirmada', 'rechazada', 'caducada', 'todas'] as const;
 
-export default function PanelOperador({ alSalir }: { alSalir: () => void }) {
+export default function PanelOperador() {
   const [seccion, setSeccion] = useState<(typeof SECCIONES)[number]>('conductores');
   const [stats, setStats] = useState<EstadisticasOperador | null>(null);
   const [conductores, setConductores] = useState<ConductorOperador[] | null>(null);
@@ -279,7 +279,6 @@ export default function PanelOperador({ alSalir }: { alSalir: () => void }) {
           </>
         )}
 
-        <button type="button" className="secundario" onClick={alSalir}>Salir</button>
       </section>
     </main>
   );
