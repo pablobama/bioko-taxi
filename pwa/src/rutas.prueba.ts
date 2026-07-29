@@ -134,3 +134,52 @@ test('rescate: si el ÚNICO camino va a contramano, se enseña igual antes que n
     cargarPlano(plano);
   }
 });
+
+// --- Más rápido, no más corto ------------------------------------------------
+
+test('la ruta prefiere la avenida aunque el callejón sea más corto', async () => {
+  // Directo A→B: callejón de servicio de ~333 m (a 10 km/h, dos minutos).
+  // Rodeo A→M1→M2→B: avenidas, ~555 m (a 50 km/h, cuarenta segundos).
+  const M1 = { lat: 3.751, lng: 8.78 };
+  const M2 = { lat: 3.751, lng: 8.783 };
+  const B2 = { lat: 3.75, lng: 8.783 };
+  try {
+    cargarPlano({
+      vias: [
+        { c: 4, p: aplanar(A, B2) },
+        { c: 1, p: aplanar(A, M1) },
+        { c: 1, p: aplanar(M1, M2) },
+        { c: 1, p: aplanar(M2, B2) },
+      ],
+    });
+    const ruta = await calcularRuta(A, B2);
+    assert.notEqual(ruta, null);
+    assert.ok(
+      ruta!.puntos.some((p) => Math.abs(p.lat - M1.lat) < 1e-9 && Math.abs(p.lng - M1.lng) < 1e-9),
+      'debe rodear por la avenida (pasar por M1), no meterse por el callejón',
+    );
+    assert.ok(ruta!.distanciaM > 500, `el rodeo mide ~555 m, midió ${Math.round(ruta!.distanciaM)}`);
+  } finally {
+    cargarPlano(plano);
+  }
+});
+
+test('los extremos se enganchan al punto de la calle, no al cruce más cercano', async () => {
+  // Una única calle recta de ~333 m. La persona está a 11 m de un punto
+  // situado a un TERCIO de la calle: la ruta debe salir de ahí (~233 m hasta
+  // el final), no del cruce inicial (que daría ~444 m con el enganche).
+  const N1 = { lat: 3.75, lng: 8.78 };
+  const N2 = { lat: 3.75, lng: 8.783 };
+  const cerca = { lat: 3.7501, lng: 8.781 };
+  try {
+    cargarPlano({ vias: [{ c: 3, p: aplanar(N1, N2) }] });
+    const ruta = await calcularRuta(cerca, N2);
+    assert.notEqual(ruta, null);
+    assert.ok(
+      ruta!.distanciaM > 200 && ruta!.distanciaM < 300,
+      `desde mitad de calle deben ser ~233 m, midió ${Math.round(ruta!.distanciaM)}`,
+    );
+  } finally {
+    cargarPlano(plano);
+  }
+});
