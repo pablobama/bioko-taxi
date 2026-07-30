@@ -150,6 +150,20 @@ body {
   min-height: 100dvh;
   border-radius: 0;
   border-top: none;
+  /* Hueco para el conmutador de papeles, que va flotando arriba a la derecha
+     (position: fixed) y por tanto no empuja nada. Sin este hueco se sentaba
+     encima del título: en 375 px el conmutador ocupa de x≈157 a 367 y
+     «Panel de operador» llega hasta x≈238, así que la última palabra quedaba
+     debajo. Las demás pantallas no lo necesitan porque ahí arriba solo hay
+     plano. */
+  padding-top: 52px;
+}
+
+/* Las ocho secciones son la pieza más pulsada del panel: se ajustan un poco
+   para que quepan en dos filas en vez de tres y quede sitio para trabajar. */
+.hoja-completa .selector-idioma button {
+  padding: 7px 9px;
+  font-size: 0.8rem;
 }
 
 /* Botonera compacta del panel de operador: tres acciones por fila tienen que
@@ -302,6 +316,16 @@ h1.eta small {
 .selector-idioma {
   flex: none;
   display: flex;
+  /* Que se reparta en varias filas antes que salirse de la pantalla.
+     Empezó siendo tres botones (ES/FR/EN), que caben de sobra; hoy la misma
+     pieza lleva las ocho secciones del panel de operador y sus filtros de
+     cinco, y en un teléfono de 375 px eso NO cabe en una fila: Pasajeros,
+     Pagos, Lugares y Ajustes se salían por la derecha, invisibles.
+     Envolver —y no un carrusel horizontal— porque esconder media
+     herramienta de trabajo detrás de un gesto que no se ve es peor que
+     gastar un centímetro de alto. Mientras ningún botón suelto sea más
+     ancho que la pantalla, esto no puede volver a desbordarse. */
+  flex-wrap: wrap;
   gap: 2px;
   padding: 3px;
   background: var(--tarjeta);
