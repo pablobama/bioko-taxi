@@ -8,7 +8,7 @@
 //   tsx src/bd/migrar.ts estado         lista aplicadas y pendientes
 
 import { readdir, readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import pg from 'pg';
 
@@ -129,41 +129,76 @@ function literal(valor: string): string {
   return `'${valor.replace(/'/g, "''")}'`;
 }
 
+async function ejecutarOrden(cliente: pg.Client, orden: string | undefined): Promise<void> {
+  // Si el candado lo retiene una sesión muerta (el pooler mata conexiones
+  // sin avisar), mejor cortar y reintentar que esperar para siempre: fue
+  // exactamente lo que dejó una migración colgada contra Supabase.
+  await cliente.query(`SET lock_timeout = '20s'`);
+  await cliente.query('SELECT pg_advisory_lock($1)', [CANDADO_MIGRACIONES]);
+  await asegurarTablaRegistro(cliente);
+  if (orden === 'aplicar') {
+    await aplicar(cliente);
+  } else if (orden === 'revertir') {
+    const argumento = process.argv[3] ?? '1';
+    const cuantas = argumento === 'todo' ? Number.MAX_SAFE_INTEGER : Number.parseInt(argumento, 10);
+    if (!Number.isInteger(cuantas) || cuantas < 1) {
+      throw new Error(`Argumento de revertir no válido: «${argumento}» (usa un número o «todo»)`);
+    }
+    await revertir(cliente, cuantas);
+  } else if (orden === 'estado') {
+    await estado(cliente);
+  } else {
+    throw new Error(`Orden desconocida: «${orden ?? ''}». Usa: aplicar | revertir [n|todo] | estado`);
+  }
+}
+
 async function principal(): Promise<void> {
   const orden = process.argv[2];
-  const cliente = new pg.Client({ connectionString: urlBaseDatos() });
-  await cliente.connect();
-  try {
-    await cliente.query('SELECT pg_advisory_lock($1)', [CANDADO_MIGRACIONES]);
-    await asegurarTablaRegistro(cliente);
-    if (orden === 'aplicar') {
-      await aplicar(cliente);
-    } else if (orden === 'revertir') {
-      const argumento = process.argv[3] ?? '1';
-      const cuantas = argumento === 'todo' ? Number.MAX_SAFE_INTEGER : Number.parseInt(argumento, 10);
-      if (!Number.isInteger(cuantas) || cuantas < 1) {
-        throw new Error(`Argumento de revertir no válido: «${argumento}» (usa un número o «todo»)`);
-      }
-      await revertir(cliente, cuantas);
-    } else if (orden === 'estado') {
-      await estado(cliente);
-    } else {
-      throw new Error(`Orden desconocida: «${orden ?? ''}». Usa: aplicar | revertir [n|todo] | estado`);
+  // Reintentos contra cortes transitorios. El pooler de Supabase mata
+  // conexiones a mitad de trabajo («Connection terminated unexpectedly»);
+  // cada migración va en su propia transacción, así que retomar desde donde
+  // se quedó es seguro. Sin esto, un despliegue entero se cae por un corte
+  // de un segundo.
+  const INTENTOS = 5;
+  for (let intento = 1; ; intento += 1) {
+    const cliente = new pg.Client({ connectionString: urlBaseDatos() });
+    // Sin oyente, el corte emite 'error' y tumba el proceso entero antes de
+    // poder reintentar; la consulta en curso ya rechaza su promesa igual.
+    cliente.on('error', () => {});
+    try {
+      await cliente.connect();
+      await ejecutarOrden(cliente, orden);
+      return;
+    } catch (error) {
+      const mensaje = error instanceof Error ? error.message : String(error);
+      const transitorio = /connection terminated|econnreset|server closed|lock timeout/i.test(mensaje);
+      if (!transitorio || intento >= INTENTOS) throw error;
+      console.error(`Conexión cortada (intento ${intento}/${INTENTOS}): ${mensaje}. Reintentando…`);
+      await new Promise((r) => { setTimeout(r, 2000); });
+    } finally {
+      await cliente.end().catch(() => undefined);
     }
-  } finally {
-    await cliente.end();
   }
 }
 
 // Solo actúa como CLI si este fichero es el punto de entrada; otros módulos
 // importan urlBaseDatos() sin disparar ninguna orden.
+//
+// La comparación usa pathToFileURL y no una URL montada a mano: la versión
+// manual (`file:///${argv[1]}`) cuadraba en Windows pero en Linux producía
+// file:////ruta —cuatro barras—, la comparación daba false y `bd:migrar` se
+// convertía en un no-op QUE SALÍA CON ÉXITO. Consecuencia real: en Render
+// las migraciones nunca corrieron y cada despliegue con migración nueva
+// arrancaba contra un esquema viejo.
 const esPuntoDeEntrada =
   process.argv[1] !== undefined &&
-  import.meta.url === new URL(`file:///${process.argv[1].replace(/\\/g, '/')}`).href;
+  import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (esPuntoDeEntrada) {
   principal().catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
+    // Un AggregateError de conexión (prueba ::1 y 127.0.0.1) trae message
+    // vacío: imprimir el objeto entero antes que una línea en blanco.
+    console.error(error instanceof Error && error.message ? error.message : error);
     process.exitCode = 1;
   });
 }
