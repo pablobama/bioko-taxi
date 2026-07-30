@@ -116,6 +116,25 @@ async function principal(): Promise<void> {
   }
 
   const despachadorEventos = new DespachadorEventos(pool, adaptadores);
+
+  const app = crearServidor(pool, emisor, conexionesSse);
+  if (existsSync(RUTA_PWA)) {
+    await app.register(estaticos, { root: RUTA_PWA });
+    console.log(`Sirviendo la PWA desde ${RUTA_PWA}`);
+  } else {
+    console.warn(`No existe ${RUTA_PWA}: la PWA no se sirve (¿falta construirla?).`);
+  }
+
+  // El puerto se abre ANTES de arrancar nada de fondo. El hosting concluye que
+  // el despliegue funcionó cuando puede hablar con el puerto; si primero se
+  // pusieran a trabajar el despachador y el planificador —los dos contra una
+  // base de datos remota que puede estar lenta— el sondeo esperaría por algo
+  // que no tiene nada que ver con estar listo para atender.
+  await app.listen({ port: PUERTO, host: '0.0.0.0' });
+  // 0.0.0.0, no localhost: dentro de un contenedor la diferencia es justo la
+  // que decide si el hosting alcanza el servicio o no.
+  console.log(`Servidor escuchando en 0.0.0.0:${PUERTO}`);
+
   despachadorEventos.iniciar(2000);
 
   // Planificador del despacho: oleadas, expiraciones, presencias y rescate.
@@ -132,17 +151,6 @@ async function principal(): Promise<void> {
       }
     })();
   }, 5000);
-
-  const app = crearServidor(pool, emisor, conexionesSse);
-  if (existsSync(RUTA_PWA)) {
-    await app.register(estaticos, { root: RUTA_PWA });
-    console.log(`Sirviendo la PWA desde ${RUTA_PWA}`);
-  } else {
-    console.warn(`No existe ${RUTA_PWA}: la PWA no se sirve (¿falta construirla?).`);
-  }
-
-  await app.listen({ port: PUERTO, host: '0.0.0.0' });
-  console.log(`Servidor escuchando en http://localhost:${PUERTO}`);
 }
 
 principal().catch((error) => {

@@ -6,6 +6,12 @@ services:
     region: frankfurt
     buildCommand: "cd servidor && npm install && cd ../pwa && npm install && npm run construir"
     startCommand: "cd servidor && npm run bd:migrar && npm run servir"
+    # Ruta que el hosting sondea para saber si el despliegue salió bien. Sin
+    # declararla, Render adivina buscando un puerto abierto y puede dar
+    # «Timed Out» aunque el servicio esté sirviendo (pasó el 2026-07-30: el
+    # despliegue llegó a producción y aun así se anunció como fallido).
+    # Apunta a propósito a una ruta que NO toca la base de datos.
+    healthCheckPath: /api/vivo
     envVars:
       - key: NODE_VERSION
         value: 22

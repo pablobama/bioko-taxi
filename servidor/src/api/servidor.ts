@@ -109,6 +109,14 @@ export function crearServidor(
     void reply.status(codigo).send({ error: mensaje });
   });
 
+  // Señal de vida para el hosting (healthCheckPath en render.yaml). Dice si el
+  // PROCESO responde, y a propósito no toca la base de datos: si el sondeo
+  // dependiera de Supabase, un pooler lento haría que el hosting matara y
+  // reiniciara un servidor que está perfectamente sano — y con él las
+  // conexiones SSE de todos los viajes en curso. Sin cabeceras ni permisos:
+  // no revela nada que no se sepa por el propio dominio respondiendo.
+  app.get('/api/vivo', async () => ({ vivo: true }));
+
   // --- Gazetteer ----------------------------------------------------------
 
   app.get('/api/referencias', async (req) => {

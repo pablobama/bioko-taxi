@@ -1158,3 +1158,10 @@ test('número: con él, queda anotado que se comprobó de verdad', async () => {
   );
   assert.equal(transicion.rows[0].origen_evento, 'pin_validado');
 });
+
+test('señal de vida: responde sin cabeceras ni base de datos (healthCheckPath)', async () => {
+  // Sin x-dispositivo a propósito: el sondeo del hosting no tiene identidad.
+  const r = await app.inject({ method: 'GET', url: '/api/vivo' });
+  assert.equal(r.statusCode, 200, r.body);
+  assert.deepEqual(r.json(), { vivo: true });
+});
