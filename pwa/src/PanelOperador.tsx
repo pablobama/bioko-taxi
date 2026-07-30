@@ -95,6 +95,76 @@ function ListaViajes({ viajes }: { viajes: ViajeResumenOperador[] }) {
   );
 }
 
+// --- Captura de posición con el GPS ------------------------------------------
+
+// Lo usan tanto los barrios como los sitios: se pulsa ESTANDO allí.
+//
+// Se ESPERA a que el GPS fije, en vez de coger la primera lectura. La primera
+// casi siempre viene de la antena de telefonía o de la wifi —cientos o miles
+// de metros— y cae dentro de Malabo, así que pasaría cualquier comprobación
+// de recuadro y el sitio quedaría guardado donde no está.
+//
+// El umbral real lo aplica el servidor al situar barrios (parámetro
+// gps_precision_maxima_m); aquí se usa el mismo número para no enviar lo que
+// va a rechazar, y para avisar en los sitios, donde no hay validación dura
+// porque teclear una coordenada a mano sigue siendo legítimo.
+const PRECISION_OBJETIVO_M = 50;
+const ESPERA_GPS_MS = 30_000;
+
+function capturarGps(
+  alTener: (lat: number, lng: number, precision: number) => void,
+  alAvisar: (mensaje: string) => void,
+  alFallar: (mensaje: string) => void,
+): void {
+  if (!('geolocation' in navigator)) {
+    alFallar('Este teléfono no da la ubicación.');
+    return;
+  }
+  alAvisar('Buscando el GPS…');
+  let mejor: GeolocationPosition | null = null;
+  let terminado = false;
+
+  const vigilancia = navigator.geolocation.watchPosition(
+    (pos) => {
+      if (terminado) return;
+      if (!mejor || pos.coords.accuracy < mejor.coords.accuracy) mejor = pos;
+      const actual = Math.round(mejor.coords.accuracy);
+      alAvisar(`Buscando el GPS… ±${actual} m${actual > PRECISION_OBJETIVO_M ? ' (esperando a que mejore)' : ''}`);
+      if (mejor.coords.accuracy <= PRECISION_OBJETIVO_M) {
+        terminado = true;
+        navigator.geolocation.clearWatch(vigilancia);
+        clearTimeout(reloj);
+        alAvisar('');
+        alTener(mejor.coords.latitude, mejor.coords.longitude, mejor.coords.accuracy);
+      }
+    },
+    (e) => {
+      if (terminado) return;
+      terminado = true;
+      navigator.geolocation.clearWatch(vigilancia);
+      clearTimeout(reloj);
+      alAvisar('');
+      alFallar(`No se pudo coger el GPS: ${e.message}. Da permiso de ubicación y sal a cielo abierto.`);
+    },
+    { enableHighAccuracy: true, timeout: ESPERA_GPS_MS, maximumAge: 0 },
+  );
+
+  // Si tras la espera sigue sin fijar, NO se devuelve una posición mala: se
+  // dice lo que hay y se deja repetir. Guardar algo mal situado es peor que
+  // no guardarlo, porque nadie va a volver a mirarlo.
+  const reloj = setTimeout(() => {
+    if (terminado) return;
+    terminado = true;
+    navigator.geolocation.clearWatch(vigilancia);
+    alAvisar('');
+    const conseguido = mejor ? `±${Math.round(mejor.coords.accuracy)} m` : 'nada';
+    alFallar(
+      `El GPS no llegó a ±${PRECISION_OBJETIVO_M} m (lo mejor: ${conseguido}). `
+      + 'Sal a cielo abierto, apártate de los edificios y vuelve a intentarlo.',
+    );
+  }, ESPERA_GPS_MS);
+}
+
 // --- Resumen: cuadro de mandos (bloque 1) ------------------------------------
 
 function Alarmas({ salud }: { salud: SaludOperador }) {
@@ -549,6 +619,9 @@ function EditorReferencia({
     }
   }
 
+  const [precision, setPrecision] = useState<number | null>(null);
+  const [avisoGps, setAvisoGps] = useState('');
+
   const guardar = () => accion(() => api.editarReferenciaOperador(referencia.id, {
     nombre: nombre.trim() || undefined,
     categoria: categoria.trim() || undefined,
@@ -567,10 +640,39 @@ function EditorReferencia({
           {zonas.map((z) => <option key={z.id} value={z.id}>{z.nombre}</option>)}
         </select>
       </div>
+      {/* Corregir un sitio estando delante: es la mitad del trabajo de campo
+          —el catálogo se cargó con coordenadas plausibles, no verificadas
+          (P1-03)— y hasta ahora obligaba a teclear la coordenada a mano. */}
+      <button
+        type="button" className="secundario" disabled={ocupado || avisoGps !== ''}
+        onClick={() => capturarGps(
+          (nuevaLat, nuevaLng, precision) => {
+            setLat(String(nuevaLat.toFixed(6)));
+            setLng(String(nuevaLng.toFixed(6)));
+            setPrecision(precision);
+          },
+          setAvisoGps,
+          setError,
+        )}
+      >
+        {avisoGps || 'Estoy aquí: corregir con el GPS'}
+      </button>
       <div className="fila">
-        <input type="text" value={lat} placeholder="Latitud" onChange={(e) => setLat(e.target.value)} />
-        <input type="text" value={lng} placeholder="Longitud" onChange={(e) => setLng(e.target.value)} />
+        <input
+          type="text" value={lat} placeholder="Latitud"
+          onChange={(e) => { setLat(e.target.value); setPrecision(null); }}
+        />
+        <input
+          type="text" value={lng} placeholder="Longitud"
+          onChange={(e) => { setLng(e.target.value); setPrecision(null); }}
+        />
       </div>
+      {precision !== null && (
+        <p className="nota">
+          Tomado con el GPS: ±{Math.round(precision)} m
+          {precision > PRECISION_OBJETIVO_M && ' — conviene repetirlo a cielo abierto'}
+        </p>
+      )}
       {referencia.alias.length > 0 && (
         <p className="nota">
           Alias: {referencia.alias.map((a) => (
@@ -616,6 +718,11 @@ function Lugares() {
   const [abierta, setAbierta] = useState<number | null>(null);
   const [creando, setCreando] = useState(false);
   const [nueva, setNueva] = useState({ nombre: '', categoria: '', zonaId: 0, lat: '', lng: '' });
+  // Precisión de la última captura, para poder decir con qué se tomó. null si
+  // las coordenadas se escribieron a mano, que sigue siendo legítimo: a veces
+  // se añade un sitio desde la oficina, sabiendo dónde está.
+  const [precisionNueva, setPrecisionNueva] = useState<number | null>(null);
+  const [avisoGps, setAvisoGps] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -644,6 +751,7 @@ function Lugares() {
       });
       setCreando(false);
       setNueva((n) => ({ ...n, nombre: '', categoria: '', lat: '', lng: '' }));
+      setPrecisionNueva(null);
       cargar();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo crear.');
@@ -680,16 +788,38 @@ function Lugares() {
               {zonas.map((z) => <option key={z.id} value={z.id}>{z.nombre}</option>)}
             </select>
           </div>
+          {/* Lo normal es estar delante del sitio: el GPS rellena las
+              coordenadas y dice con qué precisión. Escribirlas a mano sigue
+              valiendo para añadir algo desde la oficina. */}
+          <button
+            type="button" className="secundario" disabled={avisoGps !== ''}
+            onClick={() => capturarGps(
+              (lat, lng, precision) => {
+                setNueva((n) => ({ ...n, lat: String(lat.toFixed(6)), lng: String(lng.toFixed(6)) }));
+                setPrecisionNueva(precision);
+              },
+              setAvisoGps,
+              setError,
+            )}
+          >
+            {avisoGps || 'Estoy aquí: coger el GPS'}
+          </button>
           <div className="fila">
             <input
               type="text" value={nueva.lat} placeholder="Latitud (3.75…)"
-              onChange={(e) => setNueva({ ...nueva, lat: e.target.value })}
+              onChange={(e) => { setNueva({ ...nueva, lat: e.target.value }); setPrecisionNueva(null); }}
             />
             <input
               type="text" value={nueva.lng} placeholder="Longitud (8.78…)"
-              onChange={(e) => setNueva({ ...nueva, lng: e.target.value })}
+              onChange={(e) => { setNueva({ ...nueva, lng: e.target.value }); setPrecisionNueva(null); }}
             />
           </div>
+          {precisionNueva !== null && (
+            <p className="nota">
+              Tomado con el GPS: ±{Math.round(precisionNueva)} m
+              {precisionNueva > PRECISION_OBJETIVO_M && ' — conviene repetirlo a cielo abierto'}
+            </p>
+          )}
           <button type="button" className="principal" disabled={!nuevaLista} onClick={crear}>
             Crear el sitio
           </button>
@@ -908,69 +1038,9 @@ function Zonas() {
   }
   useEffect(cargar, []);
 
-  // El GPS del propio teléfono, que es de lo que va todo esto: se pulsa
-  // ESTANDO en el barrio.
-  //
-  // Se ESPERA a que fije, en vez de coger la primera lectura. La primera casi
-  // siempre viene de la antena de telefonía o de la wifi —cientos o miles de
-  // metros— y cae dentro de Malabo, así que pasaría la comprobación del
-  // recuadro y el barrio quedaría situado donde no está. Con `watchPosition`
-  // se va viendo cómo mejora y se envía en cuanto es buena de verdad.
-  //
-  // El umbral real lo aplica el servidor (parámetro gps_precision_maxima_m);
-  // este es el mismo número para no marear enviando lo que va a rechazar.
-  const PRECISION_OBJETIVO_M = 50;
-  const ESPERA_MAXIMA_MS = 30_000;
-
   function conGps(alTener: (lat: number, lng: number, precision: number) => void) {
     setError('');
-    if (!('geolocation' in navigator)) {
-      setError('Este teléfono no da la ubicación.');
-      return;
-    }
-    setAviso('Buscando el GPS…');
-    let mejor: GeolocationPosition | null = null;
-    let terminado = false;
-
-    const vigilancia = navigator.geolocation.watchPosition(
-      (pos) => {
-        if (terminado) return;
-        if (!mejor || pos.coords.accuracy < mejor.coords.accuracy) mejor = pos;
-        const actual = Math.round(mejor.coords.accuracy);
-        setAviso(`Buscando el GPS… ±${actual} m${actual > PRECISION_OBJETIVO_M ? ' (esperando a que mejore)' : ''}`);
-        if (mejor.coords.accuracy <= PRECISION_OBJETIVO_M) {
-          terminado = true;
-          navigator.geolocation.clearWatch(vigilancia);
-          clearTimeout(reloj);
-          setAviso('');
-          alTener(mejor.coords.latitude, mejor.coords.longitude, mejor.coords.accuracy);
-        }
-      },
-      (e) => {
-        if (terminado) return;
-        terminado = true;
-        navigator.geolocation.clearWatch(vigilancia);
-        clearTimeout(reloj);
-        setAviso('');
-        setError(`No se pudo coger el GPS: ${e.message}. Da permiso de ubicación y sal a cielo abierto.`);
-      },
-      { enableHighAccuracy: true, timeout: ESPERA_MAXIMA_MS, maximumAge: 0 },
-    );
-
-    // Si tras la espera sigue sin fijar, NO se envía una posición mala: se
-    // dice lo que hay y se deja repetir. Guardar un barrio mal situado es
-    // peor que no guardarlo, porque nadie va a volver a mirarlo.
-    const reloj = setTimeout(() => {
-      if (terminado) return;
-      terminado = true;
-      navigator.geolocation.clearWatch(vigilancia);
-      setAviso('');
-      const conseguido = mejor ? `±${Math.round(mejor.coords.accuracy)} m` : 'nada';
-      setError(
-        `El GPS no llegó a ±${PRECISION_OBJETIVO_M} m (lo mejor: ${conseguido}). `
-        + 'Sal a cielo abierto, apártate de los edificios y vuelve a intentarlo.',
-      );
-    }, ESPERA_MAXIMA_MS);
+    capturarGps(alTener, setAviso, setError);
   }
 
   async function situar(z: ZonaOperador) {
