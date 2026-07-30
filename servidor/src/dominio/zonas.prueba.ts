@@ -91,3 +91,21 @@ test('un barrio sin situar no es vecino de nadie: no se sabe dónde está', asyn
   );
   assert.equal(huerfanas.rows[0].n, 0);
 });
+
+test('se guarda con qué precisión se situó, para poder repetir los dudosos', async () => {
+  const nombre = `Barrio Preciso ${randomUUID().slice(0, 8)}`;
+  const situada = await enTransaccion(pool, (c) => crearZonaEnGps(c, nombre, MALABO.lat, MALABO.lng, 7.5));
+  assert.equal(situada.precisionM, 7.5);
+
+  const guardada = await pool.query('SELECT precision_gps_m FROM zona WHERE id = $1', [situada.zonaId]);
+  assert.equal(Number(guardada.rows[0].precision_gps_m), 7.5);
+
+  // Los que vinieron del importador no la tienen, y se dice que no se sabe en
+  // vez de inventar un número que parecería igual de bueno.
+  const importado = await pool.query(
+    `SELECT precision_gps_m FROM zona WHERE nombre = 'Malabo Centro'`,
+  );
+  if ((importado.rowCount ?? 0) > 0) {
+    assert.equal(importado.rows[0].precision_gps_m, null);
+  }
+});

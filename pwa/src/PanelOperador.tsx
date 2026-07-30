@@ -909,36 +909,76 @@ function Zonas() {
   useEffect(cargar, []);
 
   // El GPS del propio teléfono, que es de lo que va todo esto: se pulsa
-  // ESTANDO en el barrio. Sin `enableHighAccuracy` un móvil contesta con la
-  // celda de telefonía, que en Malabo puede estar a kilómetros — y aquí se
-  // está fijando dónde está un barrio, no dibujando un punto aproximado.
-  function conGps(alTener: (lat: number, lng: number) => void) {
+  // ESTANDO en el barrio.
+  //
+  // Se ESPERA a que fije, en vez de coger la primera lectura. La primera casi
+  // siempre viene de la antena de telefonía o de la wifi —cientos o miles de
+  // metros— y cae dentro de Malabo, así que pasaría la comprobación del
+  // recuadro y el barrio quedaría situado donde no está. Con `watchPosition`
+  // se va viendo cómo mejora y se envía en cuanto es buena de verdad.
+  //
+  // El umbral real lo aplica el servidor (parámetro gps_precision_maxima_m);
+  // este es el mismo número para no marear enviando lo que va a rechazar.
+  const PRECISION_OBJETIVO_M = 50;
+  const ESPERA_MAXIMA_MS = 30_000;
+
+  function conGps(alTener: (lat: number, lng: number, precision: number) => void) {
     setError('');
-    setAviso('Buscando el GPS…');
     if (!('geolocation' in navigator)) {
       setError('Este teléfono no da la ubicación.');
-      setAviso('');
       return;
     }
-    navigator.geolocation.getCurrentPosition(
+    setAviso('Buscando el GPS…');
+    let mejor: GeolocationPosition | null = null;
+    let terminado = false;
+
+    const vigilancia = navigator.geolocation.watchPosition(
       (pos) => {
-        setAviso('');
-        alTener(pos.coords.latitude, pos.coords.longitude);
+        if (terminado) return;
+        if (!mejor || pos.coords.accuracy < mejor.coords.accuracy) mejor = pos;
+        const actual = Math.round(mejor.coords.accuracy);
+        setAviso(`Buscando el GPS… ±${actual} m${actual > PRECISION_OBJETIVO_M ? ' (esperando a que mejore)' : ''}`);
+        if (mejor.coords.accuracy <= PRECISION_OBJETIVO_M) {
+          terminado = true;
+          navigator.geolocation.clearWatch(vigilancia);
+          clearTimeout(reloj);
+          setAviso('');
+          alTener(mejor.coords.latitude, mejor.coords.longitude, mejor.coords.accuracy);
+        }
       },
       (e) => {
+        if (terminado) return;
+        terminado = true;
+        navigator.geolocation.clearWatch(vigilancia);
+        clearTimeout(reloj);
         setAviso('');
         setError(`No se pudo coger el GPS: ${e.message}. Da permiso de ubicación y sal a cielo abierto.`);
       },
-      { enableHighAccuracy: true, timeout: 20_000, maximumAge: 0 },
+      { enableHighAccuracy: true, timeout: ESPERA_MAXIMA_MS, maximumAge: 0 },
     );
+
+    // Si tras la espera sigue sin fijar, NO se envía una posición mala: se
+    // dice lo que hay y se deja repetir. Guardar un barrio mal situado es
+    // peor que no guardarlo, porque nadie va a volver a mirarlo.
+    const reloj = setTimeout(() => {
+      if (terminado) return;
+      terminado = true;
+      navigator.geolocation.clearWatch(vigilancia);
+      setAviso('');
+      const conseguido = mejor ? `±${Math.round(mejor.coords.accuracy)} m` : 'nada';
+      setError(
+        `El GPS no llegó a ±${PRECISION_OBJETIVO_M} m (lo mejor: ${conseguido}). `
+        + 'Sal a cielo abierto, apártate de los edificios y vuelve a intentarlo.',
+      );
+    }, ESPERA_MAXIMA_MS);
   }
 
   async function situar(z: ZonaOperador) {
-    conGps(async (lat, lng) => {
+    conGps(async (lat, lng, precision) => {
       setOcupada(z.id);
       try {
-        const r = await api.situarZona(z.id, lat, lng);
-        setAviso(`«${r.nombre}» situado aquí. Vecinas: ${r.vecinas}.`);
+        const r = await api.situarZona(z.id, lat, lng, precision);
+        setAviso(`«${r.nombre}» situado aquí con ±${Math.round(precision)} m. Vecinas: ${r.vecinas}.`);
         cargar();
       } catch (e) {
         setError(e instanceof Error ? e.message : 'No se pudo situar el barrio.');
@@ -951,11 +991,11 @@ function Zonas() {
   async function crear() {
     const nombre = nombreNuevo.trim();
     if (!nombre) return;
-    conGps(async (lat, lng) => {
+    conGps(async (lat, lng, precision) => {
       setOcupada('nueva');
       try {
-        const r = await api.crearZonaEnGps(nombre, lat, lng);
-        setAviso(`«${r.nombre}» creado aquí. Vecinas: ${r.vecinas}.`);
+        const r = await api.crearZonaEnGps(nombre, lat, lng, precision);
+        setAviso(`«${r.nombre}» creado aquí con ±${Math.round(precision)} m. Vecinas: ${r.vecinas}.`);
         setNombreNuevo('');
         cargar();
       } catch (e) {
@@ -1023,6 +1063,9 @@ function Zonas() {
           <div className="nota">
             {z.lat?.toFixed(5)}, {z.lng?.toFixed(5)} · {z.vecinas} vecina{z.vecinas === 1 ? '' : 's'}
             {' · '}{z.referencias} sitio{z.referencias === 1 ? '' : 's'}
+            {z.precision_m === null
+              ? ' · precisión desconocida'
+              : ` · ±${Math.round(z.precision_m)} m`}
             {z.vecinas === 0 && ' · ⚠ aislado del reparto'}
           </div>
           <button

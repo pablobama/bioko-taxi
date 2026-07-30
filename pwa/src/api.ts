@@ -354,6 +354,9 @@ export interface ZonaOperador {
   lat: number | null;
   lng: number | null;
   sin_situar: boolean;
+  // Radio de error del GPS con el que se situó, en metros. null en las que
+  // vinieron del importador: no se sabe con qué precisión se tomaron.
+  precision_m: number | null;
   referencias: number;
   vecinas: number;
 }
@@ -690,16 +693,19 @@ export const api = {
   zonasOperador: () => pedirJson<{ zonas: ZonaOperador[] }>('/api/operador/zonas'),
 
   // «Estoy aquí»: sitúa un barrio con el GPS de quien lo pulsa.
-  situarZona: (zonaId: number, lat: number, lng: number) =>
-    pedirJson<{ zonaId: number; nombre: string; vecinas: number }>(
+  // La precisión viaja siempre: el servidor la exige, porque un punto dentro
+  // de Malabo pero tomado con la antena de telefonía sitúa el barrio a medio
+  // kilómetro y nadie se entera.
+  situarZona: (zonaId: number, lat: number, lng: number, precision: number) =>
+    pedirJson<{ zonaId: number; nombre: string; vecinas: number; precisionM: number | null }>(
       `/api/operador/zonas/${zonaId}/situar`,
-      { method: 'POST', body: JSON.stringify({ lat, lng }), reintentos: 1 },
+      { method: 'POST', body: JSON.stringify({ lat, lng, precision }), reintentos: 1 },
     ),
 
-  crearZonaEnGps: (nombre: string, lat: number, lng: number) =>
-    pedirJson<{ zonaId: number; nombre: string; vecinas: number }>(
+  crearZonaEnGps: (nombre: string, lat: number, lng: number, precision: number) =>
+    pedirJson<{ zonaId: number; nombre: string; vecinas: number; precisionM: number | null }>(
       '/api/operador/zonas',
-      { method: 'POST', body: JSON.stringify({ nombre, lat, lng }), reintentos: 1 },
+      { method: 'POST', body: JSON.stringify({ nombre, lat, lng, precision }), reintentos: 1 },
     ),
 
   nombrarAgente: (conductorId: number, agente: boolean) =>

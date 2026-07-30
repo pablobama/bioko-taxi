@@ -39,6 +39,34 @@ function enMalabo(lat: number, lng: number): boolean {
     && lng >= RECUADRO_MALABO.oeste && lng <= RECUADRO_MALABO.este;
 }
 
+// Lo que el recuadro NO puede detectar: un punto dentro de Malabo pero malo.
+// Un teléfono con el GPS sin fijar contesta con la celda de telefonía o la
+// wifi —cientos o miles de metros de radio—, y eso cae dentro del recuadro
+// tan campante. El centroide decide qué barrios son vecinos y cuál se le
+// ofrece antes al taxista: mal situado, manda taxis al sitio equivocado
+// durante meses sin que nadie sepa por qué.
+async function exigirGpsFiable(
+  pool: pg.Pool,
+  precision: unknown,
+): Promise<number | null> {
+  const maxima = await leerParametroEntero(pool, 'gps_precision_maxima_m');
+  if (typeof precision !== 'number' || !Number.isFinite(precision) || precision < 0) {
+    throw errorHttp(
+      400,
+      'Falta la precisión del GPS. Hay que tomar la posición con el GPS del '
+      + 'teléfono, no escribirla a mano.',
+    );
+  }
+  if (precision > maxima) {
+    throw errorHttp(
+      400,
+      `El GPS solo da ±${Math.round(precision)} m y hacen falta ±${maxima} m o `
+      + 'mejor. Sal a cielo abierto, espera unos segundos a que fije y repite.',
+    );
+  }
+  return precision;
+}
+
 function errorHttp(codigo: number, mensaje: string): Error & { statusCode: number } {
   const error = new Error(mensaje) as Error & { statusCode: number };
   error.statusCode = codigo;
@@ -759,6 +787,7 @@ export function registrarRutasOperador(
     // (migración 025), y hasta que alguien vaya, no existen para el reparto.
     const filas = await pool.query(
       `SELECT z.id, z.nombre, z.centroide_lat AS lat, z.centroide_lng AS lng,
+              z.precision_gps_m AS precision_m,
               (z.centroide_lat IS NULL) AS sin_situar,
               (SELECT count(*)::int FROM referencia r WHERE r.zona_id = z.id AND r.activa) AS referencias,
               (SELECT count(*)::int FROM zona_adyacencia a WHERE a.zona_id = z.id) AS vecinas
@@ -773,7 +802,9 @@ export function registrarRutasOperador(
   app.post('/api/operador/zonas/:id/situar', async (req) => {
     await exigirCampo(req);
     const id = Number((req.params as { id: string }).id);
-    const { lat, lng } = (req.body ?? {}) as { lat?: number; lng?: number };
+    const { lat, lng, precision } = (req.body ?? {}) as {
+      lat?: number; lng?: number; precision?: number;
+    };
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de zona no válido.');
     if (typeof lat !== 'number' || typeof lng !== 'number') {
       throw errorHttp(400, 'Faltan las coordenadas (lat, lng).');
@@ -781,8 +812,9 @@ export function registrarRutasOperador(
     if (!enMalabo(lat, lng)) {
       throw errorHttp(400, 'Esas coordenadas caen fuera de Malabo. ¿Se cogió el GPS de verdad?');
     }
+    const precisionM = await exigirGpsFiable(pool, precision);
     try {
-      return await enTransaccion(pool, (cliente) => situarZona(cliente, id, lat, lng));
+      return await enTransaccion(pool, (cliente) => situarZona(cliente, id, lat, lng, precisionM));
     } catch (error) {
       if (error instanceof Error && /No existe la zona/.test(error.message)) {
         throw errorHttp(404, error.message);
@@ -795,8 +827,8 @@ export function registrarRutasOperador(
   // encuentra barrios que ni OSM ni el censo tenían.
   app.post('/api/operador/zonas', async (req) => {
     await exigirCampo(req);
-    const { nombre, lat, lng } = (req.body ?? {}) as {
-      nombre?: string; lat?: number; lng?: number;
+    const { nombre, lat, lng, precision } = (req.body ?? {}) as {
+      nombre?: string; lat?: number; lng?: number; precision?: number;
     };
     const limpio = nombre?.trim();
     if (!limpio) throw errorHttp(400, 'Falta el nombre del barrio.');
@@ -806,7 +838,8 @@ export function registrarRutasOperador(
     if (!enMalabo(lat, lng)) {
       throw errorHttp(400, 'Esas coordenadas caen fuera de Malabo. ¿Se cogió el GPS de verdad?');
     }
-    return enTransaccion(pool, (cliente) => crearZonaEnGps(cliente, limpio, lat, lng));
+    const precisionM = await exigirGpsFiable(pool, precision);
+    return enTransaccion(pool, (cliente) => crearZonaEnGps(cliente, limpio, lat, lng, precisionM));
   });
 
   app.get('/api/operador/referencias', async (req) => {

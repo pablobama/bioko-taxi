@@ -109,6 +109,10 @@ export interface ZonaSituada {
   nombre: string;
   referenciaId: number;
   vecinas: number;
+  // Radio de error en metros que declaró el teléfono. Se devuelve para poder
+  // decirlo en pantalla: «situado con ±8 m» da confianza, «±300 m» avisa de
+  // que conviene repetirlo.
+  precisionM: number | null;
 }
 
 // Pone un barrio en el mapa, en la posición desde la que se está llamando.
@@ -122,6 +126,10 @@ export async function situarZona(
   zonaId: number,
   lat: number,
   lng: number,
+  // Radio de error del GPS en metros (coords.accuracy). Se guarda además de
+  // validarse en la API: sin él no hay forma de saber después qué barrios
+  // convendría volver a tomar (P25-02).
+  precisionM: number | null = null,
 ): Promise<ZonaSituada> {
   // Quiénes eran sus vecinas ANTES: si alguna se queda sin ninguna al
   // recoser, hay que devolverla al mapa.
@@ -131,8 +139,9 @@ export async function situarZona(
   );
 
   const zona = await cliente.query(
-    'UPDATE zona SET centroide_lat = $2, centroide_lng = $3 WHERE id = $1 RETURNING nombre',
-    [zonaId, lat, lng],
+    `UPDATE zona SET centroide_lat = $2, centroide_lng = $3, precision_gps_m = $4
+     WHERE id = $1 RETURNING nombre`,
+    [zonaId, lat, lng, precisionM],
   );
   if (zona.rowCount === 0) {
     throw new Error(`No existe la zona con identificador ${zonaId}.`);
@@ -154,7 +163,7 @@ export async function situarZona(
   const vecinas = await recoserAdyacencia(cliente, zonaId, lat, lng);
   await reconectarAislados(cliente, antiguas.rows.map((f: { id: number }) => f.id));
 
-  return { zonaId, nombre, referenciaId: referencia.rows[0].id, vecinas };
+  return { zonaId, nombre, referenciaId: referencia.rows[0].id, vecinas, precisionM };
 }
 
 // Crea un barrio que no estaba en ninguna lista y lo sitúa de una vez. Pasa:
@@ -164,6 +173,7 @@ export async function crearZonaEnGps(
   nombre: string,
   lat: number,
   lng: number,
+  precisionM: number | null = null,
 ): Promise<ZonaSituada> {
   const creada = await cliente.query(
     `INSERT INTO zona (nombre) VALUES ($1)
@@ -171,5 +181,5 @@ export async function crearZonaEnGps(
      RETURNING id`,
     [nombre],
   );
-  return situarZona(cliente, creada.rows[0].id, lat, lng);
+  return situarZona(cliente, creada.rows[0].id, lat, lng, precisionM);
 }

@@ -312,13 +312,13 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   el tipo de cosa que solo se echa de menos cuando ya pasó. El operador puede
   retirar el papel, así que el daño se corta; reconstruir lo que se tocó, no.
 
-- **[P25-02] Situar un barrio no comprueba que el GPS sea bueno.** Se valida
-  que las coordenadas caigan dentro del recuadro de Malabo —que descarta el
-  (0,0) y la posición de otro país—, pero no la precisión que declara el
-  teléfono. Un GPS sin fijar dentro del recuadro puede dar un punto a
-  quinientos metros, y el barrio quedaría mal situado sin que nadie lo note.
-  Lo barato: guardar el `accuracy` que da el navegador y avisar por encima
-  de unos 50 m.
+- **[P25-02] La precisión del GPS** — resuelto el 2026-07-30. El teléfono
+  espera a fijar (`watchPosition`, mostrando cómo mejora) en vez de coger la
+  primera lectura, el servidor exige `coords.accuracy` y rechaza por encima
+  del parámetro `gps_precision_maxima_m` (50 m, editable desde Ajustes), y la
+  precisión se guarda en `zona.precision_gps_m` para poder repetir después los
+  dudosos. Los barrios cargados por el importador la tienen a NULL: no se
+  sabe con qué precisión se tomaron, y fingir un número sería peor.
 
 ## Resueltos
 
