@@ -1,15 +1,18 @@
 // Panel de operador (PENDIENTES.md P21-01): la mesa de trabajo de quien
-// opera la plataforma — incidencias por revisar, fichas de conductores y
-// pasajeros con su historial, pagos por confirmar y los números del sistema.
+// opera la plataforma — el cuadro de mandos con sus alarmas, la central
+// telefónica, incidencias por revisar, fichas de conductores y pasajeros,
+// pagos por confirmar, el catálogo de sitios y los mandos del sistema.
 // Solo en español a propósito: es herramienta interna, no cara al pasajero
 // ni al taxista, así que no pasa por i18n.ts.
 
 import { useEffect, useState } from 'react';
 import {
   api,
-  type ConductorOperador, type EstadisticasOperador, type FichaConductorOperador,
-  type FichaPasajeroOperador, type IncidenciaOperador, type PasajeroOperador,
-  type RecargaOperador, type TransicionOperador, type ViajeResumenOperador,
+  type BandaOperador, type ConductorOperador, type EstadisticasOperador,
+  type FichaConductorOperador, type FichaPasajeroOperador, type IncidenciaOperador,
+  type ParametroOperador, type PasajeroOperador, type RecargaOperador,
+  type ReferenciaOperador, type SaludOperador, type SolicitudCentral,
+  type TransicionOperador, type ViajeResumenOperador, type ZonaOperador,
 } from './api';
 
 const ETIQUETA_ESTADO: Record<string, string> = {
@@ -35,21 +38,33 @@ const ETIQUETA_TIPO_INCIDENCIA: Record<string, string> = {
   no_presentado_dudoso: 'Cliente ausente dudoso',
 };
 
+const ETIQUETA_VIAJE: Record<string, string> = {
+  SOLICITADO: 'Solicitado',
+  EMITIDO: 'Buscando taxi',
+  ACEPTADO: 'Taxi asignado',
+  EN_CAMINO: 'Taxi en camino',
+  RECOGIDO: 'A bordo',
+};
+
 function fecha(iso: string | null): string {
   if (!iso) return '—';
   return new Date(iso).toLocaleString('es', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
-function Dato({ valor, etiqueta }: { valor: number | string; etiqueta: string }) {
+function porciento(tasa: number): string {
+  return `${Math.round(tasa * 100)} %`;
+}
+
+function Dato({ valor, etiqueta, rojo }: { valor: number | string; etiqueta: string; rojo?: boolean }) {
   return (
-    <div className="dato">
+    <div className={rojo ? 'dato dato-rojo' : 'dato'}>
       <span className="dato-valor">{valor}</span>
       <span className="dato-etiqueta">{etiqueta}</span>
     </div>
   );
 }
 
-function Buscador({ alBuscar }: { alBuscar: (q: string) => void }) {
+function Buscador({ alBuscar, placeholder }: { alBuscar: (q: string) => void; placeholder?: string }) {
   const [texto, setTexto] = useState('');
   useEffect(() => {
     const t = setTimeout(() => alBuscar(texto.trim()), 350);
@@ -60,7 +75,7 @@ function Buscador({ alBuscar }: { alBuscar: (q: string) => void }) {
     <input
       type="search"
       value={texto}
-      placeholder="Buscar por nombre, teléfono o matrícula…"
+      placeholder={placeholder ?? 'Buscar por nombre, teléfono o matrícula…'}
       onChange={(e) => setTexto(e.target.value)}
     />
   );
@@ -77,6 +92,216 @@ function ListaViajes({ viajes }: { viajes: ViajeResumenOperador[] }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+// --- Resumen: cuadro de mandos (bloque 1) ------------------------------------
+
+function Alarmas({ salud }: { salud: SaludOperador }) {
+  const disparadas = salud.alarmas.filter((a) => a.disparada);
+  return (
+    <>
+      {disparadas.length === 0
+        ? <p className="nota">Sin alarmas: todo dentro de los umbrales de la sección 11.</p>
+        : disparadas.map((a) => (
+          <div className="oferta oferta-alarma" key={a.clave}>
+            <div className="oferta-ruta">⚠ {a.nombre}</div>
+            <div className="nota">{a.ambito} · umbral {a.umbral}</div>
+            <ul className="ruta">
+              {a.detalle.slice(0, 5).map((d) => (
+                <li key={d.nombre}>{d.nombre} · {porciento(d.tasa)} de {d.muestras}</li>
+              ))}
+            </ul>
+          </div>
+        ))}
+    </>
+  );
+}
+
+function Resumen({ stats, salud }: { stats: EstadisticasOperador; salud: SaludOperador | null }) {
+  const enCurso = salud?.viajesEnCurso.reduce((suma, f) => suma + f.n, 0) ?? 0;
+  return (
+    <>
+      {salud && <Alarmas salud={salud} />}
+      <div className="rejilla">
+        <Dato valor={stats.incidenciasPendientes} etiqueta="Incidencias por revisar" rojo={stats.incidenciasPendientes > 0} />
+        <Dato valor={stats.recargasPendientes} etiqueta="Pagos por confirmar" rojo={stats.recargasPendientes > 0} />
+        <Dato valor={enCurso} etiqueta="Viajes en curso ahora" />
+        <Dato valor={salud === null ? '—' : salud.taxisPorZona.reduce((s, z) => s + z.taxis, 0)} etiqueta="Taxis en servicio ahora" />
+        <Dato valor={stats.conductores.pendientes} etiqueta="Conductores pendientes" />
+        <Dato valor={stats.conductores.verificados} etiqueta="Conductores verificados" />
+        <Dato valor={stats.pasajeros} etiqueta="Pasajeros registrados" />
+        <Dato valor={stats.solicitudes.ultimas_24h} etiqueta="Solicitudes (24 h)" />
+        <Dato valor={stats.solicitudes.completadas} etiqueta="Viajes completados" />
+        <Dato valor={stats.solicitudes.sin_taxi} etiqueta="Se quedaron sin taxi" />
+        <Dato valor={`${stats.saldoTotalMonederosXaf.toLocaleString('es')} XAF`} etiqueta="Saldo total monederos" />
+      </div>
+
+      {salud !== null && salud.viajesEnCurso.length > 0 && (
+        <>
+          <p className="nota">Viajes en curso</p>
+          <ul className="ruta">
+            {salud.viajesEnCurso.map((f) => (
+              <li key={f.estado}>{ETIQUETA_VIAJE[f.estado] ?? f.estado} · {f.n}</li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      <p className="nota">Taxis por zona ahora mismo</p>
+      {salud === null || salud.taxisPorZona.length === 0
+        ? <p className="nota">Ningún taxi en servicio en este momento.</p>
+        : (
+          <ul className="ruta">
+            {salud.taxisPorZona.map((z) => (
+              <li key={z.zona}>{z.zona} · {z.taxis} taxi{z.taxis === 1 ? '' : 's'} ({z.disponibles} libre{z.disponibles === 1 ? '' : 's'})</li>
+            ))}
+          </ul>
+        )}
+    </>
+  );
+}
+
+// --- Central telefónica (bloque 4) -------------------------------------------
+
+function SelectorReferencia({
+  etiqueta, valor, alElegir,
+}: {
+  etiqueta: string;
+  valor: ReferenciaOperador | null;
+  alElegir: (r: ReferenciaOperador | null) => void;
+}) {
+  const [texto, setTexto] = useState('');
+  const [opciones, setOpciones] = useState<ReferenciaOperador[]>([]);
+
+  useEffect(() => {
+    if (valor || texto.trim().length < 2) {
+      setOpciones([]);
+      return;
+    }
+    const t = setTimeout(() => {
+      api.referenciasOperador(texto.trim())
+        .then((r) => setOpciones(r.referencias.filter((f) => f.activa).slice(0, 6)))
+        .catch(() => setOpciones([]));
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [texto, valor]);
+
+  if (valor) {
+    return (
+      <button type="button" className="elegido" onClick={() => { alElegir(null); setTexto(''); }}>
+        <span className="elegido-etiqueta">{etiqueta}</span>
+        <span className="elegido-valor">{valor.nombre}</span>
+        <span className="elegido-cambiar">cambiar</span>
+      </button>
+    );
+  }
+  return (
+    <div className="buscador">
+      <input
+        type="text"
+        value={texto}
+        placeholder={etiqueta}
+        onChange={(e) => setTexto(e.target.value)}
+      />
+      {opciones.length > 0 && (
+        <ul className="sugerencias">
+          {opciones.map((o) => (
+            <li key={o.id}>
+              <button type="button" onClick={() => alElegir(o)}>
+                <span className="fila-sugerencia">
+                  <span className="sug-textos">
+                    <span className="sug-nombre">{o.nombre}</span>
+                    <span className="sug-zona">{o.zona}</span>
+                  </span>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function Central() {
+  const [telefono, setTelefono] = useState('');
+  const [origen, setOrigen] = useState<ReferenciaOperador | null>(null);
+  const [destino, setDestino] = useState<ReferenciaOperador | null>(null);
+  const [resultado, setResultado] = useState('');
+  const [error, setError] = useState('');
+  const [ocupado, setOcupado] = useState(false);
+  const [lista, setLista] = useState<SolicitudCentral[] | null>(null);
+
+  function cargarLista() {
+    api.solicitudesCentral().then((r) => setLista(r.solicitudes)).catch(() => undefined);
+  }
+  useEffect(cargarLista, []);
+
+  // Mientras hay viajes de la central sin terminar, la lista se refresca
+  // sola: el operador tiene que poder dictar la matrícula cuando llegue.
+  useEffect(() => {
+    const vivos = lista?.some((s) => ['SOLICITADO', 'EMITIDO', 'ACEPTADO', 'EN_CAMINO', 'RECOGIDO'].includes(s.estado));
+    if (!vivos) return;
+    const t = setInterval(cargarLista, 10_000);
+    return () => clearInterval(t);
+  }, [lista]);
+
+  async function pedir() {
+    setOcupado(true);
+    setError('');
+    setResultado('');
+    try {
+      const r = await api.crearSolicitudOperador(telefono.trim(), origen!.id, destino!.id);
+      setResultado(r.estado === 'SIN_OFERTA'
+        ? 'Ahora mismo no hay taxi en esa zona. Díselo y que reintente en unos minutos.'
+        : `Solicitud ${r.solicitudId} creada: buscando taxi. La matrícula saldrá abajo al asignarse.`);
+      setOrigen(null);
+      setDestino(null);
+      cargarLista();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo crear la solicitud.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  const listo = telefono.trim().length >= 6 && origen !== null && destino !== null;
+  return (
+    <>
+      <p className="nota">
+        Para quien llama por teléfono sin tener la aplicación. El teléfono es al
+        que el taxista llamará al llegar.
+      </p>
+      <input
+        type="tel"
+        value={telefono}
+        placeholder="Teléfono de quien llama"
+        onChange={(e) => setTelefono(e.target.value)}
+      />
+      <SelectorReferencia etiqueta="¿De dónde sale?" valor={origen} alElegir={setOrigen} />
+      <SelectorReferencia etiqueta="¿A dónde va?" valor={destino} alElegir={setDestino} />
+      {error && <p className="aviso">{error}</p>}
+      {resultado && <p className="nota">{resultado}</p>}
+      <button type="button" className="principal" disabled={!listo || ocupado} onClick={pedir}>
+        Pedir taxi en su nombre
+      </button>
+
+      <p className="nota">Últimas solicitudes de la central</p>
+      {lista?.length === 0 && <p className="nota">Ninguna todavía.</p>}
+      {lista?.map((s) => (
+        <div className="oferta" key={s.id}>
+          <div className="oferta-ruta">{s.origen} → {s.destino}</div>
+          <div className="nota">{fecha(s.creada_en)} · {s.telefono_cliente}</div>
+          <div className="nota">
+            Estado: <strong>{ETIQUETA_VIAJE[s.estado] ?? s.estado}</strong>
+            {s.conductor && ` · ${s.conductor}`}
+            {s.matricula && ` · matrícula ${s.matricula}`}
+          </div>
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -293,6 +518,362 @@ function FichaPasajero({
   );
 }
 
+// --- Lugares: editor del gazetteer (bloque 5) --------------------------------
+
+function EditorReferencia({
+  referencia, zonas, alGuardado,
+}: {
+  referencia: ReferenciaOperador;
+  zonas: ZonaOperador[];
+  alGuardado: () => void;
+}) {
+  const [nombre, setNombre] = useState(referencia.nombre);
+  const [categoria, setCategoria] = useState(referencia.categoria);
+  const [zonaId, setZonaId] = useState(referencia.zona_id);
+  const [lat, setLat] = useState(String(referencia.lat));
+  const [lng, setLng] = useState(String(referencia.lng));
+  const [aliasNuevo, setAliasNuevo] = useState('');
+  const [error, setError] = useState('');
+  const [ocupado, setOcupado] = useState(false);
+
+  async function accion(f: () => Promise<unknown>) {
+    setOcupado(true);
+    setError('');
+    try {
+      await f();
+      alGuardado();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  const guardar = () => accion(() => api.editarReferenciaOperador(referencia.id, {
+    nombre: nombre.trim() || undefined,
+    categoria: categoria.trim() || undefined,
+    zonaId: Number(zonaId),
+    lat: Number(lat),
+    lng: Number(lng),
+  }));
+
+  return (
+    <>
+      {error && <p className="aviso">{error}</p>}
+      <input type="text" value={nombre} placeholder="Nombre" onChange={(e) => setNombre(e.target.value)} />
+      <div className="fila">
+        <input type="text" value={categoria} placeholder="Categoría" onChange={(e) => setCategoria(e.target.value)} />
+        <select value={zonaId} onChange={(e) => setZonaId(Number(e.target.value))}>
+          {zonas.map((z) => <option key={z.id} value={z.id}>{z.nombre}</option>)}
+        </select>
+      </div>
+      <div className="fila">
+        <input type="text" value={lat} placeholder="Latitud" onChange={(e) => setLat(e.target.value)} />
+        <input type="text" value={lng} placeholder="Longitud" onChange={(e) => setLng(e.target.value)} />
+      </div>
+      {referencia.alias.length > 0 && (
+        <p className="nota">
+          Alias: {referencia.alias.map((a) => (
+            <button
+              key={a} type="button" className="enlace" disabled={ocupado}
+              onClick={() => accion(() => api.aliasReferenciaOperador(referencia.id, a, true))}
+            >
+              {a} ✕
+            </button>
+          ))}
+        </p>
+      )}
+      <div className="fila">
+        <input
+          type="text" value={aliasNuevo} placeholder="Alias nuevo (como se dice de palabra)"
+          onChange={(e) => setAliasNuevo(e.target.value)}
+        />
+        <button
+          type="button" className="secundario" disabled={ocupado || !aliasNuevo.trim()}
+          onClick={() => accion(() => api.aliasReferenciaOperador(referencia.id, aliasNuevo.trim()))
+            .then(() => setAliasNuevo(''))}
+        >
+          Añadir alias
+        </button>
+      </div>
+      <div className="fila">
+        <button type="button" className="principal" disabled={ocupado} onClick={guardar}>Guardar cambios</button>
+        <button
+          type="button" className="secundario" disabled={ocupado}
+          onClick={() => accion(() => api.editarReferenciaOperador(referencia.id, { activa: !referencia.activa }))}
+        >
+          {referencia.activa ? 'Desactivar' : 'Reactivar'}
+        </button>
+      </div>
+    </>
+  );
+}
+
+function Lugares() {
+  const [zonas, setZonas] = useState<ZonaOperador[]>([]);
+  const [busqueda, setBusqueda] = useState('');
+  const [referencias, setReferencias] = useState<ReferenciaOperador[] | null>(null);
+  const [abierta, setAbierta] = useState<number | null>(null);
+  const [creando, setCreando] = useState(false);
+  const [nueva, setNueva] = useState({ nombre: '', categoria: '', zonaId: 0, lat: '', lng: '' });
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.zonasOperador().then((r) => {
+      setZonas(r.zonas);
+      if (r.zonas.length > 0) setNueva((n) => ({ ...n, zonaId: n.zonaId || r.zonas[0].id }));
+    }).catch(() => undefined);
+  }, []);
+
+  function cargar() {
+    api.referenciasOperador(busqueda || undefined)
+      .then((r) => setReferencias(r.referencias))
+      .catch((e) => setError(e.message));
+  }
+  useEffect(cargar, [busqueda]);
+
+  async function crear() {
+    setError('');
+    try {
+      await api.crearReferenciaOperador({
+        zonaId: nueva.zonaId,
+        nombre: nueva.nombre.trim(),
+        lat: Number(nueva.lat),
+        lng: Number(nueva.lng),
+        categoria: nueva.categoria.trim() || undefined,
+      });
+      setCreando(false);
+      setNueva((n) => ({ ...n, nombre: '', categoria: '', lat: '', lng: '' }));
+      cargar();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo crear.');
+    }
+  }
+
+  const nuevaLista = nueva.nombre.trim().length > 1
+    && Number.isFinite(Number(nueva.lat)) && nueva.lat.trim() !== ''
+    && Number.isFinite(Number(nueva.lng)) && nueva.lng.trim() !== ''
+    && nueva.zonaId > 0;
+
+  return (
+    <>
+      <p className="nota">
+        El catálogo de sitios que la gente puede pedir. Los alias importan:
+        «donde manolo» encuentra el bar aunque se llame de otra manera.
+      </p>
+      {error && <p className="aviso">{error}</p>}
+      <button type="button" className={creando ? 'secundario' : 'principal'} onClick={() => setCreando(!creando)}>
+        {creando ? 'Cancelar' : 'Añadir un sitio nuevo'}
+      </button>
+      {creando && (
+        <>
+          <input
+            type="text" value={nueva.nombre} placeholder="Nombre del sitio"
+            onChange={(e) => setNueva({ ...nueva, nombre: e.target.value })}
+          />
+          <div className="fila">
+            <input
+              type="text" value={nueva.categoria} placeholder="Categoría (bar, mercado…)"
+              onChange={(e) => setNueva({ ...nueva, categoria: e.target.value })}
+            />
+            <select value={nueva.zonaId} onChange={(e) => setNueva({ ...nueva, zonaId: Number(e.target.value) })}>
+              {zonas.map((z) => <option key={z.id} value={z.id}>{z.nombre}</option>)}
+            </select>
+          </div>
+          <div className="fila">
+            <input
+              type="text" value={nueva.lat} placeholder="Latitud (3.75…)"
+              onChange={(e) => setNueva({ ...nueva, lat: e.target.value })}
+            />
+            <input
+              type="text" value={nueva.lng} placeholder="Longitud (8.78…)"
+              onChange={(e) => setNueva({ ...nueva, lng: e.target.value })}
+            />
+          </div>
+          <button type="button" className="principal" disabled={!nuevaLista} onClick={crear}>
+            Crear el sitio
+          </button>
+        </>
+      )}
+
+      <Buscador alBuscar={setBusqueda} placeholder="Buscar sitio por nombre o alias…" />
+      {referencias?.length === 0 && <p className="nota">Nada que encaje con esa búsqueda.</p>}
+      {referencias?.map((r) => (
+        <div className="oferta" key={r.id}>
+          <button
+            type="button" className="oferta-boton-titulo"
+            onClick={() => setAbierta(abierta === r.id ? null : r.id)}
+          >
+            <span className="oferta-ruta">
+              {r.nombre}{!r.activa && ' · DESACTIVADO'}
+            </span>
+            <span className="nota">
+              {r.zona} · {r.categoria} · {r.usos} uso{r.usos === 1 ? '' : 's'}
+              {r.alias.length > 0 && ` · alias: ${r.alias.join(', ')}`}
+            </span>
+          </button>
+          {abierta === r.id && (
+            <EditorReferencia referencia={r} zonas={zonas} alGuardado={cargar} />
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
+// --- Ajustes: bandas de precio y parámetros (bloque 6) -----------------------
+
+function Bandas({ zonas }: { zonas: ZonaOperador[] }) {
+  const [bandas, setBandas] = useState<BandaOperador[] | null>(null);
+  const [origenId, setOrigenId] = useState(0);
+  const [destinoId, setDestinoId] = useState(0);
+  const [precios, setPrecios] = useState({ p25: '', p50: '', p75: '' });
+  const [error, setError] = useState('');
+
+  function cargar() {
+    api.bandasOperador().then((r) => setBandas(r.bandas)).catch((e) => setError(e.message));
+  }
+  useEffect(cargar, []);
+  useEffect(() => {
+    if (zonas.length > 0) {
+      setOrigenId((v) => v || zonas[0].id);
+      setDestinoId((v) => v || zonas[Math.min(1, zonas.length - 1)].id);
+    }
+  }, [zonas]);
+
+  async function guardar(borrar = false) {
+    setError('');
+    try {
+      await api.guardarBandaOperador(borrar
+        ? { zonaOrigenId: origenId, zonaDestinoId: destinoId, borrar: true }
+        : {
+          zonaOrigenId: origenId,
+          zonaDestinoId: destinoId,
+          p25: Number(precios.p25),
+          p50: Number(precios.p50),
+          p75: Number(precios.p75),
+        });
+      setPrecios({ p25: '', p50: '', p75: '' });
+      cargar();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo guardar.');
+    }
+  }
+
+  const listo = [precios.p25, precios.p50, precios.p75]
+    .every((v) => v.trim() !== '' && Number.isInteger(Number(v)) && Number(v) >= 0);
+
+  return (
+    <>
+      <p className="nota">
+        Precio orientativo por trayecto entre zonas (barato / normal / caro, en
+        XAF). El taxista lo ve al recibir la oferta, para no aceptar a ciegas;
+        nunca es tarifa impuesta.
+      </p>
+      {error && <p className="aviso">{error}</p>}
+      <div className="fila">
+        <select value={origenId} onChange={(e) => setOrigenId(Number(e.target.value))}>
+          {zonas.map((z) => <option key={z.id} value={z.id}>{z.nombre}</option>)}
+        </select>
+        <select value={destinoId} onChange={(e) => setDestinoId(Number(e.target.value))}>
+          {zonas.map((z) => <option key={z.id} value={z.id}>{z.nombre}</option>)}
+        </select>
+      </div>
+      <div className="fila">
+        <input type="number" value={precios.p25} placeholder="Barato" onChange={(e) => setPrecios({ ...precios, p25: e.target.value })} />
+        <input type="number" value={precios.p50} placeholder="Normal" onChange={(e) => setPrecios({ ...precios, p50: e.target.value })} />
+        <input type="number" value={precios.p75} placeholder="Caro" onChange={(e) => setPrecios({ ...precios, p75: e.target.value })} />
+      </div>
+      <div className="fila">
+        <button type="button" className="principal" disabled={!listo || origenId === destinoId} onClick={() => guardar()}>
+          Guardar banda
+        </button>
+        <button type="button" className="secundario" onClick={() => guardar(true)}>
+          Borrar la de ese par
+        </button>
+      </div>
+      {bandas?.length === 0 && <p className="nota">Ninguna banda definida todavía: los taxistas ven «sin precio orientativo».</p>}
+      {bandas && bandas.length > 0 && (
+        <ul className="ruta">
+          {bandas.map((b) => (
+            <li key={b.id}>
+              {b.zona_origen} → {b.zona_destino} · {Number(b.p25).toLocaleString('es')} / {Number(b.p50).toLocaleString('es')} / {Number(b.p75).toLocaleString('es')} XAF
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
+function FilaParametro({ parametro, alGuardado }: { parametro: ParametroOperador; alGuardado: () => void }) {
+  const [valor, setValor] = useState(parametro.valor);
+  const [error, setError] = useState('');
+  const [ocupado, setOcupado] = useState(false);
+  const cambiado = valor.trim() !== parametro.valor;
+
+  async function guardar() {
+    setOcupado(true);
+    setError('');
+    try {
+      await api.cambiarParametroOperador(parametro.clave, valor.trim());
+      alGuardado();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo guardar.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  return (
+    <div className="oferta">
+      <div className="oferta-ruta parametro-clave">{parametro.clave}</div>
+      {parametro.descripcion && <div className="nota">{parametro.descripcion}</div>}
+      {error && <p className="aviso">{error}</p>}
+      <div className="fila">
+        <input type="text" value={valor} onChange={(e) => setValor(e.target.value)} />
+        <button type="button" className="principal" disabled={!cambiado || ocupado || !valor.trim()} onClick={guardar}>
+          Guardar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Ajustes() {
+  const [zonas, setZonas] = useState<ZonaOperador[]>([]);
+  const [parametros, setParametros] = useState<ParametroOperador[] | null>(null);
+  const [verParametros, setVerParametros] = useState(false);
+
+  useEffect(() => {
+    api.zonasOperador().then((r) => setZonas(r.zonas)).catch(() => undefined);
+  }, []);
+  function cargarParametros() {
+    api.parametrosOperador().then((r) => setParametros(r.parametros)).catch(() => undefined);
+  }
+  useEffect(cargarParametros, []);
+
+  return (
+    <>
+      <Bandas zonas={zonas} />
+      <button type="button" className="secundario" onClick={() => setVerParametros(!verParametros)}>
+        {verParametros ? 'Ocultar parámetros del sistema' : `Parámetros del sistema (${parametros?.length ?? '…'})`}
+      </button>
+      {verParametros && (
+        <>
+          <p className="nota">
+            Cambian el comportamiento al momento, sin desplegar: tiempos de
+            oleada, tarifas, umbrales de alarma… Tócalos sabiendo lo que haces.
+          </p>
+          {parametros?.map((p) => (
+            <FilaParametro key={p.clave} parametro={p} alGuardado={cargarParametros} />
+          ))}
+        </>
+      )}
+    </>
+  );
+}
+
 // --- Listas -------------------------------------------------------------------
 
 function FilaConductor({
@@ -316,8 +897,9 @@ function FilaConductor({
 }
 
 const SECCIONES = [
-  ['resumen', 'Resumen'], ['incidencias', 'Incidencias'], ['conductores', 'Conductores'],
-  ['pasajeros', 'Pasajeros'], ['pagos', 'Pagos'],
+  ['resumen', 'Resumen'], ['central', 'Central'], ['incidencias', 'Incidencias'],
+  ['conductores', 'Conductores'], ['pasajeros', 'Pasajeros'], ['pagos', 'Pagos'],
+  ['lugares', 'Lugares'], ['ajustes', 'Ajustes'],
 ] as const;
 type Seccion = (typeof SECCIONES)[number][0];
 
@@ -327,6 +909,7 @@ const FILTROS_RECARGA = ['pendiente', 'confirmada', 'rechazada', 'caducada', 'to
 export default function PanelOperador() {
   const [seccion, setSeccion] = useState<Seccion>('resumen');
   const [stats, setStats] = useState<EstadisticasOperador | null>(null);
+  const [salud, setSalud] = useState<SaludOperador | null>(null);
   const [error, setError] = useState('');
   const [ocupadoId, setOcupadoId] = useState<number | string | null>(null);
 
@@ -351,8 +934,17 @@ export default function PanelOperador() {
 
   function cargarStats() {
     api.estadisticasOperador().then(setStats).catch((e) => setError(e.message));
+    api.saludOperador().then(setSalud).catch(() => undefined);
   }
   useEffect(cargarStats, []);
+
+  // El cuadro de mandos se refresca solo mientras se mira: es la pantalla
+  // que se deja abierta encima de la mesa.
+  useEffect(() => {
+    if (seccion !== 'resumen') return;
+    const t = setInterval(cargarStats, 30_000);
+    return () => clearInterval(t);
+  }, [seccion]);
 
   useEffect(() => {
     // Con búsqueda se ignora el filtro de estado: quien busca quiere
@@ -448,6 +1040,7 @@ export default function PanelOperador() {
 
   const enFicha = (seccion === 'conductores' && fichaConductor !== null)
     || (seccion === 'pasajeros' && fichaPasajero !== null);
+  const hayAlarma = salud?.alarmas.some((a) => a.disparada) ?? false;
 
   return (
     <main className="lienzo">
@@ -465,6 +1058,7 @@ export default function PanelOperador() {
                   onClick={() => { setSeccion(id); setFichaConductor(null); setFichaPasajero(null); }}
                 >
                   {etiqueta}
+                  {id === 'resumen' && hayAlarma && ' ⚠'}
                   {id === 'incidencias' && stats !== null && stats.incidenciasPendientes > 0 && ` (${stats.incidenciasPendientes})`}
                   {id === 'pagos' && stats !== null && stats.recargasPendientes > 0 && ` (${stats.recargasPendientes})`}
                 </button>
@@ -474,20 +1068,9 @@ export default function PanelOperador() {
         )}
         {error && <p className="aviso">{error}</p>}
 
-        {seccion === 'resumen' && stats && (
-          <div className="rejilla">
-            <Dato valor={stats.incidenciasPendientes} etiqueta="Incidencias por revisar" />
-            <Dato valor={stats.recargasPendientes} etiqueta="Pagos por confirmar" />
-            <Dato valor={stats.conductores.pendientes} etiqueta="Conductores pendientes" />
-            <Dato valor={stats.conductores.verificados} etiqueta="Conductores verificados" />
-            <Dato valor={stats.enServicioAhora} etiqueta="En servicio ahora" />
-            <Dato valor={stats.pasajeros} etiqueta="Pasajeros registrados" />
-            <Dato valor={stats.solicitudes.ultimas_24h} etiqueta="Solicitudes (24 h)" />
-            <Dato valor={stats.solicitudes.completadas} etiqueta="Viajes completados" />
-            <Dato valor={stats.solicitudes.sin_taxi} etiqueta="Se quedaron sin taxi" />
-            <Dato valor={`${stats.saldoTotalMonederosXaf.toLocaleString('es')} XAF`} etiqueta="Saldo total monederos" />
-          </div>
-        )}
+        {seccion === 'resumen' && stats && <Resumen stats={stats} salud={salud} />}
+
+        {seccion === 'central' && <Central />}
 
         {seccion === 'incidencias' && (
           <>
@@ -619,6 +1202,10 @@ export default function PanelOperador() {
             ))}
           </>
         )}
+
+        {seccion === 'lugares' && <Lugares />}
+
+        {seccion === 'ajustes' && <Ajustes />}
       </section>
     </main>
   );

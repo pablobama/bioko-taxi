@@ -207,11 +207,14 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   de transiciones del viaje), Conductores (búsqueda por nombre/teléfono/
   matrícula y ficha completa: vehículo, saldo, suscripción, reputación,
   historial, recargas), Pasajeros (búsqueda, ficha con strikes y viajes,
-  desbloquear) y Pagos (confirmar/rechazar recargas). Sigue pendiente:
-  - Bloques 1, 4, 5 y 6 de la propuesta del 2026-07-30: cuadro de mandos
-    con las alarmas `alarma_*` (siguen sin consumidor), central telefónica
-    (crear solicitud en nombre de quien llama; el dominio ya lo soporta),
-    editor del gazetteer, bandas de precio y parámetros del sistema.
+  desbloquear) y Pagos (confirmar/rechazar recargas). Tercera versión
+  (2026-07-30, bloques 1/4/5/6 de la propuesta): cuadro de mandos con las
+  cinco alarmas `alarma_*` evaluadas (por fin tienen consumidor; la de
+  mensajería queda declarada «sin fuente de datos»), central telefónica
+  (pedir taxi en nombre de quien llama, con dispositivo sintético por
+  teléfono e idempotencia), editor del gazetteer (crear/editar/desactivar
+  sitios y alias, viendo también las inactivas), bandas de precio por par
+  de zonas y edición de parámetros del sistema. Sigue pendiente:
   - Cambiar el rol de un dispositivo (cliente ↔ conductor): el esquema exige
     hoy que `tipo` no sea NULL y las solicitudes cuelgan del dispositivo;
     pide diseño propio, no un simple UPDATE.

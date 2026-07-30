@@ -7,13 +7,20 @@
 // UUIDS_OPERADOR (separados por comas); no hay tabla propia porque son pocos
 // y cambian poco, y así no hace falta una alta con contraseña para esto.
 
+import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { enTransaccion } from '../bd/conexion.js';
+import { iniciarDespacho } from '../dominio/despacho.js';
 import { ErrorEntidadInexistente } from '../dominio/errores.js';
+import type { EmisorEventos } from '../dominio/eventos.js';
+import {
+  anadirAlias, editarReferencia, guardarReferencia, quitarAlias,
+} from '../dominio/gazetteer.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
 import { confirmarRecarga, rechazarRecarga, recargasDe } from '../dominio/recargas.js';
 import { reputacionDe } from '../dominio/reputacion.js';
+import { crearSolicitud } from '../dominio/transiciones.js';
 
 const PATRON_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ESTADOS_VALIDOS = ['pendiente', 'verificado', 'suspendido', 'bloqueado'];
@@ -38,7 +45,11 @@ export function esOperador(uuid: string): boolean {
   return uuidsOperador().has(uuid.toLowerCase());
 }
 
-export function registrarRutasOperador(app: FastifyInstance, pool: pg.Pool): void {
+export function registrarRutasOperador(
+  app: FastifyInstance,
+  pool: pg.Pool,
+  emisor: EmisorEventos,
+): void {
   function uuidDesde(req: FastifyRequest): string {
     const uuid = req.headers['x-dispositivo'] as string | undefined;
     if (!uuid || !PATRON_UUID.test(uuid)) {
@@ -445,5 +456,416 @@ export function registrarRutasOperador(app: FastifyInstance, pool: pg.Pool): voi
       );
       return { incidenciaId: id, resolucion: accion === 'sancionar' ? 'sancionado' : 'perdonado', strikes, bloqueado };
     });
+  });
+
+  // --- Cuadro de mandos (bloque 1) -------------------------------------------
+  // La salud del sistema de un vistazo, y las alarmas de la sección 11 de la
+  // especificación evaluadas de verdad: los umbrales `alarma_*` llevaban en
+  // la tabla parametro desde el paso 1 sin que nadie los consumiera.
+
+  app.get('/api/operador/salud', async (req) => {
+    exigirOperador(req);
+
+    const umbralesRes = await pool.query(
+      `SELECT clave, valor FROM parametro WHERE clave LIKE 'alarma%'`,
+    );
+    const umbral = new Map<string, number>(
+      umbralesRes.rows.map((f: { clave: string; valor: string }) => [f.clave, Number(f.valor)]),
+    );
+
+    const taxisPorZona = await pool.query(
+      `SELECT z.nombre AS zona, count(*)::int AS taxis,
+              count(*) FILTER (WHERE p.estado = 'DISPONIBLE')::int AS disponibles
+       FROM presencia p JOIN zona z ON z.id = p.zona_id
+       WHERE p.estado != 'DESCONECTADO'
+       GROUP BY z.nombre ORDER BY taxis DESC, z.nombre`,
+    );
+    const enCurso = await pool.query(
+      `SELECT estado, count(*)::int AS n FROM solicitud
+       WHERE estado IN ('SOLICITADO', 'EMITIDO', 'ACEPTADO', 'EN_CAMINO', 'RECOGIDO')
+       GROUP BY estado`,
+    );
+
+    // Tasa de «sin oferta» por zona, últimas 24 horas. Con menos de 5
+    // peticiones no se opina: dos solicitudes fallidas de madrugada no son
+    // una alarma, son madrugada.
+    const MUESTRA_MINIMA = 5;
+    const sinOferta = await pool.query(
+      `SELECT z.nombre AS zona, count(*)::int AS pedidas,
+              count(*) FILTER (WHERE s.estado = 'SIN_OFERTA')::int AS sin_taxi
+       FROM solicitud s
+       JOIN referencia r ON r.id = s.referencia_origen_id
+       JOIN zona z ON z.id = r.zona_id
+       WHERE s.creada_en >= now() - interval '24 hours'
+       GROUP BY z.nombre HAVING count(*) >= ${MUESTRA_MINIMA}`,
+    );
+    const zonasSinTaxi = sinOferta.rows
+      .map((f: { zona: string; pedidas: number; sin_taxi: number }) => ({
+        nombre: f.zona, muestras: f.pedidas, tasa: f.sin_taxi / f.pedidas,
+      }))
+      .filter((f) => f.tasa >= (umbral.get('alarma_tasa_sin_oferta_max') ?? 1))
+      .sort((a, b) => b.tasa - a.tasa);
+
+    // Por conductor, últimos 30 días: ausencias declaradas y cancelaciones
+    // tras aceptar. Son las dos formas de quemar pasajeros.
+    const porConductor = await pool.query(
+      `SELECT c.nombre, count(*)::int AS asignados,
+              count(*) FILTER (WHERE s.estado IN ('NO_PRESENTADO', 'CLIENTE_AUSENTE'))::int AS ausencias,
+              count(*) FILTER (WHERE s.estado = 'CANCELADO_CONDUCTOR')::int AS cancelados
+       FROM solicitud s JOIN conductor c ON c.id = s.conductor_id
+       WHERE s.creada_en >= now() - interval '30 days'
+       GROUP BY c.id, c.nombre HAVING count(*) >= ${MUESTRA_MINIMA}`,
+    );
+    const filaConductor = (f: { nombre: string; asignados: number; ausencias: number; cancelados: number }) => f;
+    const conductoresAusencias = porConductor.rows
+      .map(filaConductor)
+      .map((f) => ({ nombre: f.nombre, muestras: f.asignados, tasa: f.ausencias / f.asignados }))
+      .filter((f) => f.tasa >= (umbral.get('alarma_tasa_no_presentado_max') ?? 1))
+      .sort((a, b) => b.tasa - a.tasa);
+    const conductoresCancelan = porConductor.rows
+      .map(filaConductor)
+      .map((f) => ({ nombre: f.nombre, muestras: f.asignados, tasa: f.cancelados / f.asignados }))
+      .filter((f) => f.tasa >= (umbral.get('alarma_tasa_acept_cancel_max') ?? 1))
+      .sort((a, b) => b.tasa - a.tasa);
+
+    // Validación de recogidas (R5): viajes completados cuya recogida quedó
+    // validada (PIN o proximidad GPS). Si baja, la comisión se está cobrando
+    // a ciegas o no se está cobrando.
+    const validacion = await pool.query(
+      `SELECT count(*)::int AS completados,
+              count(*) FILTER (WHERE v.validado_en IS NOT NULL)::int AS validados
+       FROM solicitud s JOIN viaje v ON v.solicitud_id = s.id
+       WHERE s.estado = 'COMPLETADO' AND s.creada_en >= now() - interval '7 days'`,
+    );
+    const completados = validacion.rows[0].completados as number;
+    const tasaValidacion = completados >= MUESTRA_MINIMA
+      ? validacion.rows[0].validados / completados
+      : null;
+
+    const alarmas = [
+      {
+        clave: 'alarma_tasa_sin_oferta_max',
+        nombre: 'Zonas que se quedan sin taxi',
+        ambito: 'por zona, últimas 24 h',
+        umbral: umbral.get('alarma_tasa_sin_oferta_max') ?? null,
+        disparada: zonasSinTaxi.length > 0,
+        detalle: zonasSinTaxi,
+      },
+      {
+        clave: 'alarma_tasa_no_presentado_max',
+        nombre: 'Conductores con demasiadas ausencias',
+        ambito: 'por conductor, últimos 30 días',
+        umbral: umbral.get('alarma_tasa_no_presentado_max') ?? null,
+        disparada: conductoresAusencias.length > 0,
+        detalle: conductoresAusencias,
+      },
+      {
+        clave: 'alarma_tasa_acept_cancel_max',
+        nombre: 'Conductores que aceptan y cancelan',
+        ambito: 'por conductor, últimos 30 días',
+        umbral: umbral.get('alarma_tasa_acept_cancel_max') ?? null,
+        disparada: conductoresCancelan.length > 0,
+        detalle: conductoresCancelan,
+      },
+      {
+        clave: 'alarma_tasa_validacion_min',
+        nombre: 'Recogidas sin validar',
+        ambito: 'global, últimos 7 días',
+        umbral: umbral.get('alarma_tasa_validacion_min') ?? null,
+        // Sin muestra suficiente no hay opinión, y sin opinión no hay alarma.
+        disparada: tasaValidacion !== null
+          && tasaValidacion < (umbral.get('alarma_tasa_validacion_min') ?? 0),
+        detalle: tasaValidacion === null
+          ? []
+          : [{ nombre: 'validadas', muestras: completados, tasa: tasaValidacion }],
+      },
+      {
+        clave: 'alarma_coste_mensajeria_xaf',
+        nombre: 'Coste de mensajería por viaje',
+        ambito: 'sin fuente de datos: no hay mensajería de pago contratada',
+        umbral: umbral.get('alarma_coste_mensajeria_xaf') ?? null,
+        disparada: false,
+        detalle: [],
+      },
+    ];
+
+    return {
+      taxisPorZona: taxisPorZona.rows,
+      viajesEnCurso: enCurso.rows,
+      alarmas,
+    };
+  });
+
+  // --- Central telefónica (bloque 4, canal de voz 3.6) -----------------------
+  // Quien no tiene la aplicación llama por teléfono y el operador pide por
+  // él. El dominio lo soporta desde el paso 1 (actor 'operador'); esto solo
+  // le pone puerta. Cada teléfono que llama tiene su propio «dispositivo»
+  // sintético, así conserva historial y strikes como cualquier usuario.
+
+  app.post('/api/operador/solicitudes', async (req, reply) => {
+    exigirOperador(req);
+    const cuerpo = (req.body ?? {}) as { telefono?: string; origenId?: number; destinoId?: number };
+    const telefono = cuerpo.telefono?.trim();
+    if (!telefono || !/^\+?[0-9\s-]{6,20}$/.test(telefono)) {
+      throw errorHttp(400, `Hace falta el teléfono de quien llama (recibido: «${telefono ?? ''}»).`);
+    }
+    if (!cuerpo.origenId || !cuerpo.destinoId) {
+      throw errorHttp(400, 'Faltan campos: origenId y destinoId son obligatorios.');
+    }
+    if (cuerpo.origenId === cuerpo.destinoId) {
+      throw errorHttp(400, 'El origen y el destino no pueden ser la misma referencia.');
+    }
+
+    const dispositivoId = await enTransaccion(pool, async (cliente) => {
+      // El mismo teléfono que ya llamó otras veces reutiliza su dispositivo
+      // sintético (el más reciente si hubiera varios perfiles con el número).
+      const existente = await cliente.query(
+        `SELECT d.id, d.bloqueado_en
+         FROM perfil_cliente pc JOIN dispositivo d ON d.id = pc.dispositivo_id
+         WHERE pc.telefono = $1 AND d.tipo = 'cliente'
+         ORDER BY d.id DESC LIMIT 1`,
+        [telefono],
+      );
+      if ((existente.rowCount ?? 0) > 0) {
+        if (existente.rows[0].bloqueado_en !== null) {
+          throw errorHttp(403, 'Ese teléfono está bloqueado por incidencias repetidas. Revisa su ficha en Pasajeros.');
+        }
+        return existente.rows[0].id as number;
+      }
+      const dispositivo = await cliente.query(
+        `INSERT INTO dispositivo (uuid_persistente, tipo) VALUES ($1, 'cliente') RETURNING id`,
+        [randomUUID()],
+      );
+      await cliente.query(
+        `INSERT INTO perfil_cliente (dispositivo_id, telefono) VALUES ($1, $2)`,
+        [dispositivo.rows[0].id, telefono],
+      );
+      return dispositivo.rows[0].id as number;
+    });
+
+    // La misma idempotencia que la app (R1): si el operador pulsa dos veces,
+    // no se piden dos taxis.
+    const ventana = Math.floor(Date.now() / 60_000);
+    const clave = createHash('sha256')
+      .update(`${dispositivoId}|${cuerpo.origenId}|${cuerpo.destinoId}|${ventana}`)
+      .digest('hex');
+
+    const creada = await enTransaccion(pool, (c) => crearSolicitud(c, {
+      dispositivoClienteId: dispositivoId,
+      telefonoCliente: telefono,
+      referenciaOrigenId: cuerpo.origenId!,
+      referenciaDestinoId: cuerpo.destinoId!,
+      actor: 'operador',
+      claveIdempotencia: clave,
+      origenEvento: 'llamada_voz',
+    }));
+
+    if (!creada.yaExistia) {
+      const despacho = await iniciarDespacho(pool, emisor, creada.solicitudId);
+      return reply.status(201).send({
+        solicitudId: creada.solicitudId, estado: despacho.resultado, yaExistia: false,
+      });
+    }
+    const actual = await pool.query('SELECT estado FROM solicitud WHERE id = $1', [creada.solicitudId]);
+    return reply.send({
+      solicitudId: creada.solicitudId, estado: actual.rows[0].estado, yaExistia: true,
+    });
+  });
+
+  // Las últimas solicitudes de la central, con lo que el operador tiene que
+  // dictar por teléfono: estado, y matrícula cuando hay taxi asignado.
+  app.get('/api/operador/solicitudes', async (req) => {
+    exigirOperador(req);
+    const filas = await pool.query(
+      `SELECT s.id, s.estado, s.creada_en, s.telefono_cliente,
+              ro.nombre AS origen, rd.nombre AS destino,
+              c.nombre AS conductor, v.matricula
+       FROM solicitud s
+       JOIN referencia ro ON ro.id = s.referencia_origen_id
+       JOIN referencia rd ON rd.id = s.referencia_destino_id
+       LEFT JOIN conductor c ON c.id = s.conductor_id
+       LEFT JOIN vehiculo v ON v.conductor_id = c.id
+       WHERE EXISTS (
+         SELECT 1 FROM transicion t
+         WHERE t.solicitud_id = s.id AND t.actor = 'operador' AND t.estado_nuevo = 'SOLICITADO'
+       )
+       ORDER BY s.creada_en DESC LIMIT 20`,
+    );
+    return { solicitudes: filas.rows };
+  });
+
+  // --- Editor del gazetteer (bloque 5) ---------------------------------------
+  // El catálogo de sitios es trabajo de campo continuo (P1-03): un nombre
+  // nuevo, un alias como se dice de palabra, unas coordenadas corregidas.
+  // Hasta ahora todo eso era SQL a mano.
+
+  app.get('/api/operador/zonas', async (req) => {
+    exigirOperador(req);
+    const filas = await pool.query(
+      `SELECT z.id, z.nombre,
+              (SELECT count(*)::int FROM referencia r WHERE r.zona_id = z.id AND r.activa) AS referencias
+       FROM zona z ORDER BY z.nombre`,
+    );
+    return { zonas: filas.rows };
+  });
+
+  app.get('/api/operador/referencias', async (req) => {
+    exigirOperador(req);
+    const { q, zonaId } = (req.query ?? {}) as { q?: string; zonaId?: string };
+    // A diferencia del buscador de los pasajeros, este ve TODO: inactivas
+    // incluidas, porque para reactivar algo primero hay que encontrarlo.
+    const filas = await pool.query(
+      `SELECT r.id, r.nombre, r.lat, r.lng, r.categoria, r.activa,
+              r.veces_usada AS usos,
+              z.id AS zona_id, z.nombre AS zona,
+              COALESCE((SELECT array_agg(a.alias ORDER BY a.alias)
+                        FROM referencia_alias a WHERE a.referencia_id = r.id), '{}') AS alias
+       FROM referencia r JOIN zona z ON z.id = r.zona_id
+       WHERE ($1::text IS NULL OR r.nombre ILIKE '%' || $1 || '%'
+              OR EXISTS (SELECT 1 FROM referencia_alias a
+                         WHERE a.referencia_id = r.id AND a.alias ILIKE '%' || $1 || '%'))
+         AND ($2::bigint IS NULL OR r.zona_id = $2)
+       ORDER BY r.veces_usada DESC, r.nombre
+       LIMIT 50`,
+      [q?.trim() || null, zonaId ? Number(zonaId) : null],
+    );
+    return { referencias: filas.rows };
+  });
+
+  app.post('/api/operador/referencias', async (req) => {
+    exigirOperador(req);
+    const cuerpo = (req.body ?? {}) as {
+      zonaId?: number; nombre?: string; lat?: number; lng?: number; categoria?: string;
+    };
+    if (!cuerpo.zonaId || !cuerpo.nombre?.trim()
+      || typeof cuerpo.lat !== 'number' || typeof cuerpo.lng !== 'number') {
+      throw errorHttp(400, 'Faltan campos: zonaId, nombre, lat y lng son obligatorios.');
+    }
+    const resultado = await enTransaccion(pool, async (cliente) => {
+      const r = await guardarReferencia(cliente, {
+        zonaId: cuerpo.zonaId!, nombre: cuerpo.nombre!.trim(), lat: cuerpo.lat!, lng: cuerpo.lng!,
+      });
+      if (cuerpo.categoria?.trim()) {
+        await editarReferencia(cliente, r.referenciaId, { categoria: cuerpo.categoria.trim() });
+      }
+      return r;
+    });
+    return resultado;
+  });
+
+  app.post('/api/operador/referencias/:id', async (req) => {
+    exigirOperador(req);
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(id)) throw errorHttp(400, 'Id de referencia no válido.');
+    const cambios = (req.body ?? {}) as {
+      nombre?: string; zonaId?: number; lat?: number; lng?: number;
+      activa?: boolean; categoria?: string;
+    };
+    try {
+      await enTransaccion(pool, (cliente) => editarReferencia(cliente, id, cambios));
+    } catch (error) {
+      if (error instanceof ErrorEntidadInexistente) throw errorHttp(404, error.message);
+      throw error;
+    }
+    return { editada: true };
+  });
+
+  app.post('/api/operador/referencias/:id/alias', async (req) => {
+    exigirOperador(req);
+    const id = Number((req.params as { id: string }).id);
+    const { alias, quitar } = (req.body ?? {}) as { alias?: string; quitar?: boolean };
+    if (!Number.isInteger(id)) throw errorHttp(400, 'Id de referencia no válido.');
+    if (!alias?.trim()) throw errorHttp(400, 'Falta el alias.');
+    try {
+      await enTransaccion(pool, (cliente) => (quitar
+        ? quitarAlias(cliente, id, alias.trim())
+        : anadirAlias(cliente, id, alias.trim())));
+    } catch (error) {
+      if (error instanceof ErrorEntidadInexistente) throw errorHttp(404, error.message);
+      if (error instanceof Error) throw errorHttp(409, error.message);
+      throw error;
+    }
+    return { hecho: true };
+  });
+
+  // --- Bandas de precio y parámetros (bloque 6) ------------------------------
+  // Desde la migración 012 las bandas no pueden calcularse de datos reales
+  // (no se reporta precio): las mantiene el operador a mano por par de zonas
+  // (P12-01), y el taxista las ve en el broadcast para no aceptar a ciegas.
+
+  app.get('/api/operador/bandas', async (req) => {
+    exigirOperador(req);
+    const filas = await pool.query(
+      `SELECT b.id, b.zona_origen_id, b.zona_destino_id, b.p25, b.p50, b.p75,
+              b.actualizada_en, zo.nombre AS zona_origen, zd.nombre AS zona_destino
+       FROM banda_precio b
+       JOIN zona zo ON zo.id = b.zona_origen_id
+       JOIN zona zd ON zd.id = b.zona_destino_id
+       ORDER BY zo.nombre, zd.nombre`,
+    );
+    return { bandas: filas.rows };
+  });
+
+  app.post('/api/operador/bandas', async (req) => {
+    exigirOperador(req);
+    const cuerpo = (req.body ?? {}) as {
+      zonaOrigenId?: number; zonaDestinoId?: number;
+      p25?: number; p50?: number; p75?: number; borrar?: boolean;
+    };
+    if (!cuerpo.zonaOrigenId || !cuerpo.zonaDestinoId) {
+      throw errorHttp(400, 'Faltan las zonas de origen y destino.');
+    }
+    if (cuerpo.borrar) {
+      await pool.query(
+        `DELETE FROM banda_precio WHERE zona_origen_id = $1 AND zona_destino_id = $2`,
+        [cuerpo.zonaOrigenId, cuerpo.zonaDestinoId],
+      );
+      return { borrada: true };
+    }
+    const { p25, p50, p75 } = cuerpo;
+    if (![p25, p50, p75].every((v) => Number.isInteger(v) && (v as number) >= 0)) {
+      throw errorHttp(400, 'p25, p50 y p75 tienen que ser XAF enteros (el dinero es entero).');
+    }
+    if (!(p25! <= p50! && p50! <= p75!)) {
+      throw errorHttp(400, 'La banda tiene que ir ordenada: p25 ≤ p50 ≤ p75.');
+    }
+    const res = await pool.query(
+      `INSERT INTO banda_precio (zona_origen_id, zona_destino_id, p25, p50, p75)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (zona_origen_id, zona_destino_id)
+         DO UPDATE SET p25 = EXCLUDED.p25, p50 = EXCLUDED.p50, p75 = EXCLUDED.p75,
+                       actualizada_en = now()
+       RETURNING id`,
+      [cuerpo.zonaOrigenId, cuerpo.zonaDestinoId, p25, p50, p75],
+    );
+    return { bandaId: res.rows[0].id };
+  });
+
+  // Los parámetros del sistema: tiempos de oleada, tarifas, umbrales de
+  // alarma… Cambian el comportamiento SIN desplegar, que es exactamente su
+  // razón de existir — y también la razón de tratarlos con respeto.
+  app.get('/api/operador/parametros', async (req) => {
+    exigirOperador(req);
+    const filas = await pool.query(
+      'SELECT clave, valor, descripcion FROM parametro ORDER BY clave',
+    );
+    return { parametros: filas.rows };
+  });
+
+  app.post('/api/operador/parametros/:clave', async (req) => {
+    exigirOperador(req);
+    const { clave } = req.params as { clave: string };
+    const { valor } = (req.body ?? {}) as { valor?: string };
+    if (typeof valor !== 'string' || !valor.trim()) {
+      throw errorHttp(400, 'Falta el valor.');
+    }
+    // Solo se actualizan claves que existen: crear parámetros nuevos desde
+    // el panel sería inventarse configuración que ningún código lee.
+    const res = await pool.query(
+      `UPDATE parametro SET valor = $2 WHERE clave = $1 RETURNING clave, valor`,
+      [clave, valor.trim()],
+    );
+    if (res.rowCount === 0) throw errorHttp(404, `No existe el parámetro «${clave}».`);
+    return res.rows[0];
   });
 }

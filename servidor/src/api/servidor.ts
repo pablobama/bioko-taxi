@@ -71,7 +71,7 @@ export function crearServidor(
   registrarRutasSesion(app, pool);
   registrarRutasConductor(app, pool, emisor, conexionesSse);
   registrarRutasLlamadas(app, pool, conexionesSse);
-  registrarRutasOperador(app, pool);
+  registrarRutasOperador(app, pool, emisor);
 
   // Resuelve (y da de alta si es nuevo) el dispositivo del cliente.
   async function dispositivoDesde(req: FastifyRequest): Promise<DispositivoCliente> {

@@ -171,6 +171,42 @@ body {
   cursor: pointer;
 }
 
+/* Cabecera pulsable de una tarjeta desplegable (editor de sitios): el botón
+   es solo el título, el resto de la tarjeta se despliega debajo. */
+.oferta-boton-titulo {
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: inherit;
+  font-size: 1rem;
+  color: var(--hueso);
+  cursor: pointer;
+}
+
+/* Alarma disparada del cuadro de mandos: se distingue sin leer. */
+.oferta-alarma {
+  border: 1px solid #e5484d;
+}
+
+.dato-rojo {
+  border: 1px solid #e5484d;
+}
+
+.dato-rojo .dato-valor {
+  color: #ff6369;
+}
+
+/* Las claves de parámetro son identificadores, no prosa. */
+.parametro-clave {
+  font-family: ui-monospace, monospace;
+  font-size: 0.95rem;
+  word-break: break-all;
+}
+
 .hoja-completa .fila button {
   flex: 1 1 30%;
   width: auto;

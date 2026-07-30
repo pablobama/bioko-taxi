@@ -186,6 +186,7 @@ export interface CambiosReferencia {
   lat?: number;
   lng?: number;
   activa?: boolean;
+  categoria?: string;
 }
 
 export async function editarReferencia(
@@ -199,7 +200,8 @@ export async function editarReferencia(
          zona_id = COALESCE($3, zona_id),
          lat = COALESCE($4, lat),
          lng = COALESCE($5, lng),
-         activa = COALESCE($6, activa)
+         activa = COALESCE($6, activa),
+         categoria = COALESCE($7, categoria)
      WHERE id = $1`,
     [
       referenciaId,
@@ -208,6 +210,7 @@ export async function editarReferencia(
       cambios.lat ?? null,
       cambios.lng ?? null,
       cambios.activa ?? null,
+      cambios.categoria ?? null,
     ],
   );
   if (res.rowCount === 0) {

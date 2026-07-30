@@ -293,6 +293,69 @@ export interface RecargaOperador {
   conductor_telefono: string;
 }
 
+export interface AlarmaOperador {
+  clave: string;
+  nombre: string;
+  ambito: string;
+  umbral: number | null;
+  disparada: boolean;
+  detalle: Array<{ nombre: string; muestras: number; tasa: number }>;
+}
+
+export interface SaludOperador {
+  taxisPorZona: Array<{ zona: string; taxis: number; disponibles: number }>;
+  viajesEnCurso: Array<{ estado: string; n: number }>;
+  alarmas: AlarmaOperador[];
+}
+
+export interface SolicitudCentral {
+  id: number;
+  estado: string;
+  creada_en: string;
+  telefono_cliente: string;
+  origen: string;
+  destino: string;
+  conductor: string | null;
+  matricula: string | null;
+}
+
+export interface ZonaOperador {
+  id: number;
+  nombre: string;
+  referencias: number;
+}
+
+export interface ReferenciaOperador {
+  id: number;
+  nombre: string;
+  lat: number;
+  lng: number;
+  categoria: string;
+  activa: boolean;
+  usos: number;
+  zona_id: number;
+  zona: string;
+  alias: string[];
+}
+
+export interface BandaOperador {
+  id: number;
+  zona_origen_id: number;
+  zona_destino_id: number;
+  zona_origen: string;
+  zona_destino: string;
+  p25: number;
+  p50: number;
+  p75: number;
+  actualizada_en: string;
+}
+
+export interface ParametroOperador {
+  clave: string;
+  valor: string;
+  descripcion: string | null;
+}
+
 export interface AltaConductor {
   nombre: string;
   telefono: string;
@@ -551,6 +614,72 @@ export const api = {
     pedirJson<{ rechazada: boolean }>(
       `/api/operador/recargas/${referencia}/rechazar`,
       { method: 'POST', body: JSON.stringify({ motivo }) },
+    ),
+
+  saludOperador: () => pedirJson<SaludOperador>('/api/operador/salud'),
+
+  crearSolicitudOperador: (telefono: string, origenId: number, destinoId: number) =>
+    pedirJson<{ solicitudId: number; estado: string; yaExistia: boolean }>(
+      '/api/operador/solicitudes',
+      { method: 'POST', body: JSON.stringify({ telefono, origenId, destinoId }) },
+    ),
+
+  solicitudesCentral: () =>
+    pedirJson<{ solicitudes: SolicitudCentral[] }>('/api/operador/solicitudes'),
+
+  zonasOperador: () => pedirJson<{ zonas: ZonaOperador[] }>('/api/operador/zonas'),
+
+  referenciasOperador: (q?: string, zonaId?: number) => {
+    const partes = [
+      q ? `q=${encodeURIComponent(q)}` : '',
+      zonaId ? `zonaId=${zonaId}` : '',
+    ].filter(Boolean);
+    return pedirJson<{ referencias: ReferenciaOperador[] }>(
+      `/api/operador/referencias${partes.length ? `?${partes.join('&')}` : ''}`,
+    );
+  },
+
+  crearReferenciaOperador: (datos: {
+    zonaId: number; nombre: string; lat: number; lng: number; categoria?: string;
+  }) =>
+    pedirJson<{ referenciaId: number; creada: boolean }>(
+      '/api/operador/referencias',
+      { method: 'POST', body: JSON.stringify(datos) },
+    ),
+
+  editarReferenciaOperador: (id: number, cambios: {
+    nombre?: string; zonaId?: number; lat?: number; lng?: number;
+    activa?: boolean; categoria?: string;
+  }) =>
+    pedirJson<{ editada: boolean }>(
+      `/api/operador/referencias/${id}`,
+      { method: 'POST', body: JSON.stringify(cambios) },
+    ),
+
+  aliasReferenciaOperador: (id: number, alias: string, quitar = false) =>
+    pedirJson<{ hecho: boolean }>(
+      `/api/operador/referencias/${id}/alias`,
+      { method: 'POST', body: JSON.stringify({ alias, quitar }) },
+    ),
+
+  bandasOperador: () => pedirJson<{ bandas: BandaOperador[] }>('/api/operador/bandas'),
+
+  guardarBandaOperador: (datos: {
+    zonaOrigenId: number; zonaDestinoId: number;
+    p25?: number; p50?: number; p75?: number; borrar?: boolean;
+  }) =>
+    pedirJson<{ bandaId?: number; borrada?: boolean }>(
+      '/api/operador/bandas',
+      { method: 'POST', body: JSON.stringify(datos) },
+    ),
+
+  parametrosOperador: () =>
+    pedirJson<{ parametros: ParametroOperador[] }>('/api/operador/parametros'),
+
+  cambiarParametroOperador: (clave: string, valor: string) =>
+    pedirJson<{ clave: string; valor: string }>(
+      `/api/operador/parametros/${encodeURIComponent(clave)}`,
+      { method: 'POST', body: JSON.stringify({ valor }) },
     ),
 };
 
