@@ -13,6 +13,17 @@ import {
   crearSolicitud, transicionarConductor, transicionarSolicitud, type Actor,
 } from './transiciones.js';
 
+
+// Teléfono de pruebas que PUEDE existir: nueve dígitos locales, como los de
+// Malabo. Los fixtures fabricaban antes números de dieciséis dígitos, que la
+// validación vieja dejaba pasar porque solo miraba la longitud del texto.
+let contadorTelefono = 0;
+function telefonoUnico(): string {
+  contadorTelefono += 1;
+  const aleatorio = String(Math.floor(Math.random() * 1000)).padStart(3, '0');
+  return `+240222${aleatorio}${String(contadorTelefono % 1000).padStart(3, '0')}`;
+}
+
 let pool: pg.Pool;
 let dispositivoClienteId: number;
 let referenciaOrigenId: number;
@@ -253,7 +264,7 @@ test('máquina del conductor: ciclo completo y rechazo de atajos', async () => {
   const conductor = await pool.query(
     `INSERT INTO conductor (telefono, nombre, estado_verificacion)
      VALUES ($1, 'Conductor De Prueba', 'verificado') RETURNING id`,
-    [`+2402228${Date.now()}${Math.floor(Math.random() * 1000)}`],
+    [telefonoUnico()],
   );
   const conductorId: number = conductor.rows[0].id;
   await pool.query('INSERT INTO presencia (conductor_id, estado) VALUES ($1, $2)', [conductorId, 'DESCONECTADO']);

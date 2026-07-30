@@ -21,6 +21,17 @@ import { ConexionesSse } from '../eventos/adaptador-sse.js';
 import { credencialesEfimeras } from './llamadas.js';
 import { crearServidor } from './servidor.js';
 
+
+// Teléfono de pruebas que PUEDE existir: nueve dígitos locales, como los de
+// Malabo. Los fixtures fabricaban antes números de dieciséis dígitos, que la
+// validación vieja dejaba pasar porque solo miraba la longitud del texto.
+let contadorTelefono = 0;
+function telefonoUnico(): string {
+  contadorTelefono += 1;
+  const aleatorio = String(Math.floor(Math.random() * 1000)).padStart(3, '0');
+  return `+240222${aleatorio}${String(contadorTelefono % 1000).padStart(3, '0')}`;
+}
+
 let pool: pg.Pool;
 let app: FastifyInstance;
 let emisor: EmisorRegistro;
@@ -51,7 +62,7 @@ after(async () => {
 
 // Teléfonos y matrículas de prueba únicos DE VERDAD.
 //
-// Antes se hacía `` `+2402226${Date.now()}`.slice(0, 16) ``, que parece único y
+// Antes se hacía `` telefonoUnico().slice(0, 16) ``, que parece único y
 // no lo es: el recorte se come justo los dígitos que cambian, así que dos
 // ejecuciones de la batería separadas por menos de ~100 s generaban el mismo
 // teléfono. Y el teléfono es la clave natural del conductor: el alta se
@@ -82,7 +93,7 @@ async function crearConductorEnZona(): Promise<number> {
     const conductor = await c.query(
       `INSERT INTO conductor (telefono, nombre, estado_verificacion, suscrito_hasta)
        VALUES ($1, 'Conductor API', 'verificado', now() + interval '1 day') RETURNING id`,
-      [`+2402226${Date.now()}${Math.floor(Math.random() * 1000)}`],
+      [telefonoUnico()],
     );
     const conductorId: number = conductor.rows[0].id;
     await c.query(
@@ -134,7 +145,7 @@ test('sesión: dice qué es el dispositivo, y el alta del taxista queda verifica
   const sinRol = await app.inject({ method: 'GET', url: '/api/sesion', headers: cabeceras(uuid) });
   assert.equal(sinRol.json().rol, null, 'un dispositivo nuevo no tiene rol');
 
-  const telefono = `+2402221${sufijoUnico()}`;
+  const telefono = telefonoUnico();
   const alta = await app.inject({
     method: 'POST',
     url: '/api/conductor/alta',
@@ -161,7 +172,7 @@ test('sesión: dice qué es el dispositivo, y el alta del taxista queda verifica
 
 test('reenviar el alta también auto-verifica (P21-01): a quien quedó pendiente antes de la decisión no se le olvida', async () => {
   const uuid = randomUUID();
-  const telefono = `+2402222${sufijoUnico()}`;
+  const telefono = telefonoUnico();
   const alta1 = await app.inject({
     method: 'POST',
     url: '/api/conductor/alta',
@@ -211,7 +222,7 @@ test('alta de taxista: valida los datos y no deja robar una matrícula ajena', a
   await app.inject({
     method: 'POST', url: '/api/conductor/alta', headers: cabeceras(primero),
     payload: {
-      nombre: 'Dueña Real', telefono: `+2402222${base}`,
+      nombre: 'Dueña Real', telefono: telefonoUnico(),
       matricula, marca: 'Kia', carroceria: 'turismo',
     },
   });
@@ -219,7 +230,7 @@ test('alta de taxista: valida los datos y no deja robar una matrícula ajena', a
   const ladron = await app.inject({
     method: 'POST', url: '/api/conductor/alta', headers: cabeceras(randomUUID()),
     payload: {
-      nombre: 'Otro', telefono: `+2402223${sufijoUnico()}`,
+      nombre: 'Otro', telefono: telefonoUnico(),
       matricula, marca: 'Kia', carroceria: 'turismo',
     },
   });
@@ -247,7 +258,7 @@ test('un dispositivo de pasajero no puede darse de alta como taxista', async () 
   const res = await app.inject({
     method: 'POST', url: '/api/conductor/alta', headers: cabeceras(uuid),
     payload: {
-      nombre: 'A', telefono: `+2402224${sufijoUnico()}`,
+      nombre: 'A', telefono: telefonoUnico(),
       matricula: `GE-P${sufijoUnico()}`, marca: 'Kia', carroceria: 'turismo',
     },
   });
@@ -276,7 +287,7 @@ test('estadísticas: números del pasajero y del taxista, sin inventar nada', as
 
 test('recarga: pedirla NO sube el saldo; solo lo hace la confirmación del operador', async () => {
   const uuid = randomUUID();
-  const telefono = `+2402226${sufijoUnico()}`;
+  const telefono = telefonoUnico();
   await app.inject({
     method: 'POST', url: '/api/conductor/alta', headers: cabeceras(uuid),
     payload: {
@@ -336,7 +347,7 @@ test('recarga: pedirla NO sube el saldo; solo lo hace la confirmación del opera
 
 test('recarga: por debajo del mínimo se rechaza con el motivo', async () => {
   const uuid = randomUUID();
-  const telefono = `+2402227${sufijoUnico()}`;
+  const telefono = telefonoUnico();
   await app.inject({
     method: 'POST', url: '/api/conductor/alta', headers: cabeceras(uuid),
     payload: {
@@ -1164,4 +1175,101 @@ test('señal de vida: responde sin cabeceras ni base de datos (healthCheckPath)'
   const r = await app.inject({ method: 'GET', url: '/api/vivo' });
   assert.equal(r.statusCode, 200, r.body);
   assert.deepEqual(r.json(), { vivo: true });
+});
+
+// --- El teléfono como clave de identidad (migración 024) --------------------
+
+test('reinstalar NO limpia el bloqueo: las sanciones siguen al número', async () => {
+  const telefono = telefonoUnico().slice(0, 13);
+  const viejo = randomUUID();
+
+  // Se registra, y acumula sanción hasta quedar bloqueado.
+  const alta = await app.inject({
+    method: 'PUT', url: '/api/perfil', headers: cabeceras(viejo),
+    payload: { telefono },
+  });
+  assert.equal(alta.statusCode, 200, alta.body);
+  await pool.query(
+    `UPDATE dispositivo SET strikes = 3, bloqueado_en = now() WHERE uuid_persistente = $1`,
+    [viejo],
+  );
+  const bloqueado = await app.inject({
+    method: 'POST', url: '/api/solicitudes', headers: cabeceras(viejo),
+    payload: { origenId, destinoId },
+  });
+  assert.equal(bloqueado.statusCode, 403, 'bloqueado no puede pedir');
+
+  // Reinstala: uuid nuevo, mismo número. Antes de la 024 esto daba una
+  // identidad limpia y el bloqueo se esquivaba borrando datos del navegador.
+  const nuevo = randomUUID();
+  const reclamo = await app.inject({
+    method: 'PUT', url: '/api/perfil', headers: cabeceras(nuevo),
+    // Y escrito de otra forma, para que además pruebe la normalización.
+    payload: { telefono: telefono.replace('+240', '') },
+  });
+  assert.equal(reclamo.statusCode, 200, reclamo.body);
+
+  const tras = await pool.query(
+    'SELECT strikes, bloqueado_en FROM dispositivo WHERE uuid_persistente = $1',
+    [nuevo],
+  );
+  assert.equal(tras.rows[0].strikes, 3, 'los avisos siguen al número');
+  assert.notEqual(tras.rows[0].bloqueado_en, null, 'y el bloqueo también');
+
+  const sigueBloqueado = await app.inject({
+    method: 'POST', url: '/api/solicitudes', headers: cabeceras(nuevo),
+    payload: { origenId, destinoId },
+  });
+  assert.equal(sigueBloqueado.statusCode, 403, 'reinstalar no es una puerta de atrás');
+
+  // Un número, un dispositivo vigente: el anterior deja de tenerlo.
+  const vigentes = await pool.query(
+    `SELECT count(*)::int AS n FROM perfil_cliente
+     WHERE telefono = $1 AND telefono_vigente`,
+    [telefono],
+  );
+  assert.equal(vigentes.rows[0].n, 1, 'solo uno puede tener el número vigente');
+});
+
+test('reclamar un número NO entrega el historial de viajes de quien lo tenía', async () => {
+  await crearConductorEnZona();
+  const telefono = telefonoUnico().slice(0, 13);
+  const primero = randomUUID();
+  await app.inject({
+    method: 'PUT', url: '/api/perfil', headers: cabeceras(primero), payload: { telefono },
+  });
+  // Hace un viaje, que queda en SU historial.
+  await pedirTaxi(primero);
+
+  const segundo = randomUUID();
+  await app.inject({
+    method: 'PUT', url: '/api/perfil', headers: cabeceras(segundo), payload: { telefono },
+  });
+
+  // Decisión explícita de la migración 024: las sanciones siguen al número, el
+  // historial no. Si viajara, cualquiera que conozca tu teléfono vería a dónde
+  // sueles ir con solo teclearlo.
+  const suyos = await pool.query(
+    `SELECT count(*)::int AS n FROM solicitud s
+     JOIN dispositivo d ON d.id = s.dispositivo_cliente_id
+     WHERE d.uuid_persistente = $1`,
+    [segundo],
+  );
+  assert.equal(suyos.rows[0].n, 0, 'el historial se queda con quien lo hizo');
+});
+
+test('el mismo número escrito de otra forma no crea una segunda identidad', async () => {
+  const local = `2228${sufijoUnico()}`.slice(0, 9);
+  const uuid = randomUUID();
+
+  await app.inject({
+    method: 'PUT', url: '/api/perfil', headers: cabeceras(uuid), payload: { telefono: local },
+  });
+  const conPrefijo = await app.inject({
+    method: 'PUT', url: '/api/perfil', headers: cabeceras(uuid),
+    payload: { telefono: `+240 ${local}` },
+  });
+  assert.equal(conPrefijo.statusCode, 200);
+  // Guardado siempre en forma canónica, no como lo teclearon.
+  assert.equal(conPrefijo.json().perfil.telefono, `+240${local}`);
 });

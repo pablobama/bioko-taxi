@@ -11,6 +11,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { enTransaccion } from '../bd/conexion.js';
 import { demandaPorZona } from '../dominio/cobertura.js';
+import { normalizarTelefono } from '../dominio/telefono.js';
 import { reclamarSolicitud, rechazarOferta } from '../dominio/despacho.js';
 import { ErrorOfertaInvalida, ErrorSaldoInsuficiente, ErrorTransicionInvalida } from '../dominio/errores.js';
 import { distanciaMetros } from '../dominio/geo.js';
@@ -140,12 +141,15 @@ export function registrarRutasConductor(
   app.post('/api/conductor/registro', async (req) => {
     const uuid = uuidDesde(req);
     const cuerpo = req.body as { telefono?: string; fcmToken?: string };
+    // Se busca por la forma canónica: quien se registró como «+240222410986»
+    // tiene que encontrarse escribiendo «222410986» (migración 024).
+    const telefonoBuscado = normalizarTelefono(cuerpo?.telefono);
     if (!cuerpo?.telefono) {
       throw errorHttp(400, 'Falta el teléfono del conductor.');
     }
     const conductor = await pool.query(
       'SELECT id, nombre, estado_verificacion FROM conductor WHERE telefono = $1',
-      [cuerpo.telefono],
+      [telefonoBuscado],
     );
     if (conductor.rowCount === 0) {
       throw errorHttp(404, 'Ese teléfono no está dado de alta como conductor. Pide el alta al operador.');

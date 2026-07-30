@@ -644,7 +644,7 @@ export const api = {
 
   recargasOperador: (estado?: string) =>
     pedirJson<{ recargas: RecargaOperador[] }>(
-      `/api/operador/recargas${estado ? `?estado=${estado}` : ''}`,
+      `/api/operador/recargas${estado ? `?estado=${encodeURIComponent(estado)}` : ''}`,
     ),
 
   confirmarRecarga: (referencia: string) =>

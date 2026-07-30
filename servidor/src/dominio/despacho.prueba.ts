@@ -21,6 +21,17 @@ import { crearZona, declararAdyacencia, guardarReferencia } from './gazetteer.js
 import { recargar } from './monedero.js';
 import { crearSolicitud } from './transiciones.js';
 
+
+// Teléfono de pruebas que PUEDE existir: nueve dígitos locales, como los de
+// Malabo. Los fixtures fabricaban antes números de dieciséis dígitos, que la
+// validación vieja dejaba pasar porque solo miraba la longitud del texto.
+let contadorTelefono = 0;
+function telefonoUnico(): string {
+  contadorTelefono += 1;
+  const aleatorio = String(Math.floor(Math.random() * 1000)).padStart(3, '0');
+  return `+240222${aleatorio}${String(contadorTelefono % 1000).padStart(3, '0')}`;
+}
+
 let pool: pg.Pool;
 let dispositivoClienteId: number;
 let expiracionPrevia: string;
@@ -98,7 +109,7 @@ async function crearConductorEnZona(zonaId: number, opciones: OpcionesConductor 
                CASE WHEN $3 THEN NULL ELSE now() + interval '1 day' END)
        RETURNING id`,
       [
-        `+2402227${Date.now()}${Math.floor(Math.random() * 1000)}`,
+        telefonoUnico(),
         opciones.prioridad ?? 0,
         opciones.sinSuscripcion === true,
       ],

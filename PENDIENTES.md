@@ -167,12 +167,28 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   tocarla no oirá el primer aviso. Por eso ningún aviso importante depende solo
   del sonido.
 
-- **[P15-04] El registro NO es autenticación.** Se piden teléfono y/o correo
-  sin verificarlos: cualquiera puede declarar el número de otro. Por eso los
-  strikes y bloqueos siguen colgando del dispositivo y no del teléfono, y por
-  eso no hay índice único en el teléfono. Si hace falta identidad de verdad,
-  lo barato es un código por correo con SMTP propio (sin coste por mensaje);
-  por SMS costaría dinero y lo prohíbe la decisión 3.1.
+- **[P15-04] El registro sigue SIN ser autenticación, aunque el teléfono ya
+  sea único.** Desde la migración 024 el número es la clave de identidad —
+  canónico, único por papel y unido al dispositivo que lo tiene ahora— y las
+  sanciones lo siguen: reinstalar ya no limpia un bloqueo, que era la puerta
+  de atrás. Pero **nadie verifica el número**: no se manda ningún código. Así
+  que el teléfono es una LLAVE (te devuelve tu cuenta), no una PRUEBA (no
+  demuestra que sea tuyo). Consecuencias que hay que tener presentes:
+  - Quien teclee el número de otro se lleva sus sanciones, que es un castigo
+    y no un premio: por ahí no hay incentivo. Pero sí puede conseguir que
+    bloqueen a un inocente. El operador puede desbloquear, así que es
+    reversible.
+  - El historial de viajes NO se hereda al reclamar un número, a propósito: si
+    viajara, cualquiera que conozca tu teléfono vería a dónde sueles ir con
+    solo teclearlo. Coste asumido: al reinstalar, «tus destinos de siempre»
+    empiezan de cero aunque el bloqueo te siga.
+  - Compartir teléfono (normal en Malabo) ahora significa que la cuenta se la
+    queda quien lo declaró último; el anterior conserva su fila y su historial
+    pero deja de tener el número vigente. Si molesta en el piloto, la salida
+    es una pantalla del operador para separarlos.
+  Si hace falta identidad de verdad, lo barato sigue siendo un código por
+  correo con SMTP propio (sin coste por mensaje); por SMS costaría dinero y lo
+  prohíbe la decisión 3.1.
 
 - **[P15-05] Se guardan edad y género sin haber definido para qué.** Son
   opcionales y el usuario puede no decirlos, pero recoger datos personales sin

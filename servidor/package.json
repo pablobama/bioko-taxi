@@ -11,7 +11,7 @@
     "bd:estado": "tsx src/bd/migrar.ts estado",
     "bd:semilla": "tsx scripts/datos-prueba.ts",
     "servir": "tsx src/api/arranque.ts",
-    "probar": "tsx --test --test-concurrency=1 src/dominio/transiciones.prueba.ts src/dominio/monedero.prueba.ts src/dominio/gazetteer.prueba.ts src/dominio/despacho.prueba.ts src/dominio/proximidad.prueba.ts src/dominio/compartido.prueba.ts src/dominio/cobertura.prueba.ts src/eventos/bus.prueba.ts src/api/servidor.prueba.ts src/api/conductor.prueba.ts src/api/operador.prueba.ts",
+    "probar": "tsx --test --test-concurrency=1 src/dominio/transiciones.prueba.ts src/dominio/monedero.prueba.ts src/dominio/gazetteer.prueba.ts src/dominio/despacho.prueba.ts src/dominio/proximidad.prueba.ts src/dominio/compartido.prueba.ts src/dominio/cobertura.prueba.ts src/dominio/telefono.prueba.ts src/eventos/bus.prueba.ts src/api/servidor.prueba.ts src/api/conductor.prueba.ts src/api/operador.prueba.ts",
     "gazetteer": "tsx scripts/gazetteer.ts",
     "bd:pois-reales": "tsx scripts/importar-pois-reales.ts",
     "bd:barrios": "tsx scripts/importar-barrios.ts",

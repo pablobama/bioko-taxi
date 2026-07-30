@@ -10,6 +10,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import type pg from 'pg';
 import { enTransaccion } from '../bd/conexion.js';
 import { taxisCercaDe } from '../dominio/cobertura.js';
+import { normalizarTelefono } from '../dominio/telefono.js';
 import { iniciarDespacho } from '../dominio/despacho.js';
 import { ErrorTransicionInvalida } from '../dominio/errores.js';
 import type { EmisorEventos } from '../dominio/eventos.js';
@@ -323,13 +324,19 @@ export function crearServidor(
       telefono?: string; correo?: string; nombre?: string; edad?: number; genero?: string;
     };
 
-    const telefono = cuerpo.telefono?.trim() || null;
+    const crudo = cuerpo.telefono?.trim() || null;
+    // El número se guarda SIEMPRE en forma canónica (migración 024): el mismo
+    // número escrito de tres formas era antes tres identidades distintas.
+    const telefono = normalizarTelefono(crudo);
     const correo = cuerpo.correo?.trim().toLowerCase() || null;
+    // Primero lo concreto: si escribió un teléfono y no se entiende, hay que
+    // decirle ESO, no «necesitamos un teléfono o un correo» —que suena a que
+    // no escribió nada— como pasaba al normalizar sin reordenar las guardas.
+    if (crudo && !telefono) {
+      throw errorHttp(400, `Teléfono no válido: «${crudo}».`);
+    }
     if (!telefono && !correo) {
       throw errorHttp(400, 'Necesitamos al menos un teléfono o un correo para poder avisarte.');
-    }
-    if (telefono && !/^\+?[0-9\s-]{6,20}$/.test(telefono)) {
-      throw errorHttp(400, `Teléfono no válido: «${telefono}».`);
     }
     if (correo && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(correo)) {
       throw errorHttp(400, `Correo no válido: «${correo}».`);
@@ -343,15 +350,51 @@ export function crearServidor(
       throw errorHttp(400, `Género no válido. Opciones: ${GENEROS.join(', ')}.`);
     }
 
-    const res = await pool.query(
-      `INSERT INTO perfil_cliente (dispositivo_id, telefono, correo, nombre, edad, genero)
-       VALUES ($1, $2, $3, $4, $5, $6)
+    const res = await enTransaccion(pool, async (cliente) => {
+      // Reclamar el número: si lo tenía vigente OTRO dispositivo, este se lo
+      // queda y el anterior deja de tenerlo vigente (migración 024). Es lo que
+      // hace que reinstalar te devuelva tu cuenta… y que no te libre de un
+      // bloqueo, que era la puerta de atrás: borrar los datos del navegador
+      // daba un uuid nuevo y una identidad limpia.
+      if (telefono) {
+        const anterior = await cliente.query(
+          `SELECT pc.dispositivo_id, d.strikes, d.bloqueado_en
+           FROM perfil_cliente pc JOIN dispositivo d ON d.id = pc.dispositivo_id
+           WHERE pc.telefono = $1 AND pc.telefono_vigente
+             AND pc.dispositivo_id <> $2
+           FOR UPDATE OF pc`,
+          [telefono, dispositivo.id],
+        );
+        if ((anterior.rowCount ?? 0) > 0) {
+          const previo = anterior.rows[0];
+          await cliente.query(
+            'UPDATE perfil_cliente SET telefono_vigente = false WHERE dispositivo_id = $1',
+            [previo.dispositivo_id],
+          );
+          // Las sanciones SIGUEN al número; el historial de viajes NO (queda
+          // en el dispositivo viejo). Si el historial viajara con el número,
+          // quien conozca tu teléfono vería a dónde sueles ir con solo
+          // teclearlo: una fuga peor que el problema que esto resuelve.
+          // Se toma el máximo para que reclamar no sirva para rebajar avisos.
+          await cliente.query(
+            `UPDATE dispositivo
+             SET strikes = GREATEST(strikes, $2),
+                 bloqueado_en = COALESCE(bloqueado_en, $3)
+             WHERE id = $1`,
+            [dispositivo.id, previo.strikes, previo.bloqueado_en],
+          );
+        }
+      }
+      const guardado = await cliente.query(
+      `INSERT INTO perfil_cliente (dispositivo_id, telefono, correo, nombre, edad, genero, telefono_vigente)
+       VALUES ($1, $2, $3, $4, $5, $6, true)
        ON CONFLICT (dispositivo_id) DO UPDATE
          SET telefono = EXCLUDED.telefono,
              correo = EXCLUDED.correo,
              nombre = EXCLUDED.nombre,
              edad = EXCLUDED.edad,
              genero = EXCLUDED.genero,
+             telefono_vigente = true,
              actualizado_en = now()
        RETURNING telefono, correo, nombre, edad, genero`,
       [
@@ -360,7 +403,9 @@ export function crearServidor(
         cuerpo.edad ?? null,
         cuerpo.genero || null,
       ],
-    );
+      );
+      return guardado;
+    });
     return { registrado: true, perfil: res.rows[0] };
   });
 

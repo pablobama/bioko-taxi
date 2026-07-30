@@ -20,6 +20,7 @@ import {
 import { leerParametroEntero } from '../dominio/parametros.js';
 import { confirmarRecarga, rechazarRecarga, recargasDe } from '../dominio/recargas.js';
 import { reputacionDe } from '../dominio/reputacion.js';
+import { normalizarTelefono } from '../dominio/telefono.js';
 import { crearSolicitud } from '../dominio/transiciones.js';
 
 const PATRON_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -605,9 +606,11 @@ export function registrarRutasOperador(
   app.post('/api/operador/solicitudes', async (req, reply) => {
     exigirOperador(req);
     const cuerpo = (req.body ?? {}) as { telefono?: string; origenId?: number; destinoId?: number };
-    const telefono = cuerpo.telefono?.trim();
-    if (!telefono || !/^\+?[0-9\s-]{6,20}$/.test(telefono)) {
-      throw errorHttp(400, `Hace falta el teléfono de quien llama (recibido: «${telefono ?? ''}»).`);
+    // Canónico también aquí: si no, quien llama dos veces con el número escrito
+    // de dos formas tendría dos identidades y dos historiales (migración 024).
+    const telefono = normalizarTelefono(cuerpo.telefono);
+    if (!telefono) {
+      throw errorHttp(400, `Hace falta el teléfono de quien llama (recibido: «${cuerpo.telefono ?? ''}»).`);
     }
     if (!cuerpo.origenId || !cuerpo.destinoId) {
       throw errorHttp(400, 'Faltan campos: origenId y destinoId son obligatorios.');
@@ -622,7 +625,7 @@ export function registrarRutasOperador(
       const existente = await cliente.query(
         `SELECT d.id, d.bloqueado_en
          FROM perfil_cliente pc JOIN dispositivo d ON d.id = pc.dispositivo_id
-         WHERE pc.telefono = $1 AND d.tipo = 'cliente'
+         WHERE pc.telefono = $1 AND pc.telefono_vigente AND d.tipo = 'cliente'
          ORDER BY d.id DESC LIMIT 1`,
         [telefono],
       );

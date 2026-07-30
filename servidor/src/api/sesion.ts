@@ -13,6 +13,7 @@ import type pg from 'pg';
 import { enTransaccion } from '../bd/conexion.js';
 import { ocupacionDe } from '../dominio/ocupacion.js';
 import { reputacionDe } from '../dominio/reputacion.js';
+import { normalizarTelefono } from '../dominio/telefono.js';
 import { esOperador } from './operador.js';
 
 const PATRON_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -109,18 +110,23 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
     };
 
     const nombre = cuerpo.nombre?.trim();
-    const telefono = cuerpo.telefono?.trim();
+    // Forma canónica (migración 024): el teléfono es la clave natural del
+    // conductor, y sin normalizar el mismo taxista podía acabar con dos fichas
+    // —cada una con su monedero y su reputación— según cómo teclease.
+    const telefonoCrudo = cuerpo.telefono?.trim();
+    const telefono = normalizarTelefono(telefonoCrudo);
     const correo = cuerpo.correo?.trim().toLowerCase() || null;
     const matricula = cuerpo.matricula?.trim().toUpperCase();
     const marca = cuerpo.marca?.trim();
     const carroceria = cuerpo.carroceria;
 
-    if (!nombre || !telefono || !matricula || !marca || !carroceria) {
+    if (!nombre || !telefonoCrudo || !matricula || !marca || !carroceria) {
       throw errorHttp(400, 'Faltan datos: nombre, teléfono, matrícula, marca y carrocería son obligatorios.');
     }
-    if (!/^\+?[0-9\s-]{6,20}$/.test(telefono)) {
-      throw errorHttp(400, `Teléfono no válido: «${telefono}».`);
+    if (!telefono) {
+      throw errorHttp(400, `Teléfono no válido: «${telefonoCrudo}».`);
     }
+
     if (correo && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(correo)) {
       throw errorHttp(400, `Correo no válido: «${correo}».`);
     }

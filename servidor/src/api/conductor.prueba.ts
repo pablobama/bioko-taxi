@@ -15,6 +15,17 @@ import { recargar } from '../dominio/monedero.js';
 import { ConexionesSse } from '../eventos/adaptador-sse.js';
 import { crearServidor } from './servidor.js';
 
+
+// Teléfono de pruebas que PUEDE existir: nueve dígitos locales, como los de
+// Malabo. Los fixtures fabricaban antes números de dieciséis dígitos, que la
+// validación vieja dejaba pasar porque solo miraba la longitud del texto.
+let contadorTelefono = 0;
+function telefonoUnico(): string {
+  contadorTelefono += 1;
+  const aleatorio = String(Math.floor(Math.random() * 1000)).padStart(3, '0');
+  return `+240222${aleatorio}${String(contadorTelefono % 1000).padStart(3, '0')}`;
+}
+
 let pool: pg.Pool;
 let app: FastifyInstance;
 let emisor: EmisorRegistro;
@@ -58,7 +69,7 @@ interface ConductorPrueba {
 // y saldo. Sin presencia: el registro de la app la crea si falta. El saldo
 // por defecto cubre holgadamente la cuota semanal de 1.500 XAF.
 async function darDeAlta(saldoXaf = 5000): Promise<ConductorPrueba> {
-  const telefono = `+2402225${Date.now()}${Math.floor(Math.random() * 1000)}`;
+  const telefono = telefonoUnico();
   const conductorId = await enTransaccion(pool, async (c) => {
     const res = await c.query(
       `INSERT INTO conductor (telefono, nombre, estado_verificacion)

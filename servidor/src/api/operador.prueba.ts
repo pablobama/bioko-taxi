@@ -15,6 +15,17 @@ import { procesarClienteAusente } from '../dominio/monedero.js';
 import { ConexionesSse } from '../eventos/adaptador-sse.js';
 import { crearServidor } from './servidor.js';
 
+
+// Teléfono de pruebas que PUEDE existir: nueve dígitos locales, como los de
+// Malabo. Los fixtures fabricaban antes números de dieciséis dígitos, que la
+// validación vieja dejaba pasar porque solo miraba la longitud del texto.
+let contadorTelefono = 0;
+function telefonoUnico(): string {
+  contadorTelefono += 1;
+  const aleatorio = String(Math.floor(Math.random() * 1000)).padStart(3, '0');
+  return `+240222${aleatorio}${String(contadorTelefono % 1000).padStart(3, '0')}`;
+}
+
 const UUID_OPERADOR = randomUUID();
 
 let pool: pg.Pool;
@@ -59,7 +70,7 @@ async function crearIncidencia(): Promise<{
     const conductor = await c.query(
       `INSERT INTO conductor (telefono, nombre, estado_verificacion)
        VALUES ($1, 'Conductor OP', 'verificado') RETURNING id`,
-      [`+2402224${Date.now()}${Math.floor(Math.random() * 1000)}`],
+      [telefonoUnico()],
     );
     const solicitud = await c.query(
       `INSERT INTO solicitud (dispositivo_cliente_id, telefono_cliente,
@@ -164,7 +175,7 @@ test('incidencias: perdonar resuelve sin tocar los strikes, y el historial ense�
 
 test('pasajeros: se busca por teléfono, la ficha trae su historial y desbloquear pone el contador a cero', async () => {
   const uuid = randomUUID();
-  const telefono = `555${Date.now() % 1_000_000_000}`;
+  const telefono = telefonoUnico();
   // Alta de pasajero por la vía normal de la API.
   const alta = await app.inject({
     method: 'PUT', url: '/api/perfil', headers: cabeceras(uuid),
@@ -214,7 +225,7 @@ test('conductores: la búsqueda por matrícula encuentra y la ficha trae vehícu
     const conductor = await c.query(
       `INSERT INTO conductor (telefono, nombre, estado_verificacion)
        VALUES ($1, 'Ficha Completa', 'verificado') RETURNING id`,
-      [`+2402225${Date.now()}${Math.floor(Math.random() * 1000)}`],
+      [telefonoUnico()],
     );
     await c.query(
       `INSERT INTO vehiculo (conductor_id, matricula, marca) VALUES ($1, $2, 'Toyota')`,

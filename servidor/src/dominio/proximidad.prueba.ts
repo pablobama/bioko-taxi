@@ -14,6 +14,17 @@ import { crearZona, guardarReferencia } from './gazetteer.js';
 import { procesarProximidad, registrarPosicion } from './proximidad.js';
 import { crearSolicitud, transicionarSolicitud } from './transiciones.js';
 
+
+// Teléfono de pruebas que PUEDE existir: nueve dígitos locales, como los de
+// Malabo. Los fixtures fabricaban antes números de dieciséis dígitos, que la
+// validación vieja dejaba pasar porque solo miraba la longitud del texto.
+let contadorTelefono = 0;
+function telefonoUnico(): string {
+  contadorTelefono += 1;
+  const aleatorio = String(Math.floor(Math.random() * 1000)).padStart(3, '0');
+  return `+240222${aleatorio}${String(contadorTelefono % 1000).padStart(3, '0')}`;
+}
+
 let pool: pg.Pool;
 
 before(async () => {
@@ -44,7 +55,7 @@ async function montarViajeEnCamino(): Promise<ViajeEnCamino> {
     const conductor = await c.query(
       `INSERT INTO conductor (telefono, nombre, estado_verificacion, suscrito_hasta)
        VALUES ($1, 'Conductora GPS', 'verificado', now() + interval '1 day') RETURNING id`,
-      [`+2402224${Date.now()}${Math.floor(Math.random() * 1000)}`],
+      [telefonoUnico()],
     );
     const conductorId: number = conductor.rows[0].id;
     await c.query(
