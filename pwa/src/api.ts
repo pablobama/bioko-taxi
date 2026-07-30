@@ -31,7 +31,14 @@ export function uuidDispositivo(): string {
   return uuid;
 }
 
-async function pedirJson<T>(ruta: string, opciones: RequestInit = {}): Promise<T> {
+interface OpcionesPeticion extends RequestInit {
+  // Reintentos extra si la petición muere EN LA RED (nunca si el servidor
+  // respondió algo). Los GET reintentan una vez solos; un POST solo si quien
+  // lo pide declara que repetirlo es seguro (idempotente en el servidor).
+  reintentos?: number;
+}
+
+async function pedirJsonUnaVez<T>(ruta: string, opciones: RequestInit): Promise<T> {
   let respuesta: Response;
   try {
     respuesta = await fetch(ruta, {
@@ -57,6 +64,25 @@ async function pedirJson<T>(ruta: string, opciones: RequestInit = {}): Promise<T
     throw new Error((cuerpo as { error?: string }).error ?? `Error ${respuesta.status}`);
   }
   return cuerpo as T;
+}
+
+async function pedirJson<T>(ruta: string, opciones: OpcionesPeticion = {}): Promise<T> {
+  // Los navegadores reutilizan conexiones dormidas y, cuando una está muerta,
+  // reintentan solos los GET — pero JAMÁS un POST. En redes móviles eso se
+  // nota muchísimo: rellenas un formulario un minuto, pulsas guardar, y el
+  // POST cae en el socket muerto y parece «sin conexión» estando conectado.
+  // Aquí se reintenta una vez lo que es seguro reintentar.
+  const esGet = !opciones.method || opciones.method === 'GET';
+  let restantes = opciones.reintentos ?? (esGet ? 1 : 0);
+  for (;;) {
+    try {
+      return await pedirJsonUnaVez<T>(ruta, opciones);
+    } catch (error) {
+      if (!(error instanceof ErrorDeRed) || restantes <= 0) throw error;
+      restantes -= 1;
+      await new Promise((r) => { setTimeout(r, 700); });
+    }
+  }
 }
 
 export interface ReferenciaSugerida {
@@ -573,7 +599,7 @@ export const api = {
   desbloquearPasajero: (dispositivoId: number) =>
     pedirJson<{ dispositivo_id: number; strikes: number; bloqueado_en: string | null }>(
       `/api/operador/pasajeros/${dispositivoId}/desbloquear`,
-      { method: 'POST', body: '{}' },
+      { method: 'POST', body: '{}', reintentos: 1 },
     ),
 
   incidenciasOperador: (estado?: 'pendientes' | 'resueltas') =>
@@ -587,13 +613,13 @@ export const api = {
   resolverIncidencia: (id: number, accion: 'sancionar' | 'perdonar') =>
     pedirJson<{ incidenciaId: number; resolucion: string; strikes: number | null; bloqueado: boolean }>(
       `/api/operador/incidencias/${id}/resolver`,
-      { method: 'POST', body: JSON.stringify({ accion }) },
+      { method: 'POST', body: JSON.stringify({ accion }), reintentos: 1 },
     ),
 
   cambiarEstadoConductor: (conductorId: number, estado: string) =>
     pedirJson<{ id: number; nombre: string; estado_verificacion: string }>(
       `/api/operador/conductores/${conductorId}/estado`,
-      { method: 'POST', body: JSON.stringify({ estado }) },
+      { method: 'POST', body: JSON.stringify({ estado }), reintentos: 1 },
     ),
 
   estadisticasOperador: () =>
@@ -607,13 +633,13 @@ export const api = {
   confirmarRecarga: (referencia: string) =>
     pedirJson<{ recargaId: number; importeXaf: number; saldoXaf: number; yaEstaba: boolean }>(
       `/api/operador/recargas/${referencia}/confirmar`,
-      { method: 'POST', body: '{}' },
+      { method: 'POST', body: '{}', reintentos: 1 },
     ),
 
   rechazarRecarga: (referencia: string, motivo: string) =>
     pedirJson<{ rechazada: boolean }>(
       `/api/operador/recargas/${referencia}/rechazar`,
-      { method: 'POST', body: JSON.stringify({ motivo }) },
+      { method: 'POST', body: JSON.stringify({ motivo }), reintentos: 1 },
     ),
 
   saludOperador: () => pedirJson<SaludOperador>('/api/operador/salud'),
@@ -621,7 +647,7 @@ export const api = {
   crearSolicitudOperador: (telefono: string, origenId: number, destinoId: number) =>
     pedirJson<{ solicitudId: number; estado: string; yaExistia: boolean }>(
       '/api/operador/solicitudes',
-      { method: 'POST', body: JSON.stringify({ telefono, origenId, destinoId }) },
+      { method: 'POST', body: JSON.stringify({ telefono, origenId, destinoId }), reintentos: 1 },
     ),
 
   solicitudesCentral: () =>
@@ -644,7 +670,7 @@ export const api = {
   }) =>
     pedirJson<{ referenciaId: number; creada: boolean }>(
       '/api/operador/referencias',
-      { method: 'POST', body: JSON.stringify(datos) },
+      { method: 'POST', body: JSON.stringify(datos), reintentos: 1 },
     ),
 
   editarReferenciaOperador: (id: number, cambios: {
@@ -653,13 +679,13 @@ export const api = {
   }) =>
     pedirJson<{ editada: boolean }>(
       `/api/operador/referencias/${id}`,
-      { method: 'POST', body: JSON.stringify(cambios) },
+      { method: 'POST', body: JSON.stringify(cambios), reintentos: 1 },
     ),
 
   aliasReferenciaOperador: (id: number, alias: string, quitar = false) =>
     pedirJson<{ hecho: boolean }>(
       `/api/operador/referencias/${id}/alias`,
-      { method: 'POST', body: JSON.stringify({ alias, quitar }) },
+      { method: 'POST', body: JSON.stringify({ alias, quitar }), reintentos: 1 },
     ),
 
   bandasOperador: () => pedirJson<{ bandas: BandaOperador[] }>('/api/operador/bandas'),
@@ -670,7 +696,7 @@ export const api = {
   }) =>
     pedirJson<{ bandaId?: number; borrada?: boolean }>(
       '/api/operador/bandas',
-      { method: 'POST', body: JSON.stringify(datos) },
+      { method: 'POST', body: JSON.stringify(datos), reintentos: 1 },
     ),
 
   parametrosOperador: () =>
@@ -679,7 +705,7 @@ export const api = {
   cambiarParametroOperador: (clave: string, valor: string) =>
     pedirJson<{ clave: string; valor: string }>(
       `/api/operador/parametros/${encodeURIComponent(clave)}`,
-      { method: 'POST', body: JSON.stringify({ valor }) },
+      { method: 'POST', body: JSON.stringify({ valor }), reintentos: 1 },
     ),
 };
 
