@@ -18,11 +18,14 @@ import {
 // Teléfono de pruebas que PUEDE existir: nueve dígitos locales, como los de
 // Malabo. Los fixtures fabricaban antes números de dieciséis dígitos, que la
 // validación vieja dejaba pasar porque solo miraba la longitud del texto.
-let contadorTelefono = 0;
+// Arranca en un punto aleatorio y avanza de uno en uno: dentro de una
+// ejecución no puede repetirse, y entre ejecuciones el solape es improbable.
+// Con tres dígitos aleatorios sí chocaba —la base guarda los números de todas
+// las ejecuciones anteriores (P12-03)— y reventaba el UNIQUE del teléfono.
+let siguienteTelefono = Math.floor(Math.random() * 1_000_000);
 function telefonoUnico(): string {
-  contadorTelefono += 1;
-  const aleatorio = String(Math.floor(Math.random() * 1000)).padStart(3, '0');
-  return `+240222${aleatorio}${String(contadorTelefono % 1000).padStart(3, '0')}`;
+  siguienteTelefono = (siguienteTelefono + 1) % 1_000_000;
+  return `+240222${String(siguienteTelefono).padStart(6, '0')}`;
 }
 
 let pool: pg.Pool;

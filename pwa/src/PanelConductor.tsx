@@ -22,13 +22,16 @@ import VistaConductor from './VistaConductor';
 import { prepararSonido, sonarCarreraCancelada, sonarNuevaCarrera } from './sonidos';
 
 export default function PanelConductor({
-  conductor, puntos, idioma, alAbrirAjustes, alAbrirEstadisticas, alRecargarSesion,
+  conductor, puntos, idioma, alAbrirAjustes, alAbrirEstadisticas, alAbrirCampo,
+  alRecargarSesion,
 }: {
   conductor: DatosConductor;
   puntos: PuntoMapa[];
   idioma: Idioma;
   alAbrirAjustes: () => void;
   alAbrirEstadisticas: () => void;
+  // Solo para agentes de campo (migración 025): abre las herramientas del mapa.
+  alAbrirCampo?: () => void;
   // Los datos de sesión (verificación, suscripción) los tiene App: tras
   // pagar la cuota hay que pedirle que los recargue, o el panel seguiría
   // mostrando la situación anterior.
@@ -352,6 +355,7 @@ export default function PanelConductor({
         acciones={{
           alAbrirAjustes,
           alAbrirEstadisticas,
+          alAbrirCampo,
           alAbrirRecarga: () => setEnRecarga(true),
           alSuscribir: suscribir,
           alAlternarServicio: alternarServicio,

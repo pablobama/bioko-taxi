@@ -14,6 +14,8 @@ type T = ReturnType<typeof crearT>;
 export interface AccionesConductor {
   alAbrirAjustes: () => void;
   alAbrirEstadisticas: () => void;
+  // Solo para agentes de campo: abre las herramientas del mapa.
+  alAbrirCampo?: () => void;
   alAbrirRecarga: () => void;
   alSuscribir: () => void;
   alAlternarServicio: () => void;
@@ -209,6 +211,12 @@ export default function VistaConductor({
           </span>
         </div>
         <div className="acciones-cabecera">
+          {/* Agente de campo (migración 025): mismo panel de taxi, más las
+              herramientas del mapa. Solo aparece para quien lo es. */}
+          {conductor.agente && acciones.alAbrirCampo && (
+            <button type="button" className="ajustes" aria-label={t('campo.abrir')}
+              onClick={acciones.alAbrirCampo}>🗺</button>
+          )}
           <button type="button" className="ajustes" aria-label={t('cabecera.tusNumeros')}
             onClick={acciones.alAbrirEstadisticas}>▤</button>
           <button type="button" className="ajustes" aria-label={t('cabecera.tusDatos')}

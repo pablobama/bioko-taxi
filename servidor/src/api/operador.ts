@@ -21,11 +21,23 @@ import { leerParametroEntero } from '../dominio/parametros.js';
 import { confirmarRecarga, rechazarRecarga, recargasDe } from '../dominio/recargas.js';
 import { reputacionDe } from '../dominio/reputacion.js';
 import { normalizarTelefono } from '../dominio/telefono.js';
+import { crearZonaEnGps, situarZona } from '../dominio/zonas.js';
 import { crearSolicitud } from '../dominio/transiciones.js';
 
 const PATRON_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ESTADOS_VALIDOS = ['pendiente', 'verificado', 'suspendido', 'bloqueado'];
 const ESTADOS_RECARGA_VALIDOS = ['pendiente', 'confirmada', 'rechazada', 'caducada'];
+
+// El mismo recuadro con el que se compiló el plano. Un GPS que todavía no ha
+// fijado devuelve a veces (0, 0) o una posición de hace días en otro país:
+// guardar eso como el centro de un barrio dejaría el reparto tocado y nadie
+// sabría por qué.
+const RECUADRO_MALABO = { sur: 3.695, oeste: 8.705, norte: 3.815, este: 8.845 };
+
+function enMalabo(lat: number, lng: number): boolean {
+  return lat >= RECUADRO_MALABO.sur && lat <= RECUADRO_MALABO.norte
+    && lng >= RECUADRO_MALABO.oeste && lng <= RECUADRO_MALABO.este;
+}
 
 function errorHttp(codigo: number, mensaje: string): Error & { statusCode: number } {
   const error = new Error(mensaje) as Error & { statusCode: number };
@@ -62,6 +74,28 @@ export function registrarRutasOperador(
   function exigirOperador(req: FastifyRequest): void {
     if (!esOperador(uuidDesde(req))) {
       throw errorHttp(403, 'Este dispositivo no tiene acceso de operador.');
+    }
+  }
+
+  // Trabajo de campo: situar barrios, corregir sitios y fijar precios. Lo
+  // pueden hacer el operador y los conductores nombrados agentes (migracion
+  // 025). Es mas ancho que `exigirOperador` a proposito: el trabajo de campo
+  // se hace en la calle, y quien esta en la calle es el taxista.
+  //
+  // Lo que NO abre: verificar conductores, confirmar pagos, resolver
+  // incidencias ni tocar parametros. Un agente corrige el mapa, no administra
+  // a sus companeros ni el dinero.
+  async function exigirCampo(req: FastifyRequest): Promise<void> {
+    const uuid = uuidDesde(req);
+    if (esOperador(uuid)) return;
+    const agente = await pool.query(
+      `SELECT 1 FROM dispositivo d
+       JOIN conductor c ON c.id = d.conductor_id
+       WHERE d.uuid_persistente = $1 AND d.tipo = 'conductor' AND c.es_agente`,
+      [uuid],
+    );
+    if (agente.rowCount === 0) {
+      throw errorHttp(403, 'Este dispositivo no puede hacer trabajo de campo.');
     }
   }
 
@@ -103,7 +137,7 @@ export function registrarRutasOperador(
 
     const ficha = await pool.query(
       `SELECT c.id, c.nombre, c.telefono, c.correo, c.estado_verificacion,
-              c.suscrito_hasta,
+              c.suscrito_hasta, c.es_agente,
               v.matricula, v.marca, v.color, v.carroceria, v.plazas,
               p.estado AS presencia,
               COALESCE(sm.saldo_xaf, 0)::int AS saldo_xaf
@@ -169,6 +203,22 @@ export function registrarRutasOperador(
       `UPDATE conductor SET estado_verificacion = $2 WHERE id = $1
        RETURNING id, nombre, estado_verificacion`,
       [id, estado],
+    );
+    if (res.rowCount === 0) throw errorHttp(404, 'Conductor no encontrado.');
+    return res.rows[0];
+  });
+
+  // Nombrar agente de campo a un conductor, o retirarle el papel. Solo el
+  // operador: es quien conoce a la gente y quien responde de lo que toquen.
+  app.post('/api/operador/conductores/:id/agente', async (req) => {
+    exigirOperador(req);
+    const id = Number((req.params as { id: string }).id);
+    const { agente } = (req.body ?? {}) as { agente?: boolean };
+    if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
+    if (typeof agente !== 'boolean') throw errorHttp(400, 'Falta agente (true/false).');
+    const res = await pool.query(
+      'UPDATE conductor SET es_agente = $2 WHERE id = $1 RETURNING id, nombre, es_agente',
+      [id, agente],
     );
     if (res.rowCount === 0) throw errorHttp(404, 'Conductor no encontrado.');
     return res.rows[0];
@@ -703,17 +753,64 @@ export function registrarRutasOperador(
   // Hasta ahora todo eso era SQL a mano.
 
   app.get('/api/operador/zonas', async (req) => {
-    exigirOperador(req);
+    await exigirCampo(req);
+    // Las no situadas primero: son la cola de trabajo. Ocho barrios de Malabo
+    // entraron sin coordenadas porque ninguna fuente sabía dónde están
+    // (migración 025), y hasta que alguien vaya, no existen para el reparto.
     const filas = await pool.query(
-      `SELECT z.id, z.nombre,
-              (SELECT count(*)::int FROM referencia r WHERE r.zona_id = z.id AND r.activa) AS referencias
-       FROM zona z ORDER BY z.nombre`,
+      `SELECT z.id, z.nombre, z.centroide_lat AS lat, z.centroide_lng AS lng,
+              (z.centroide_lat IS NULL) AS sin_situar,
+              (SELECT count(*)::int FROM referencia r WHERE r.zona_id = z.id AND r.activa) AS referencias,
+              (SELECT count(*)::int FROM zona_adyacencia a WHERE a.zona_id = z.id) AS vecinas
+       FROM zona z ORDER BY (z.centroide_lat IS NULL) DESC, z.nombre`,
     );
     return { zonas: filas.rows };
   });
 
+  // «Estoy aquí»: sitúa un barrio con el GPS de quien lo pulsa. Recalcula la
+  // adyacencia entera, porque un barrio sin vecinos es un barrio al que el
+  // reparto no llega en la tercera oleada.
+  app.post('/api/operador/zonas/:id/situar', async (req) => {
+    await exigirCampo(req);
+    const id = Number((req.params as { id: string }).id);
+    const { lat, lng } = (req.body ?? {}) as { lat?: number; lng?: number };
+    if (!Number.isInteger(id)) throw errorHttp(400, 'Id de zona no válido.');
+    if (typeof lat !== 'number' || typeof lng !== 'number') {
+      throw errorHttp(400, 'Faltan las coordenadas (lat, lng).');
+    }
+    if (!enMalabo(lat, lng)) {
+      throw errorHttp(400, 'Esas coordenadas caen fuera de Malabo. ¿Se cogió el GPS de verdad?');
+    }
+    try {
+      return await enTransaccion(pool, (cliente) => situarZona(cliente, id, lat, lng));
+    } catch (error) {
+      if (error instanceof Error && /No existe la zona/.test(error.message)) {
+        throw errorHttp(404, error.message);
+      }
+      throw error;
+    }
+  });
+
+  // Un barrio que no estaba en ninguna lista. Pasa: quien va por la calle
+  // encuentra barrios que ni OSM ni el censo tenían.
+  app.post('/api/operador/zonas', async (req) => {
+    await exigirCampo(req);
+    const { nombre, lat, lng } = (req.body ?? {}) as {
+      nombre?: string; lat?: number; lng?: number;
+    };
+    const limpio = nombre?.trim();
+    if (!limpio) throw errorHttp(400, 'Falta el nombre del barrio.');
+    if (typeof lat !== 'number' || typeof lng !== 'number') {
+      throw errorHttp(400, 'Faltan las coordenadas (lat, lng).');
+    }
+    if (!enMalabo(lat, lng)) {
+      throw errorHttp(400, 'Esas coordenadas caen fuera de Malabo. ¿Se cogió el GPS de verdad?');
+    }
+    return enTransaccion(pool, (cliente) => crearZonaEnGps(cliente, limpio, lat, lng));
+  });
+
   app.get('/api/operador/referencias', async (req) => {
-    exigirOperador(req);
+    await exigirCampo(req);
     const { q, zonaId } = (req.query ?? {}) as { q?: string; zonaId?: string };
     // A diferencia del buscador de los pasajeros, este ve TODO: inactivas
     // incluidas, porque para reactivar algo primero hay que encontrarlo.
@@ -736,7 +833,7 @@ export function registrarRutasOperador(
   });
 
   app.post('/api/operador/referencias', async (req) => {
-    exigirOperador(req);
+    await exigirCampo(req);
     const cuerpo = (req.body ?? {}) as {
       zonaId?: number; nombre?: string; lat?: number; lng?: number; categoria?: string;
     };
@@ -757,7 +854,7 @@ export function registrarRutasOperador(
   });
 
   app.post('/api/operador/referencias/:id', async (req) => {
-    exigirOperador(req);
+    await exigirCampo(req);
     const id = Number((req.params as { id: string }).id);
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de referencia no válido.');
     const cambios = (req.body ?? {}) as {
@@ -774,7 +871,7 @@ export function registrarRutasOperador(
   });
 
   app.post('/api/operador/referencias/:id/alias', async (req) => {
-    exigirOperador(req);
+    await exigirCampo(req);
     const id = Number((req.params as { id: string }).id);
     const { alias, quitar } = (req.body ?? {}) as { alias?: string; quitar?: boolean };
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de referencia no válido.');
@@ -797,7 +894,7 @@ export function registrarRutasOperador(
   // (P12-01), y el taxista las ve en el broadcast para no aceptar a ciegas.
 
   app.get('/api/operador/bandas', async (req) => {
-    exigirOperador(req);
+    await exigirCampo(req);
     const filas = await pool.query(
       `SELECT b.id, b.zona_origen_id, b.zona_destino_id, b.p25, b.p50, b.p75,
               b.actualizada_en, zo.nombre AS zona_origen, zd.nombre AS zona_destino
@@ -810,7 +907,7 @@ export function registrarRutasOperador(
   });
 
   app.post('/api/operador/bandas', async (req) => {
-    exigirOperador(req);
+    await exigirCampo(req);
     const cuerpo = (req.body ?? {}) as {
       zonaOrigenId?: number; zonaDestinoId?: number;
       p25?: number; p50?: number; p75?: number; borrar?: boolean;

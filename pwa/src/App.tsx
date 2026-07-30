@@ -57,7 +57,7 @@ function SelectorIdioma({ idioma, alCambiar }: { idioma: Idioma; alCambiar: (i: 
 type Pantalla =
   | 'cargando' | 'elegir_rol' | 'alta_cliente' | 'alta_conductor'
   | 'cliente' | 'conductor' | 'ajustes_conductor' | 'estadisticas_conductor'
-  | 'operador';
+  | 'operador' | 'campo';
 
 // El teléfono del operador puede cambiar de papel sin tocar la consola:
 // pasajero ↔ taxista ↔ operador. Cada papel guarda su PROPIO uuid de
@@ -273,6 +273,11 @@ export default function App() {
     return <>{conmutador}<PanelOperador /></>;
   }
 
+  // Trabajo de campo del agente: el mismo panel, recortado a lo suyo.
+  if (pantalla === 'campo' && conductor) {
+    return <PanelOperador modo="agente" alVolver={() => setPantalla('conductor')} />;
+  }
+
   if (pantalla === 'cliente' && perfil) {
     return <>{cinta}{bandaSinConexion}{conmutador}<PanelCliente perfilInicial={perfil} puntos={puntos} idioma={idioma} /></>;
   }
@@ -289,6 +294,7 @@ export default function App() {
           idioma={idioma}
           alAbrirAjustes={() => setPantalla('ajustes_conductor')}
           alAbrirEstadisticas={() => setPantalla('estadisticas_conductor')}
+          alAbrirCampo={conductor.agente ? () => setPantalla('campo') : undefined}
           alRecargarSesion={() => { void cargarSesion(); }}
         />
       </>

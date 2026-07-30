@@ -25,11 +25,14 @@ import { crearServidor } from './servidor.js';
 // Teléfono de pruebas que PUEDE existir: nueve dígitos locales, como los de
 // Malabo. Los fixtures fabricaban antes números de dieciséis dígitos, que la
 // validación vieja dejaba pasar porque solo miraba la longitud del texto.
-let contadorTelefono = 0;
+// Arranca en un punto aleatorio y avanza de uno en uno: dentro de una
+// ejecución no puede repetirse, y entre ejecuciones el solape es improbable.
+// Con tres dígitos aleatorios sí chocaba —la base guarda los números de todas
+// las ejecuciones anteriores (P12-03)— y reventaba el UNIQUE del teléfono.
+let siguienteTelefono = Math.floor(Math.random() * 1_000_000);
 function telefonoUnico(): string {
-  contadorTelefono += 1;
-  const aleatorio = String(Math.floor(Math.random() * 1000)).padStart(3, '0');
-  return `+240222${aleatorio}${String(contadorTelefono % 1000).padStart(3, '0')}`;
+  siguienteTelefono = (siguienteTelefono + 1) % 1_000_000;
+  return `+240222${String(siguienteTelefono).padStart(6, '0')}`;
 }
 
 let pool: pg.Pool;
@@ -60,16 +63,8 @@ after(async () => {
   await pool.end();
 });
 
-// Teléfonos y matrículas de prueba únicos DE VERDAD.
-//
-// Antes se hacía `` telefonoUnico().slice(0, 16) ``, que parece único y
-// no lo es: el recorte se come justo los dígitos que cambian, así que dos
-// ejecuciones de la batería separadas por menos de ~100 s generaban el mismo
-// teléfono. Y el teléfono es la clave natural del conductor: el alta se
-// convertía en una actualización del conductor de la ejecución anterior, con
-// su monedero ya movido, y la prueba del saldo fallaba sin que nada estuviera
-// roto en la aplicación. Las columnas son `text`, así que no hacía falta
-// recortar nada.
+// Sufijo único para matrículas y demás. Los teléfonos van por su propio
+// generador (telefonoUnico), que además respeta la forma canónica.
 let contadorUnico = 0;
 function sufijoUnico(): string {
   contadorUnico += 1;

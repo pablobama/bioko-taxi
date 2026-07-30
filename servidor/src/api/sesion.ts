@@ -55,6 +55,7 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
     if (fila.tipo === 'conductor' && fila.conductor_id !== null) {
       const conductor = await pool.query(
         `SELECT c.nombre, c.telefono, c.correo, c.estado_verificacion, c.suscrito_hasta,
+                c.es_agente,
                 v.matricula, v.marca, v.color, v.carroceria, v.plazas,
                 sm.saldo_xaf
          FROM conductor c
@@ -81,6 +82,9 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
           color: c.color,
           carroceria: c.carroceria,
           plazas: c.plazas,
+          // Agente de campo (migración 025): el mismo panel de taxi, más las
+          // herramientas para situar barrios, corregir sitios y fijar precios.
+          agente: c.es_agente,
           reputacion,
         },
       };

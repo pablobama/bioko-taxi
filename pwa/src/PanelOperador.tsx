@@ -896,18 +896,175 @@ function FilaConductor({
   );
 }
 
+function Zonas() {
+  const [zonas, setZonas] = useState<ZonaOperador[] | null>(null);
+  const [error, setError] = useState('');
+  const [aviso, setAviso] = useState('');
+  const [ocupada, setOcupada] = useState<number | 'nueva' | null>(null);
+  const [nombreNuevo, setNombreNuevo] = useState('');
+
+  function cargar() {
+    api.zonasOperador().then((r) => setZonas(r.zonas)).catch((e) => setError(e.message));
+  }
+  useEffect(cargar, []);
+
+  // El GPS del propio teléfono, que es de lo que va todo esto: se pulsa
+  // ESTANDO en el barrio. Sin `enableHighAccuracy` un móvil contesta con la
+  // celda de telefonía, que en Malabo puede estar a kilómetros — y aquí se
+  // está fijando dónde está un barrio, no dibujando un punto aproximado.
+  function conGps(alTener: (lat: number, lng: number) => void) {
+    setError('');
+    setAviso('Buscando el GPS…');
+    if (!('geolocation' in navigator)) {
+      setError('Este teléfono no da la ubicación.');
+      setAviso('');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setAviso('');
+        alTener(pos.coords.latitude, pos.coords.longitude);
+      },
+      (e) => {
+        setAviso('');
+        setError(`No se pudo coger el GPS: ${e.message}. Da permiso de ubicación y sal a cielo abierto.`);
+      },
+      { enableHighAccuracy: true, timeout: 20_000, maximumAge: 0 },
+    );
+  }
+
+  async function situar(z: ZonaOperador) {
+    conGps(async (lat, lng) => {
+      setOcupada(z.id);
+      try {
+        const r = await api.situarZona(z.id, lat, lng);
+        setAviso(`«${r.nombre}» situado aquí. Vecinas: ${r.vecinas}.`);
+        cargar();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'No se pudo situar el barrio.');
+      } finally {
+        setOcupada(null);
+      }
+    });
+  }
+
+  async function crear() {
+    const nombre = nombreNuevo.trim();
+    if (!nombre) return;
+    conGps(async (lat, lng) => {
+      setOcupada('nueva');
+      try {
+        const r = await api.crearZonaEnGps(nombre, lat, lng);
+        setAviso(`«${r.nombre}» creado aquí. Vecinas: ${r.vecinas}.`);
+        setNombreNuevo('');
+        cargar();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'No se pudo crear el barrio.');
+      } finally {
+        setOcupada(null);
+      }
+    });
+  }
+
+  const pendientes = zonas?.filter((z) => z.sin_situar) ?? [];
+  const situadas = zonas?.filter((z) => !z.sin_situar) ?? [];
+
+  return (
+    <>
+      {error && <p className="aviso">{error}</p>}
+      {aviso && <p className="nota">{aviso}</p>}
+
+      <div className="oferta">
+        <div className="oferta-ruta">Añadir un barrio donde estoy</div>
+        <div className="nota">
+          Para barrios que no están en ninguna lista. Se sitúa con el GPS de
+          este teléfono, así que hay que estar allí.
+        </div>
+        <input
+          type="text"
+          value={nombreNuevo}
+          placeholder="Nombre del barrio"
+          onChange={(e) => setNombreNuevo(e.target.value)}
+        />
+        <button
+          type="button" className="principal"
+          disabled={!nombreNuevo.trim() || ocupada !== null}
+          onClick={crear}
+        >
+          Estoy aquí: crear barrio
+        </button>
+      </div>
+
+      {pendientes.length > 0 && (
+        <>
+          <p className="nota">
+            Sin situar ({pendientes.length}). Ninguna fuente sabía dónde están, así
+            que para el reparto todavía no existen: hay que ir y pulsar allí.
+          </p>
+          {pendientes.map((z) => (
+            <div className="oferta oferta-alarma" key={z.id}>
+              <div className="oferta-ruta">{z.nombre}</div>
+              <button
+                type="button" className="principal"
+                disabled={ocupada !== null}
+                onClick={() => situar(z)}
+              >
+                {ocupada === z.id ? 'Cogiendo GPS…' : 'Estoy aquí'}
+              </button>
+            </div>
+          ))}
+        </>
+      )}
+
+      <p className="nota">Situados ({situadas.length})</p>
+      {situadas.slice(0, 60).map((z) => (
+        <div className="oferta" key={z.id}>
+          <div className="oferta-ruta">{z.nombre}</div>
+          <div className="nota">
+            {z.lat?.toFixed(5)}, {z.lng?.toFixed(5)} · {z.vecinas} vecina{z.vecinas === 1 ? '' : 's'}
+            {' · '}{z.referencias} sitio{z.referencias === 1 ? '' : 's'}
+            {z.vecinas === 0 && ' · ⚠ aislado del reparto'}
+          </div>
+          <button
+            type="button" className="secundario"
+            disabled={ocupada !== null}
+            onClick={() => situar(z)}
+          >
+            {ocupada === z.id ? 'Cogiendo GPS…' : 'Corregir: estoy aquí'}
+          </button>
+        </div>
+      ))}
+    </>
+  );
+}
+
+// --- Zonas: situar barrios con el GPS (migración 025) ------------------------
+
 const SECCIONES = [
   ['resumen', 'Resumen'], ['central', 'Central'], ['incidencias', 'Incidencias'],
   ['conductores', 'Conductores'], ['pasajeros', 'Pasajeros'], ['pagos', 'Pagos'],
-  ['lugares', 'Lugares'], ['ajustes', 'Ajustes'],
+  ['zonas', 'Zonas'], ['lugares', 'Lugares'], ['ajustes', 'Ajustes'],
 ] as const;
 type Seccion = (typeof SECCIONES)[number][0];
+
+// Lo que ve un agente de campo (migración 025): el mapa y los precios, nada
+// de administrar a sus compañeros ni el dinero. El servidor aplica el mismo
+// corte —esto solo evita enseñar botones que darían 403.
+const SECCIONES_AGENTE: Seccion[] = ['zonas', 'lugares', 'ajustes'];
 
 const FILTROS_CONDUCTOR = ['pendiente', 'verificado', 'suspendido', 'bloqueado', 'todos'] as const;
 const FILTROS_RECARGA = ['pendiente', 'confirmada', 'rechazada', 'caducada', 'todas'] as const;
 
-export default function PanelOperador() {
-  const [seccion, setSeccion] = useState<Seccion>('resumen');
+export default function PanelOperador({ modo = 'operador', alVolver }: {
+  modo?: 'operador' | 'agente';
+  // Solo en modo agente: el agente vuelve a su panel de taxi.
+  alVolver?: () => void;
+} = {}) {
+  const esAgente = modo === 'agente';
+  const visibles = esAgente
+    ? SECCIONES.filter(([id]) => SECCIONES_AGENTE.includes(id))
+    : SECCIONES;
+  const [seccion, setSeccion] = useState<Seccion>(esAgente ? 'zonas' : 'resumen');
   const [stats, setStats] = useState<EstadisticasOperador | null>(null);
   const [salud, setSalud] = useState<SaludOperador | null>(null);
   const [error, setError] = useState('');
@@ -1048,10 +1205,15 @@ export default function PanelOperador() {
         {!enFicha && (
           <>
             <div className="cabecera">
-              <h1>Panel de operador</h1>
+              <h1>{esAgente ? 'Trabajo de campo' : 'Panel de operador'}</h1>
+              {esAgente && alVolver && (
+                <button type="button" className="ajustes" aria-label="Volver a mi taxi" onClick={alVolver}>
+                  ←
+                </button>
+              )}
             </div>
             <div className="selector-idioma">
-              {SECCIONES.map(([id, etiqueta]) => (
+              {visibles.map(([id, etiqueta]) => (
                 <button
                   key={id} type="button"
                   className={id === seccion ? 'idioma-activo' : undefined}
@@ -1203,6 +1365,7 @@ export default function PanelOperador() {
           </>
         )}
 
+        {seccion === 'zonas' && <Zonas />}
         {seccion === 'lugares' && <Lugares />}
 
         {seccion === 'ajustes' && <Ajustes />}

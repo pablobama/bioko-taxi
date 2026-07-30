@@ -185,6 +185,9 @@ export interface DatosConductor {
   color: string | null;
   carroceria: string | null;
   plazas: number | null;
+  // Agente de campo (migración 025): mismo panel de taxi, más las herramientas
+  // para situar barrios, corregir sitios y fijar precios.
+  agente?: boolean;
   reputacion: Reputacion;
 }
 
@@ -348,7 +351,11 @@ export interface SolicitudCentral {
 export interface ZonaOperador {
   id: number;
   nombre: string;
+  lat: number | null;
+  lng: number | null;
+  sin_situar: boolean;
   referencias: number;
+  vecinas: number;
 }
 
 export interface ReferenciaOperador {
@@ -681,6 +688,25 @@ export const api = {
     pedirJson<{ solicitudes: SolicitudCentral[] }>('/api/operador/solicitudes'),
 
   zonasOperador: () => pedirJson<{ zonas: ZonaOperador[] }>('/api/operador/zonas'),
+
+  // «Estoy aquí»: sitúa un barrio con el GPS de quien lo pulsa.
+  situarZona: (zonaId: number, lat: number, lng: number) =>
+    pedirJson<{ zonaId: number; nombre: string; vecinas: number }>(
+      `/api/operador/zonas/${zonaId}/situar`,
+      { method: 'POST', body: JSON.stringify({ lat, lng }), reintentos: 1 },
+    ),
+
+  crearZonaEnGps: (nombre: string, lat: number, lng: number) =>
+    pedirJson<{ zonaId: number; nombre: string; vecinas: number }>(
+      '/api/operador/zonas',
+      { method: 'POST', body: JSON.stringify({ nombre, lat, lng }), reintentos: 1 },
+    ),
+
+  nombrarAgente: (conductorId: number, agente: boolean) =>
+    pedirJson<{ id: number; nombre: string; es_agente: boolean }>(
+      `/api/operador/conductores/${conductorId}/agente`,
+      { method: 'POST', body: JSON.stringify({ agente }), reintentos: 1 },
+    ),
 
   referenciasOperador: (q?: string, zonaId?: number) => {
     const partes = [

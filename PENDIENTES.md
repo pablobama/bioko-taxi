@@ -305,6 +305,21 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   el conteo está sirviendo para encontrar taxis fuera de la aplicación. Hoy no
   se registra nada de eso.
 
+- **[P25-01] Un agente de campo puede cambiar precios sin dejar rastro.** El
+  papel de agente (migración 025) permite fijar las bandas de precio entre
+  zonas, y esos cambios no se registran en ninguna parte: no se sabe quién los
+  hizo ni cuándo. Con dos o tres agentes de confianza no es urgente, pero es
+  el tipo de cosa que solo se echa de menos cuando ya pasó. El operador puede
+  retirar el papel, así que el daño se corta; reconstruir lo que se tocó, no.
+
+- **[P25-02] Situar un barrio no comprueba que el GPS sea bueno.** Se valida
+  que las coordenadas caigan dentro del recuadro de Malabo —que descarta el
+  (0,0) y la posición de otro país—, pero no la precisión que declara el
+  teléfono. Un GPS sin fijar dentro del recuadro puede dar un punto a
+  quinientos metros, y el barrio quedaría mal situado sin que nadie lo note.
+  Lo barato: guardar el `accuracy` que da el navegador y avisar por encima
+  de unos 50 m.
+
 ## Resueltos
 
 - **[P5-01] Entrega de eventos tras el commit** — resuelto en el paso 6 con
