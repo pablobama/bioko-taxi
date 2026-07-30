@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   abrirEventosConductor, api, coordenadasOportunistas, enPruebasLocales,
   type DatosConductor, type EstadoConductor, type PuntoMapa, type Zona,
+  type ZonaConDemanda,
 } from './api';
 import { mensajeDeError } from './conexion';
 import { porCercaniaA } from './geo';
@@ -40,6 +41,7 @@ export default function PanelConductor({
   const [aviso, setAviso] = useState('');
   const [ocupado, setOcupado] = useState(false);
   const [enRecarga, setEnRecarga] = useState(false);
+  const [demanda, setDemanda] = useState<{ zonas: ZonaConDemanda[]; ventanaMin: number } | null>(null);
   const coordenadas = useRef<{ lat: number; lng: number } | null>(null);
   // La misma posición, pero como estado: es lo que mueve el coche en el mapa.
   // La referencia sola no basta — mutarla no repinta nada, y el mapa del
@@ -138,10 +140,17 @@ export default function PanelConductor({
     return cerrar;
   }, [refrescar]);
 
+  // Estar en servicio, y estarlo sin nada entre manos. Se calculan una sola
+  // vez: estaban repetidas en tres sitios, y tres copias de la misma regla es
+  // como se separan con el tiempo.
+  const enServicio = estado !== null && estado.estado !== 'DESCONECTADO';
+  const parado = enServicio
+    && (estado?.ofertas.length ?? 0) === 0
+    && (estado?.pasajeros.length ?? 0) === 0;
+
   // Heartbeat y refresco mientras está en servicio. 20 s en primer plano: la
   // ventana del servidor son 120 s, así que sobra margen.
   useEffect(() => {
-    const enServicio = estado !== null && estado.estado !== 'DESCONECTADO';
     const latir = async () => {
       // La posición se lee SIEMPRE, esté o no en servicio: el selector de zona
       // la necesita justo cuando está fuera, que es cuando se elige dónde
@@ -190,6 +199,24 @@ export default function PanelConductor({
     return () => navigator.geolocation.clearWatch(vigilante);
   }, [moverCoche]);
 
+  // Dónde hay trabajo. Va en su propia petición y no pegada al latido para
+  // poder pedirla una vez por minuto en vez de tres: el latido va cada 20 s y
+  // esto abultaría unos 36 KB por hora en servicio, que en datos prepagados
+  // es dinero. Y solo mientras está parado: con una oferta en pantalla o con
+  // pasajeros a bordo no sirve para nada, así que no se paga por ella.
+  useEffect(() => {
+    if (!parado) {
+      setDemanda(null);
+      return;
+    }
+    const pedir = () => {
+      api.demandaConductor().then(setDemanda).catch(() => setDemanda(null));
+    };
+    pedir();
+    const temporizador = setInterval(pedir, 60_000);
+    return () => clearInterval(temporizador);
+  }, [parado]);
+
   async function accion(
     solicitudId: number,
     tipo: Parameters<typeof api.accionPasajero>[1],
@@ -216,7 +243,6 @@ export default function PanelConductor({
 
   async function alternarServicio() {
     prepararSonido();
-    const enServicio = estado !== null && estado.estado !== 'DESCONECTADO';
     setOcupado(true);
     setAviso('');
     try {
@@ -319,6 +345,7 @@ export default function PanelConductor({
         estado={estado}
         zonas={zonasOrdenadas}
         zonaElegida={zonaEfectiva}
+        demanda={demanda}
         aviso={aviso}
         ocupado={ocupado}
         t={t}

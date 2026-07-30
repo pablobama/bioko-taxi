@@ -9,6 +9,7 @@ import { gzipSync } from 'node:zlib';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { enTransaccion } from '../bd/conexion.js';
+import { taxisCercaDe } from '../dominio/cobertura.js';
 import { iniciarDespacho } from '../dominio/despacho.js';
 import { ErrorTransicionInvalida } from '../dominio/errores.js';
 import type { EmisorEventos } from '../dominio/eventos.js';
@@ -204,6 +205,27 @@ export function crearServidor(
   //   2. A dónde va la gente desde la zona en la que está. Es lo que salva al
   //      usuario nuevo, que no tiene historial y es justo el que más ayuda
   //      necesita.
+  // Cuántos taxis podrían venir a por alguien que sale de aquí (migración
+  // 023). Contesta ANTES de pedir la pregunta que hoy cuesta 90 segundos de
+  // espera: «¿voy a conseguir taxi?». Si la respuesta es que no, mejor
+  // saberlo de pie en la calle que después de comprometerse.
+  //
+  // Un CONTEO por zona, nunca posiciones: ni un punto que seguir, ni una
+  // matrícula, ni un rastro. El razonamiento está en la migración 023.
+  app.get('/api/taxis-cerca', async (req) => {
+    // Exige dispositivo registrado, como el resto: es de la aplicación, no un
+    // panel público del tamaño de la flota para quien pase por la URL.
+    await dispositivoDesde(req);
+    const { origenId } = req.query as { origenId?: string };
+    const id = Number(origenId);
+    if (!Number.isInteger(id)) {
+      throw errorHttp(400, 'Falta origenId: el conteo es de los taxis que pueden llegar a un sitio concreto.');
+    }
+    const cerca = await taxisCercaDe(pool, id);
+    if (!cerca) throw errorHttp(404, 'Esa referencia no existe.');
+    return cerca;
+  });
+
   app.get('/api/destinos-sugeridos', async (req) => {
     const dispositivo = await dispositivoDesde(req);
     const { origenId } = req.query as { origenId?: string };

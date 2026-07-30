@@ -255,6 +255,40 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   frente a enseñar solo «cuánta gente pide en cada zona» (calor por zonas,
   sin puntos individuales).
 
+- **[P23-01] El filtro de saldo de R5 nunca se aplicó al emitir.**
+  `tieneSaldoParaComision()` existe en `monedero.ts`, tiene prueba propia y su
+  comentario dice «filtro de emisión (R5)», pero `despacho.ts` no la llama:
+  hoy un conductor sin saldo para la comisión recibe carreras igual. Salió al
+  escribir `cobertura.ts`, que replica los filtros del reparto y tuvo que
+  decidir si copiar el que no está. Se dejó fuera a propósito para que el
+  conteo se parezca a lo que el reparto hace de verdad; el día que se aplique
+  hay que aplicarlo en los dos sitios a la vez o el pasajero verá taxis
+  fantasma. Decidir si es un olvido o una decisión no escrita: cambiar quién
+  recibe carreras no es un arreglo que se cuele en otra tarea.
+
+- **[P22-01] Taxis en vivo en el mapa del pasajero** — resuelto de otra forma
+  el 2026-07-30, y a propósito: en vez de puntos que se pueden seguir, un
+  CONTEO por zona (migración 023). El razonamiento completo está en esa
+  migración y en la evaluación de esa fecha; en resumen, un punto seguible es
+  una herramienta de acoso y de robo, el anonimato del punto es falso cuando
+  en el barrio solo hay dos taxis, y enseñar un taxi a cien metros invita a
+  pararlo en la calle, donde la plataforma no cobra comisión. Los puntos
+  individuales quedan condicionados a que exista verificación de identidad
+  real (P15-04), consentimiento informado del taxista en su alta (P14-03) y
+  evidencia de que la fuga a la calle no es material.
+
+- **[P22-02] Pasajeros en el mapa del taxista** — resuelto de otra forma el
+  2026-07-30: demanda AGREGADA por barrio, nunca pines. Un pin diría «una
+  persona, sola, en esta dirección, ahora mismo» a un colectivo que hoy se
+  auto-verifica sin que nadie revise nada (P21-01). Los pines individuales de
+  pasajero quedan descartados, no aplazados.
+
+- **[P23-02] La fuga a la calle no se puede medir directamente.** Un viaje
+  pactado en la calle es invisible para la plataforma por definición. El
+  proxy que hay que instrumentar es «vio el conteo y no pidió»: si sube mucho,
+  el conteo está sirviendo para encontrar taxis fuera de la aplicación. Hoy no
+  se registra nada de eso.
+
 ## Resueltos
 
 - **[P5-01] Entrega de eventos tras el commit** — resuelto en el paso 6 con

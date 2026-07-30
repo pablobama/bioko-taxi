@@ -6,7 +6,7 @@
 // los estados sin inventar una copia del maquetado.
 
 import { useState } from 'react';
-import type { DatosConductor, EstadoConductor, PasajeroConductor } from './api';
+import type { DatosConductor, EstadoConductor, PasajeroConductor, ZonaConDemanda } from './api';
 import type { crearT } from './i18n';
 
 type T = ReturnType<typeof crearT>;
@@ -35,6 +35,9 @@ export interface PropiedadesVistaConductor {
   estado: EstadoConductor | null;
   zonas: Array<{ id: number; nombre: string }>;
   zonaElegida: number | null;
+  // Dónde se está pidiendo taxi, por barrio. null mientras no se ha pedido o
+  // si no está en servicio: el dato se compra con la cuota semanal.
+  demanda: { zonas: ZonaConDemanda[]; ventanaMin: number } | null;
   aviso?: string;
   ocupado?: boolean;
   t: T;
@@ -183,7 +186,7 @@ function BloquePasajero({
 }
 
 export default function VistaConductor({
-  conductor, estado, zonas, zonaElegida, aviso, ocupado = false, t, acciones,
+  conductor, estado, zonas, zonaElegida, demanda, aviso, ocupado = false, t, acciones,
 }: PropiedadesVistaConductor) {
   const enServicio = estado !== null && estado.estado !== 'DESCONECTADO';
   const suscripcionVigente = estado?.suscripcionVigente ?? conductor.suscripcionVigente;
@@ -276,6 +279,35 @@ export default function VistaConductor({
           acciones={acciones}
         />
       ))}
+
+      {/* Dónde hay trabajo. Solo cuando está en servicio y parado: con una
+          oferta en pantalla o con pasajeros a bordo, esto no es lo que hay que
+          mirar, y encima la petición cuesta datos. Por barrio y nunca por
+          persona: un pin diría «alguien, solo, en esa dirección, ahora». */}
+      {enServicio && demanda !== null && oferta === null && pasajeros.length === 0 && (
+        <div className="demanda">
+          <span className="demanda-titulo">{t('demanda.titulo')}</span>
+          <span className="demanda-ventana">{t('demanda.ventana', { min: demanda.ventanaMin })}</span>
+          {demanda.zonas.length === 0
+            ? <p className="nota">{t('demanda.nadie')}</p>
+            : (
+              <ul className="ruta">
+                {demanda.zonas.map((z) => (
+                  <li key={z.zonaId}>
+                    {t('demanda.zona', {
+                      zona: z.zona,
+                      pedidas: z.pedidas,
+                      s: z.pedidas === 1 ? '' : 's',
+                      sinTaxi: z.sinTaxi,
+                      taxis: z.taxisAhora,
+                      st: z.taxisAhora === 1 ? '' : 's',
+                    })}
+                  </li>
+                ))}
+              </ul>
+            )}
+        </div>
+      )}
 
       {/* Servicio: siempre al final, para que no compita con lo urgente. */}
       {puedeTrabajar && (

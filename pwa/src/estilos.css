@@ -142,6 +142,66 @@ body {
   overflow-y: auto;
 }
 
+/* --------------------------------------------- cobertura agregada --- */
+
+/* Cuántos taxis pueden venir, encima del botón de pedir. Nunca posiciones: el
+   razonamiento está en la migración 023. */
+.cobertura {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 8px;
+  padding: 11px 13px;
+  border-radius: 13px;
+  background: var(--tarjeta);
+  border-left: 4px solid var(--ambar);
+  font-size: 1rem;
+}
+
+.cobertura small {
+  color: var(--humo);
+  font-size: 0.85rem;
+}
+
+/* Sin taxis no es un error del usuario ni un fallo de la aplicación: es la
+   calle. Se marca en rojo apagado para que se lea como dato, no como avería,
+   y el botón de pedir sigue habilitado porque la decisión es suya. */
+.cobertura-vacia {
+  border-left-color: #e5484d;
+}
+
+.cobertura-vacia small {
+  flex-basis: 100%;
+}
+
+.punto-rojo {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #e5484d;
+  flex: none;
+}
+
+/* Dónde hay trabajo, en el panel del taxista parado. */
+.demanda {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 13px 15px;
+  border-radius: 14px;
+  background: var(--tarjeta);
+}
+
+.demanda-titulo {
+  font-weight: 600;
+  font-size: 1.02rem;
+}
+
+.demanda-ventana {
+  color: var(--humo);
+  font-size: 0.82rem;
+}
+
 /* Para pantallas sin plano detrás (el panel de operador): la hoja deja de
    ser una lámina sobre el mapa y pasa a ocupar toda la pantalla, sin el tope
    de 62dvh que existe justamente para no tapar el plano. */

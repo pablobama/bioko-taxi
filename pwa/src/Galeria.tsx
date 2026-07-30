@@ -15,7 +15,7 @@
 import { useState } from 'react';
 import type {
   DatosConductor, DestinoSugerido, DetalleSolicitud, EstadoConductor, ReferenciaSugerida,
-  Zona,
+  TaxisCerca, Zona,
 } from './api';
 import FondoMapa from './FondoMapa';
 import { crearT } from './i18n';
@@ -214,20 +214,34 @@ export default function Galeria() {
       segundosGracia={props.segundosGracia ?? null}
       buscadorDestino={<CampoFalso etiqueta="Escribe tu destino" valor={props.destino?.nombre} />}
       buscadorOrigen={<CampoFalso etiqueta="¿Dónde estás ahora?" />}
+      taxisCerca={props.taxisCerca ?? null}
       acciones={accionesCliente}
     />
   );
+
+  // Demanda de ejemplo, para poder ver el bloque sin depender de que haya
+  // solicitudes reales en la base.
+  const DEMANDA_EJEMPLO = {
+    ventanaMin: 30,
+    zonas: [
+      { zona: 'Semu', zonaId: 3, pedidas: 7, sinTaxi: 5, taxisAhora: 0 },
+      { zona: 'Ela Nguema', zonaId: 2, pedidas: 5, sinTaxi: 2, taxisAhora: 1 },
+      { zona: 'Malabo Centro', zonaId: 1, pedidas: 9, sinTaxi: 1, taxisAhora: 4 },
+    ],
+  };
 
   const conductor = (
     estado: EstadoConductor | null,
     datos: Partial<DatosConductor> = {},
     aviso?: string,
+    demanda: typeof DEMANDA_EJEMPLO | null = null,
   ) => (
     <VistaConductor
       conductor={{ ...conductorEjemplo, ...datos }}
       estado={estado}
       zonas={ZONAS}
       zonaElegida={1}
+      demanda={demanda}
       aviso={aviso}
       t={t}
       acciones={accionesConductor}
@@ -303,6 +317,34 @@ export default function Galeria() {
 
             <Marco titulo="Pedir · escribiendo" descripcion="Quien sabe a dónde va y escribe rápido, pulsa «escribir otro destino».">
               {cliente('destino', { origen: mercado, destino: catedral, escribiendo: true })}
+            </Marco>
+
+            <Marco
+              titulo="Pedir · con taxis cerca"
+              descripcion="Un conteo por zona, nunca posiciones: contesta «¿voy a conseguir taxi?» antes de pedir, que hoy cuesta 90 s de espera. Nada de puntos que seguir en un mapa."
+            >
+              {cliente('destino', {
+                origen: mercado,
+                sugeridos: SUGERIDOS,
+                taxisCerca: {
+                  zona: 'Malabo Centro', zonaId: 1, disponibles: 4, enTuZona: 2,
+                  contadoEn: new Date().toISOString(),
+                },
+              })}
+            </Marco>
+
+            <Marco
+              titulo="Pedir · sin ningún taxi"
+              descripcion="Se dice antes de pulsar, no después de 90 segundos esperando. Y se deja pedir igual: la decisión es suya."
+            >
+              {cliente('destino', {
+                origen: mercado,
+                sugeridos: SUGERIDOS,
+                taxisCerca: {
+                  zona: 'Malabo Centro', zonaId: 1, disponibles: 0, enTuZona: 0,
+                  contadoEn: new Date().toISOString(),
+                },
+              })}
             </Marco>
 
             <Marco titulo="Pedir · sin GPS" descripcion="Si no hay ubicación, pide la referencia exacta. Es el respaldo, no un error.">
@@ -454,6 +496,13 @@ export default function Galeria() {
 
             <Marco titulo="En servicio" descripcion="Esperando carreras. La tira de abajo dice zona, plazas y saldo.">
               {conductor(estadoConductor())}
+            </Marco>
+
+            <Marco
+              titulo="En servicio, con demanda"
+              descripcion="Dónde se está pidiendo taxi, por barrio y nunca por persona: para conducir hacia el trabajo en vez de dar vueltas. Solo aparece estando parado, y se pide una vez por minuto para no gastar datos."
+            >
+              {conductor(estadoConductor(), {}, undefined, DEMANDA_EJEMPLO)}
             </Marco>
 
             <Marco titulo="Carrera entrante" descripcion="Origen, destino y precio orientativo antes de decidir. Suena y vibra.">
@@ -650,6 +699,7 @@ export default function Galeria() {
 
 interface PropiedadesGaleriaCliente {
   sugeridos?: DestinoSugerido[];
+  taxisCerca?: TaxisCerca | null;
   escribiendo?: boolean;
   puedeDeshacer?: boolean;
   segundosGracia?: number | null;

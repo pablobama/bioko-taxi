@@ -10,6 +10,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { enTransaccion } from '../bd/conexion.js';
+import { demandaPorZona } from '../dominio/cobertura.js';
 import { reclamarSolicitud, rechazarOferta } from '../dominio/despacho.js';
 import { ErrorOfertaInvalida, ErrorSaldoInsuficiente, ErrorTransicionInvalida } from '../dominio/errores.js';
 import { distanciaMetros } from '../dominio/geo.js';
@@ -352,6 +353,30 @@ export function registrarRutasConductor(
       baja();
     });
     return reply; // la respuesta queda abierta
+  });
+
+  // Dónde se está pidiendo taxi, por barrio (migración 023). Para conducir
+  // hacia el trabajo en vez de dar vueltas quemando combustible.
+  //
+  // Va en su propia petición, y no pegado al latido, para poder pedirla una
+  // vez por minuto en vez de tres: el latido va cada 20 s y esto abultaría
+  // unos 36 KB por hora en servicio, que en datos prepagados es dinero. La
+  // app solo la pide cuando el taxista está libre; con pasajeros a bordo no
+  // sirve para nada.
+  //
+  // Solo para quien está en servicio: el mapa de demanda es lo que se compra
+  // con la cuota semanal, no un dato público. Y agregado por zona, nunca por
+  // persona: un pin diría «alguien, solo, en esta dirección, ahora mismo».
+  app.get('/api/conductor/demanda', async (req) => {
+    const sesion = await sesionDesde(req);
+    const presencia = await pool.query(
+      'SELECT estado FROM presencia WHERE conductor_id = $1',
+      [sesion.conductorId],
+    );
+    if (presencia.rowCount === 0 || presencia.rows[0].estado === 'DESCONECTADO') {
+      throw errorHttp(409, 'Entra en servicio para ver dónde se está pidiendo taxi.');
+    }
+    return demandaPorZona(pool);
   });
 
   // Estado completo: lo que la app pinta al abrirse o al recibir un FCM.

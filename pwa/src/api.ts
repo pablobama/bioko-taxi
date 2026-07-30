@@ -382,6 +382,23 @@ export interface ParametroOperador {
   descripcion: string | null;
 }
 
+// Cobertura agregada (migración 023). Conteos por zona, nunca posiciones.
+export interface TaxisCerca {
+  zona: string;
+  zonaId: number;
+  disponibles: number;
+  enTuZona: number;
+  contadoEn: string;
+}
+
+export interface ZonaConDemanda {
+  zona: string;
+  zonaId: number;
+  pedidas: number;
+  sinTaxi: number;
+  taxisAhora: number;
+}
+
 export interface AltaConductor {
   nombre: string;
   telefono: string;
@@ -641,6 +658,16 @@ export const api = {
       `/api/operador/recargas/${referencia}/rechazar`,
       { method: 'POST', body: JSON.stringify({ motivo }), reintentos: 1 },
     ),
+
+  // --- Cobertura agregada --------------------------------------------------
+  // Cuántos taxis podrían venir, para poder decidir ANTES de pedir y esperar
+  // 90 s. Nunca dónde está ninguno.
+  taxisCerca: (origenId: number) =>
+    pedirJson<TaxisCerca>(`/api/taxis-cerca?origenId=${origenId}`),
+
+  // Dónde se está pidiendo taxi, por barrio. Solo en servicio.
+  demandaConductor: () =>
+    pedirJson<{ zonas: ZonaConDemanda[]; ventanaMin: number }>('/api/conductor/demanda'),
 
   saludOperador: () => pedirJson<SaludOperador>('/api/operador/salud'),
 

@@ -13,7 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   abrirEventos, api, coordenadasOportunistas,
   type DestinoSugerido, type DetalleSolicitud, type EventoSse, type Perfil, type PuntoMapa,
-  type ReferenciaSugerida,
+  type ReferenciaSugerida, type TaxisCerca,
 } from './api';
 import Estadisticas from './Estadisticas';
 import { metrosEntre } from './geo';
@@ -220,6 +220,7 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
   // Destinos de un toque y si la persona ha pedido escribir en su lugar.
   const [sugeridos, setSugeridos] = useState<DestinoSugerido[]>([]);
   const [escribiendo, setEscribiendo] = useState(false);
+  const [taxisCerca, setTaxisCerca] = useState<TaxisCerca | null>(null);
   // Cuándo se pidió el taxi, para la ventana de «deshacer», y un reloj que
   // late cada segundo mientras hay cuenta atrás que enseñar.
   const [pedidoEn, setPedidoEn] = useState<number | null>(null);
@@ -400,6 +401,31 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
       .catch(() => { if (vivo) setSugeridos([]); });
     return () => { vivo = false; };
   }, [fase, origen?.id]);
+
+  // Cuántos taxis pueden venir. Se pide al saber de dónde sale y se renueva
+  // cada minuto mientras elige destino, que es cuando sirve para decidir.
+  //
+  // Se BORRA al salir de esa pantalla y cuando falla la petición: un conteo de
+  // hace diez minutos enseñado como si fuera de ahora es la misma mentira que
+  // el código se niega a contar con el estado del viaje. Mejor no decir nada.
+  useEffect(() => {
+    if (fase !== 'destino' || !origen) {
+      setTaxisCerca(null);
+      return;
+    }
+    let vivo = true;
+    const contar = () => {
+      api.taxisCerca(origen.id)
+        .then((c) => { if (vivo) setTaxisCerca(c); })
+        .catch(() => { if (vivo) setTaxisCerca(null); });
+    };
+    contar();
+    const temporizador = setInterval(contar, 60_000);
+    return () => {
+      vivo = false;
+      clearInterval(temporizador);
+    };
+  }, [fase, origen]);
 
   // Reloj de un segundo. Solo late cuando hay una cuenta atrás en pantalla:
   // el resto del tiempo redibujar cada segundo sería gastar batería para nada.
@@ -600,6 +626,7 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
           origen={origen}
           destino={destino}
           gpsResuelto={gpsResuelto}
+          taxisCerca={taxisCerca}
           hayCoordenadas={coordenadas !== null}
           valorada={valorada}
           aviso={aviso}

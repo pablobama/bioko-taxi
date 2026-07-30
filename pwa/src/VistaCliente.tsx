@@ -2,7 +2,7 @@
 // taxista, separada del panel para que la galería de diseños pueda mostrar
 // todos los estados sin duplicar el maquetado.
 
-import type { DestinoSugerido, DetalleSolicitud, ReferenciaSugerida } from './api';
+import type { DestinoSugerido, DetalleSolicitud, ReferenciaSugerida, TaxisCerca } from './api';
 import IconoCategoria from './IconoCategoria';
 import type { crearT } from './i18n';
 
@@ -32,6 +32,10 @@ export interface PropiedadesVistaCliente {
   // Si el GPS ya respondió (aunque sea negándose) y si dio coordenadas.
   gpsResuelto: boolean;
   hayCoordenadas: boolean;
+  // Cuántos taxis podrían venir a por él. null mientras no se sabe (sin
+  // origen, o sin conexión): entonces no se dice nada, que es más honesto que
+  // enseñar un cero o un número viejo.
+  taxisCerca: TaxisCerca | null;
   valorada: boolean;
   aviso?: string;
   t: T;
@@ -63,7 +67,7 @@ function Estrellas({ media, valoraciones, t }: { media: number | null; valoracio
 }
 
 export default function VistaCliente({
-  fase, detalle, origen, destino, gpsResuelto, hayCoordenadas,
+  fase, detalle, origen, destino, gpsResuelto, hayCoordenadas, taxisCerca,
   valorada, aviso, t, sugeridos, escribiendo, puedeDeshacer, segundosGracia,
   buscadorDestino, buscadorOrigen, acciones,
 }: PropiedadesVistaCliente & { acciones: AccionesCliente }) {
@@ -131,6 +135,41 @@ export default function VistaCliente({
               </p>
               {buscadorOrigen}
             </>
+          )}
+
+          {/* Cuántos taxis pueden venir, justo encima del botón: es lo que
+              decide si merece la pena pulsarlo. Hoy esa pregunta cuesta 90
+              segundos de espera para oír «no hay». Un CONTEO, nunca posiciones:
+              un punto que se puede seguir es una herramienta de acoso, y encima
+              invita a ir a pararlo en la calle, donde la plataforma no cobra. */}
+          {origen && taxisCerca !== null && (
+            taxisCerca.disponibles === 0
+              ? (
+                <p className="cobertura cobertura-vacia">
+                  <span className="punto-rojo" />
+                  <strong>{t('cobertura.ninguno')}</strong>
+                  <small>{t('cobertura.ningunoNota')}</small>
+                </p>
+              )
+              : (
+                <p className="cobertura">
+                  <span className="punto-verde" />
+                  <strong>
+                    {t('cobertura.hay', {
+                      n: taxisCerca.disponibles,
+                      s: taxisCerca.disponibles === 1 ? '' : 's',
+                    })}
+                  </strong>
+                  {taxisCerca.enTuZona > 0 && (
+                    <small>
+                      {t('cobertura.enTuZona', {
+                        n: taxisCerca.enTuZona,
+                        zona: taxisCerca.zona,
+                      })}
+                    </small>
+                  )}
+                </p>
+              )
           )}
 
           <button
