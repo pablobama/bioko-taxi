@@ -14,6 +14,15 @@ import {
   type ReferenciaOperador, type SaludOperador, type SolicitudCentral,
   type TransicionOperador, type ViajeResumenOperador, type ZonaOperador,
 } from './api';
+import { ESTILO_CATEGORIA } from './categorias';
+
+// Las categorías que la base acepta (CHECK de la migración 021). Se sacan de
+// donde ya estaban —el mismo sitio que dibuja los pictogramas del mapa— para
+// que no haya dos listas que se separen.
+//
+// Fuera «zona»: la reserva el propio barrio cuando se sitúa con el GPS, y no
+// es algo que se elija al dar de alta un sitio.
+const CATEGORIAS = Object.keys(ESTILO_CATEGORIA).filter((c) => c !== 'zona').sort();
 
 const ETIQUETA_ESTADO: Record<string, string> = {
   pendiente: 'Pendiente',
@@ -635,7 +644,10 @@ function EditorReferencia({
       {error && <p className="aviso">{error}</p>}
       <input type="text" value={nombre} placeholder="Nombre" onChange={(e) => setNombre(e.target.value)} />
       <div className="fila">
-        <input type="text" value={categoria} placeholder="Categoría" onChange={(e) => setCategoria(e.target.value)} />
+        <select value={categoria} onChange={(e) => setCategoria(e.target.value)}>
+          <option value="">Categoría…</option>
+          {CATEGORIAS.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
         <select value={zonaId} onChange={(e) => setZonaId(Number(e.target.value))}>
           {zonas.map((z) => <option key={z.id} value={z.id}>{z.nombre}</option>)}
         </select>
@@ -780,10 +792,13 @@ function Lugares() {
             onChange={(e) => setNueva({ ...nueva, nombre: e.target.value })}
           />
           <div className="fila">
-            <input
-              type="text" value={nueva.categoria} placeholder="Categoría (bar, mercado…)"
+            <select
+              value={nueva.categoria}
               onChange={(e) => setNueva({ ...nueva, categoria: e.target.value })}
-            />
+            >
+              <option value="">Categoría…</option>
+              {CATEGORIAS.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
             <select value={nueva.zonaId} onChange={(e) => setNueva({ ...nueva, zonaId: Number(e.target.value) })}>
               {zonas.map((z) => <option key={z.id} value={z.id}>{z.nombre}</option>)}
             </select>

@@ -28,6 +28,28 @@ const PATRON_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 const ESTADOS_VALIDOS = ['pendiente', 'verificado', 'suspendido', 'bloqueado'];
 const ESTADOS_RECARGA_VALIDOS = ['pendiente', 'confirmada', 'rechazada', 'caducada'];
 
+// Las mismas del CHECK de la migración 021. Se validan aquí para poder decir
+// qué se puede poner: sin esto, escribir una categoría que no está en la lista
+// llegaba a la base y salía por pantalla el error en crudo del CHECK, que no
+// dice cuáles son las válidas ni qué hacer.
+const CATEGORIAS_VALIDAS = [
+  'mercado', 'iglesia', 'hospital', 'farmacia', 'escuela', 'deporte',
+  'gobierno', 'transporte', 'gasolinera', 'plaza', 'otro',
+  'hotel', 'banco', 'restaurante', 'zona',
+];
+
+function exigirCategoria(categoria: string | undefined): string | undefined {
+  const limpia = categoria?.trim();
+  if (!limpia) return undefined;
+  if (!CATEGORIAS_VALIDAS.includes(limpia)) {
+    throw errorHttp(
+      400,
+      `Categoría «${limpia}» no válida. Elige una de: ${CATEGORIAS_VALIDAS.join(', ')}.`,
+    );
+  }
+  return limpia;
+}
+
 // El mismo recuadro con el que se compiló el plano. Un GPS que todavía no ha
 // fijado devuelve a veces (0, 0) o una posición de hace días en otro país:
 // guardar eso como el centro de un barrio dejaría el reparto tocado y nadie
@@ -874,12 +896,13 @@ export function registrarRutasOperador(
       || typeof cuerpo.lat !== 'number' || typeof cuerpo.lng !== 'number') {
       throw errorHttp(400, 'Faltan campos: zonaId, nombre, lat y lng son obligatorios.');
     }
+    const categoria = exigirCategoria(cuerpo.categoria);
     const resultado = await enTransaccion(pool, async (cliente) => {
       const r = await guardarReferencia(cliente, {
         zonaId: cuerpo.zonaId!, nombre: cuerpo.nombre!.trim(), lat: cuerpo.lat!, lng: cuerpo.lng!,
       });
-      if (cuerpo.categoria?.trim()) {
-        await editarReferencia(cliente, r.referenciaId, { categoria: cuerpo.categoria.trim() });
+      if (categoria) {
+        await editarReferencia(cliente, r.referenciaId, { categoria });
       }
       return r;
     });
@@ -894,6 +917,9 @@ export function registrarRutasOperador(
       nombre?: string; zonaId?: number; lat?: number; lng?: number;
       activa?: boolean; categoria?: string;
     };
+    // Al corregir vale la misma regla que al crear: una categoría inventada
+    // llegaba a la base y salía el error del CHECK en crudo.
+    if (cambios.categoria !== undefined) exigirCategoria(cambios.categoria);
     try {
       await enTransaccion(pool, (cliente) => editarReferencia(cliente, id, cambios));
     } catch (error) {
