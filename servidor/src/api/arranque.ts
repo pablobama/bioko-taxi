@@ -18,6 +18,11 @@ import { AdaptadorFcm } from '../eventos/adaptador-fcm.js';
 import { AdaptadorNoop } from '../eventos/adaptador-noop.js';
 import { AdaptadorSse, ConexionesSse } from '../eventos/adaptador-sse.js';
 import { DespachadorEventos, EmisorSalida, type Adaptador } from '../eventos/bus.js';
+import {
+  ServicioVerificacionConsola,
+  ServicioVerificacionTwilio,
+  type ServicioVerificacionTelefono,
+} from '../dominio/verificacion-telefono.js';
 import { crearServidor } from './servidor.js';
 
 // PORT es la variable estándar que asignan los hostings (Render, Railway…);
@@ -117,7 +122,23 @@ async function principal(): Promise<void> {
 
   const despachadorEventos = new DespachadorEventos(pool, adaptadores);
 
-  const app = crearServidor(pool, emisor, conexionesSse);
+  // Verificación de teléfono (migración 027). Sin credenciales de Twilio se
+  // cae a loguear el código por consola: así el desarrollo local no depende
+  // de una cuenta Twilio real, pero en producción hay que configurarlas o
+  // nadie puede pasar del gate.
+  let servicioVerificacion: ServicioVerificacionTelefono;
+  if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_VERIFY_SERVICE_SID) {
+    servicioVerificacion = new ServicioVerificacionTwilio();
+    console.log('Verificación de teléfono: Twilio Verify configurado.');
+  } else {
+    servicioVerificacion = new ServicioVerificacionConsola();
+    console.warn(
+      'TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_VERIFY_SERVICE_SID no definidas: '
+      + 'los códigos de verificación se escriben en este log en vez de enviarse por SMS.',
+    );
+  }
+
+  const app = crearServidor(pool, emisor, conexionesSse, servicioVerificacion);
   if (existsSync(RUTA_PWA)) {
     await app.register(estaticos, { root: RUTA_PWA });
     console.log(`Sirviendo la PWA desde ${RUTA_PWA}`);

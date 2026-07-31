@@ -21,10 +21,12 @@ import { registrarPosicion } from '../dominio/proximidad.js';
 import { estimarLlegada, reputacionDe, valorarViaje } from '../dominio/reputacion.js';
 import { crearSolicitud, transicionarConductor, transicionarSolicitud } from '../dominio/transiciones.js';
 import type { ConexionesSse } from '../eventos/adaptador-sse.js';
+import { ServicioVerificacionRegistro, type ServicioVerificacionTelefono } from '../dominio/verificacion-telefono.js';
 import { registrarRutasConductor } from './conductor.js';
 import { registrarRutasLlamadas } from './llamadas.js';
 import { registrarRutasOperador } from './operador.js';
 import { registrarRutasSesion } from './sesion.js';
+import { registrarRutasVerificacion } from './verificacion.js';
 
 interface DispositivoCliente {
   id: number;
@@ -37,6 +39,9 @@ export function crearServidor(
   pool: pg.Pool,
   emisor: EmisorEventos,
   conexionesSse: ConexionesSse,
+  // Por defecto una fake en memoria: las pruebas que no verifican teléfono
+  // (la mayoría) no tienen que saber que este parámetro existe.
+  servicioVerificacion: ServicioVerificacionTelefono = new ServicioVerificacionRegistro(),
 ): FastifyInstance {
   const app = Fastify({ logger: false });
 
@@ -74,6 +79,7 @@ export function crearServidor(
   registrarRutasConductor(app, pool, emisor, conexionesSse);
   registrarRutasLlamadas(app, pool, conexionesSse);
   registrarRutasOperador(app, pool, emisor);
+  registrarRutasVerificacion(app, pool, servicioVerificacion);
 
   // Resuelve (y da de alta si es nuevo) el dispositivo del cliente.
   async function dispositivoDesde(req: FastifyRequest): Promise<DispositivoCliente> {

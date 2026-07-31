@@ -55,7 +55,7 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
     if (fila.tipo === 'conductor' && fila.conductor_id !== null) {
       const conductor = await pool.query(
         `SELECT c.nombre, c.telefono, c.correo, c.estado_verificacion, c.suscrito_hasta,
-                c.es_agente,
+                c.es_agente, c.telefono_verificado_en,
                 v.matricula, v.marca, v.color, v.carroceria, v.plazas,
                 sm.saldo_xaf
          FROM conductor c
@@ -74,6 +74,9 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
           correo: c.correo,
           verificado: c.estado_verificacion === 'verificado',
           estadoVerificacion: c.estado_verificacion,
+          // Migración 027: el teléfono es siempre obligatorio para un
+          // conductor, así que aquí el gate se aplica siempre.
+          telefonoVerificado: c.telefono_verificado_en !== null,
           suscritoHasta: c.suscrito_hasta,
           suscripcionVigente: c.suscrito_hasta !== null && new Date(c.suscrito_hasta) > new Date(),
           saldoXaf: c.saldo_xaf === null ? 0 : Number(c.saldo_xaf),
@@ -91,15 +94,26 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
     }
 
     const perfil = await pool.query(
-      'SELECT telefono, correo, nombre, edad, genero FROM perfil_cliente WHERE dispositivo_id = $1',
+      'SELECT telefono, correo, nombre, edad, genero, telefono_verificado_en FROM perfil_cliente WHERE dispositivo_id = $1',
       [fila.id],
     );
     if (perfil.rowCount === 0) {
       return { rol: null };
     }
+    const p = perfil.rows[0];
     return {
       rol: 'cliente',
-      cliente: { ...perfil.rows[0], bloqueado: fila.bloqueado_en !== null },
+      cliente: {
+        telefono: p.telefono,
+        correo: p.correo,
+        nombre: p.nombre,
+        edad: p.edad,
+        genero: p.genero,
+        // Migración 027: sin teléfono (solo correo, migración 015) no hay
+        // nada que verificar por SMS — exento, no bloqueado.
+        telefonoVerificado: p.telefono === null || p.telefono_verificado_en !== null,
+        bloqueado: fila.bloqueado_en !== null,
+      },
     };
   });
 

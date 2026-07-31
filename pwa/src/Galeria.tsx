@@ -87,6 +87,7 @@ const conductorEjemplo: DatosConductor = {
   telefono: '+240222700700',
   correo: 'pablo@ejemplo.gq',
   verificado: true,
+  telefonoVerificado: true,
   estadoVerificacion: 'verificado',
   suscritoHasta: '2026-08-02T10:00:00Z',
   suscripcionVigente: true,

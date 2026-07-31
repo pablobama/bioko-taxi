@@ -169,6 +169,9 @@ export interface Perfil {
   nombre: string | null;
   edad: number | null;
   genero: string | null;
+  // Migración 027: false si hay teléfono y no se confirmó por SMS. Sin
+  // teléfono (solo correo) siempre es true — no hay nada que verificar.
+  telefonoVerificado: boolean;
 }
 
 export interface DatosConductor {
@@ -176,6 +179,7 @@ export interface DatosConductor {
   telefono: string;
   correo: string | null;
   verificado: boolean;
+  telefonoVerificado: boolean;
   estadoVerificacion: string;
   suscritoHasta: string | null;
   suscripcionVigente: boolean;
@@ -470,6 +474,20 @@ export const api = {
     ),
 
   estadisticas: () => pedirJson<Record<string, any>>('/api/estadisticas'),
+
+  // --- Verificación de teléfono (migración 027) -----------------------------
+
+  enviarCodigoVerificacion: () =>
+    pedirJson<{ enviado: boolean; motivo?: string }>('/api/verificacion/enviar', {
+      method: 'POST',
+      body: '{}',
+    }),
+
+  comprobarCodigoVerificacion: (codigo: string) =>
+    pedirJson<{ verificado: boolean }>('/api/verificacion/comprobar', {
+      method: 'POST',
+      body: JSON.stringify({ codigo }),
+    }),
 
   // --- Conductor -----------------------------------------------------------
 

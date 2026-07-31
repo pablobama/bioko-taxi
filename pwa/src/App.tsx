@@ -57,7 +57,7 @@ function SelectorIdioma({ idioma, alCambiar }: { idioma: Idioma; alCambiar: (i: 
 type Pantalla =
   | 'cargando' | 'elegir_rol' | 'alta_cliente' | 'alta_conductor'
   | 'cliente' | 'conductor' | 'ajustes_conductor' | 'estadisticas_conductor'
-  | 'operador' | 'campo';
+  | 'operador' | 'campo' | 'verificar_telefono';
 
 // El teléfono del operador puede cambiar de papel sin tocar la consola:
 // pasajero ↔ taxista ↔ operador. Cada papel guarda su PROPIO uuid de
@@ -197,10 +197,12 @@ export default function App() {
         setPantalla('operador');
       } else if (sesion.rol === 'conductor' && sesion.conductor) {
         setConductor(sesion.conductor);
-        setPantalla('conductor');
+        // Migración 027: sin el teléfono confirmado por SMS no se entra al
+        // panel, aunque la cuenta ya exista de antes.
+        setPantalla(sesion.conductor.telefonoVerificado ? 'conductor' : 'verificar_telefono');
       } else if (sesion.rol === 'cliente' && sesion.cliente) {
         setPerfil(sesion.cliente);
-        setPantalla('cliente');
+        setPantalla(sesion.cliente.telefonoVerificado ? 'cliente' : 'verificar_telefono');
       } else {
         setPantalla('elegir_rol');
       }
@@ -369,8 +371,100 @@ export default function App() {
         {pantalla === 'estadisticas_conductor' && (
           <Estadisticas t={t} idioma={idioma} alVolver={() => setPantalla('conductor')} />
         )}
+
+        {pantalla === 'verificar_telefono' && (
+          <VerificarTelefono
+            t={t}
+            telefono={conductor?.telefono ?? perfil?.telefono ?? ''}
+            alVerificar={() => { setAviso(''); void cargarSesion(); }}
+          />
+        )}
       </section>
     </main>
+  );
+}
+
+// --- Verificación del teléfono por SMS (migración 027) ---------------------
+//
+// Puerta de entrada, no un paso del alta: se llega aquí tanto desde una
+// cuenta recién creada como desde una que ya existía antes de esta migración
+// y nunca confirmó su número.
+
+const COOLDOWN_REENVIO_S = 60;
+
+function VerificarTelefono({
+  t, telefono, alVerificar,
+}: { t: T; telefono: string; alVerificar: () => void }) {
+  const [codigo, setCodigo] = useState('');
+  const [enviando, setEnviando] = useState(true);
+  const [comprobando, setComprobando] = useState(false);
+  const [error, setError] = useState('');
+  const [segundosParaReenviar, setSegundosParaReenviar] = useState(COOLDOWN_REENVIO_S);
+
+  async function enviar() {
+    setEnviando(true);
+    setError('');
+    try {
+      await api.enviarCodigoVerificacion();
+      setSegundosParaReenviar(COOLDOWN_REENVIO_S);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  useEffect(() => { void enviar(); }, []);
+
+  useEffect(() => {
+    if (segundosParaReenviar <= 0) return;
+    const reloj = setTimeout(() => setSegundosParaReenviar((s) => s - 1), 1000);
+    return () => clearTimeout(reloj);
+  }, [segundosParaReenviar]);
+
+  async function comprobar() {
+    setComprobando(true);
+    setError('');
+    try {
+      await api.comprobarCodigoVerificacion(codigo);
+      alVerificar();
+    } catch {
+      setError(t('verificacion.codigoIncorrecto'));
+      setCodigo('');
+    } finally {
+      setComprobando(false);
+    }
+  }
+
+  return (
+    <>
+      <h1>{t('verificacion.titulo')}</h1>
+      <p className="nota">{t('verificacion.nota', { telefono })}</p>
+      {error && <p className="aviso">{error}</p>}
+      <input
+        type="text" inputMode="numeric" autoComplete="off" maxLength={6}
+        value={codigo} placeholder={t('verificacion.placeholder')}
+        onChange={(e) => setCodigo(e.target.value.replace(/\D/g, '').slice(0, 6))}
+      />
+      <button
+        type="button" className="principal"
+        disabled={codigo.length !== 6 || comprobando}
+        onClick={comprobar}
+      >
+        {comprobando ? t('verificacion.comprobando') : t('verificacion.comprobar')}
+      </button>
+      <button
+        type="button" className="secundario"
+        disabled={enviando || segundosParaReenviar > 0}
+        onClick={enviar}
+      >
+        {enviando
+          ? t('verificacion.enviando')
+          : segundosParaReenviar > 0
+            ? t('verificacion.reenviarEn', { seg: segundosParaReenviar })
+            : t('verificacion.reenviar')}
+      </button>
+    </>
   );
 }
 

@@ -322,6 +322,27 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
 
 ## Resueltos
 
+- **[P27-01] Verificación de teléfono por SMS (Twilio Verify)** — resuelto el
+  2026-07-31, y revierte la decisión 3.1 (SMS prohibido por coste): probado en
+  producción que Twilio Verify entrega a Guinea Ecuatorial sin registro A2P
+  10DLC (a diferencia de un número normal de mensajería) y el coste aceptado
+  tras revisar el precio. Migración 027: `telefono_verificado_en` en
+  `conductor` y `perfil_cliente`, un servicio inyectable
+  (`ServicioVerificacionTwilio` / `ServicioVerificacionConsola` en desarrollo
+  sin credenciales) y dos rutas (`/api/verificacion/enviar`,
+  `/api/verificacion/comprobar`). Se exige a TODOS los usuarios, no solo a
+  conductores; las cuentas ya existentes lo ven la próxima vez que abren la
+  app (sin migración retroactiva de datos: toda fila queda `NULL`, que ya es
+  «sin verificar»). Un pasajero que solo dio correo (migración 015) queda
+  exento — no hay teléfono al que mandar nada.
+  Esto **no cambia** la mecánica de reclamar un número (`telefono_vigente`,
+  migración 024) descrita en [P15-04]: sigue siendo el mismo dispositivo el
+  que se queda con el número al escribirlo. Lo que cambia es que ahora, para
+  que ese dispositivo pueda USAR la app, alguien tiene que haber recibido y
+  tecleado el código de ESE número — lo que hace mucho más difícil que
+  escribir el teléfono de otro sirva de algo, aunque el operador seguía
+  siendo la salvaguarda última (desbloquear a quien resulte inocente).
+
 - **[P5-01] Entrega de eventos tras el commit** — resuelto en el paso 6 con
   el patrón outbox: el dominio escribe en `evento_salida` dentro de su misma
   transacción y el despachador entrega después del commit. Un rollback hace
