@@ -45,6 +45,56 @@ body {
   color: var(--humo);
 }
 
+/* ------------------------------------------------------------ arranque --- */
+/* Pantalla de carga inicial: el logo late en el centro mientras se resuelve
+   GET /api/sesion. Solo transform (barato en gama baja, misma idea que
+   `.pulso-origen` más abajo) y desactivado entero si el sistema pide menos
+   movimiento: el logo se queda quieto y ya está. */
+.arranque {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  background: #f2b705;
+}
+
+.arranque-escena {
+  position: relative;
+  width: 100%;
+  height: 90px;
+}
+
+.arranque-logo {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 22%;
+  box-shadow: 0 10px 30px rgba(8, 8, 10, 0.25);
+}
+
+.arranque-texto {
+  color: rgba(8, 8, 10, 0.6);
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .arranque-logo {
+    animation: arranque-latido 1.8s ease-in-out infinite;
+  }
+}
+
+@keyframes arranque-latido {
+  0%, 100% { transform: translate(-50%, -50%) scale(1); }
+  15% { transform: translate(-50%, -50%) scale(1.12); }
+  30% { transform: translate(-50%, -50%) scale(1); }
+  45% { transform: translate(-50%, -50%) scale(1.08); }
+  60% { transform: translate(-50%, -50%) scale(1); }
+}
+
 /* ---------------------------------------------------------------- mapa --- */
 
 /* El plano ocupa exactamente la franja que queda por encima de la hoja: es un

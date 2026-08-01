@@ -156,7 +156,13 @@ async function principal(): Promise<void> {
   // que decide si el hosting alcanza el servicio o no.
   console.log(`Servidor escuchando en 0.0.0.0:${PUERTO}`);
 
-  despachadorEventos.iniciar(2000);
+  // 700 ms, no 2000: es la cola de entrega de eventos (D1_broadcast_solicitud
+  // incluido), y con evento_salida_pendiente como índice parcial (migración
+  // 008) la consulta sigue siendo barata a este ritmo. La primera oferta al
+  // taxista ya se dispara síncrona al crear la solicitud; este intervalo es
+  // el único margen que quedaba entre «crear la solicitud» y «que suene el
+  // teléfono del taxista».
+  despachadorEventos.iniciar(700);
 
   // Planificador del despacho: oleadas, expiraciones, presencias y rescate.
   setInterval(() => {

@@ -275,13 +275,26 @@ export default function Mapa({
 
   // Rumbo del coche: hacia el siguiente punto de su ruta, o hacia la recogida
   // si todavía no hay ruta calculada.
+  //
+  // El coche solo manda su posición cada 10-30 s (PanelConductor): entre dos
+  // lecturas moviéndose de verdad hay cientos de metros, pero parado (o casi)
+  // el único cambio entre lecturas es el ruido del GPS, unos pocos metros en
+  // cualquier dirección — y ESO sí que hace temblar la flecha sin que el
+  // coche se haya movido. Por debajo de un puñado de píxeles en pantalla se
+  // descarta el nuevo rumbo y se mantiene el último válido.
+  const UMBRAL_RUMBO_PX = 5;
+  const ultimoRumbo = useRef(0);
   const rumboTaxi = (): number => {
-    if (!taxi) return 0;
+    if (!taxi) return ultimoRumbo.current;
     const siguiente = rutaTaxi && rutaTaxi.length > 1 ? rutaTaxi[1] : origen;
-    if (!siguiente) return 0;
+    if (!siguiente) return ultimoRumbo.current;
     const a = pantalla(taxi.lat, taxi.lng);
     const b = pantalla(siguiente.lat, siguiente.lng);
-    return (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI;
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    if (Math.hypot(dx, dy) < UMBRAL_RUMBO_PX) return ultimoRumbo.current;
+    ultimoRumbo.current = (Math.atan2(dy, dx) * 180) / Math.PI;
+    return ultimoRumbo.current;
   };
 
   const hayPlano = listo !== null && camara !== null && ancho > 0 && alto > 0;
@@ -419,9 +432,9 @@ export default function Mapa({
             const xy = pantalla(taxi.lat, taxi.lng);
             return (
               <g transform={`translate(${xy[0].toFixed(1)},${xy[1].toFixed(1)}) rotate(${rumboTaxi().toFixed(1)})`}>
-                <rect x={-11} y={-7.5} width={22} height={15} rx={5} fill="#08080a" />
-                <rect x={-9} y={-6} width={18} height={12} rx={4} fill="#ffb020" />
-                <rect x={1} y={-3.5} width={5} height={7} rx={1.5} fill="#1a1206" opacity={0.55} />
+                <rect x={-15} y={-10} width={30} height={20} rx={7} fill="#08080a" />
+                <rect x={-12} y={-8} width={24} height={16} rx={5.5} fill="#ffb020" />
+                <rect x={1.5} y={-4.5} width={7} height={9} rx={2} fill="#1a1206" opacity={0.55} />
               </g>
             );
           })()}

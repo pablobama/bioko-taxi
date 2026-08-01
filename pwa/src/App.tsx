@@ -268,7 +268,7 @@ export default function App() {
   const conmutador = <ConmutadorRol actual={rolActual} />;
 
   if (pantalla === 'cargando') {
-    return <main className="lienzo">{cinta}{bandaSinConexion}<div className="cargando">{t('app.cargando')}</div></main>;
+    return <main className="lienzo">{cinta}{bandaSinConexion}<PantallaArranque texto={t('app.cargando')} /></main>;
   }
 
   if (pantalla === 'operador') {
@@ -381,6 +381,25 @@ export default function App() {
         )}
       </section>
     </main>
+  );
+}
+
+// --- Pantalla de arranque ---------------------------------------------------
+//
+// Lo único que tarda de verdad es la primera carga: el plano (una vez, va en
+// el paquete) y GET /api/sesion. Mientras tanto, el logo late en el centro
+// hasta que `cargarSesion` decide qué pantalla sigue. Todo por CSS
+// (transform): en un Android de gama baja cada animación cuesta (ver la nota
+// de `.pulso-origen` en estilos.css), así que nada de JavaScript moviendo
+// esto fotograma a fotograma.
+function PantallaArranque({ texto }: { texto: string }) {
+  return (
+    <div className="arranque" role="status" aria-label={texto}>
+      <div className="arranque-escena">
+        <img className="arranque-logo" src="/icono-512.png" alt="" width={112} height={112} />
+      </div>
+      <p className="arranque-texto">{texto}</p>
+    </div>
   );
 }
 
