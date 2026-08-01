@@ -260,6 +260,16 @@ export default function VistaCliente({
               <span className="coche">
                 {[detalle.marca, detalle.color].filter(Boolean).join(' · ')}
               </span>
+              {(detalle.aireAcondicionado || detalle.seguro) && (
+                <div className="insignias">
+                  {detalle.aireAcondicionado && (
+                    <span className="insignia">✓ {t('vehiculo.aireAcondicionadoCorto')}</span>
+                  )}
+                  {detalle.seguro && (
+                    <span className="insignia">✓ {t('vehiculo.seguroCorto')}</span>
+                  )}
+                </div>
+              )}
               {detalle.reputacion && (
                 <Estrellas
                   media={detalle.reputacion.media}

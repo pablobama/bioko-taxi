@@ -151,6 +151,8 @@ export interface DetalleSolicitud {
   matricula: string | null;
   marca: string | null;
   color: string | null;
+  aireAcondicionado: boolean;
+  seguro: boolean;
   pin: string | null;
   // Taxi compartido: con cuánta gente vas y por dónde pasa el coche. De los
   // demás pasajeros solo se conoce su parada, nunca quiénes son.
@@ -189,6 +191,8 @@ export interface DatosConductor {
   color: string | null;
   carroceria: string | null;
   plazas: number | null;
+  aireAcondicionado: boolean;
+  seguro: boolean;
   // Agente de campo (migración 025): mismo panel de taxi, más las herramientas
   // para situar barrios, corregir sitios y fijar precios.
   agente?: boolean;
@@ -211,6 +215,8 @@ export interface ConductorOperador {
   marca: string | null;
   color: string | null;
   carroceria: string | null;
+  aire_acondicionado: boolean;
+  seguro: boolean;
 }
 
 export interface EstadisticasOperador {
@@ -248,6 +254,9 @@ export interface FichaConductorOperador {
   color: string | null;
   carroceria: string | null;
   plazas: number | null;
+  aire_acondicionado: boolean;
+  seguro: boolean;
+  es_agente: boolean;
   presencia: string | null;
   saldo_xaf: number;
   reputacion: { media: number | null; valoraciones: number };
@@ -355,6 +364,9 @@ export interface SolicitudCentral {
 export interface ZonaOperador {
   id: number;
   nombre: string;
+  // Migración 029: agrupación puramente organizativa, no afecta al reparto.
+  // null en lo que no se pudo confirmar con una fuente — no es un error.
+  distrito: 'Malabo' | 'Baney' | 'Luba' | 'Riaba' | null;
   lat: number | null;
   lng: number | null;
   sin_situar: boolean;
@@ -421,6 +433,8 @@ export interface AltaConductor {
   marca: string;
   carroceria: 'turismo' | '4x4';
   color?: string;
+  aireAcondicionado?: boolean;
+  seguro?: boolean;
 }
 
 export interface OfertaConductor {
@@ -730,6 +744,12 @@ export const api = {
     pedirJson<{ id: number; nombre: string; es_agente: boolean }>(
       `/api/operador/conductores/${conductorId}/agente`,
       { method: 'POST', body: JSON.stringify({ agente }), reintentos: 1 },
+    ),
+
+  editarVehiculoOperador: (conductorId: number, datos: { aireAcondicionado: boolean; seguro: boolean }) =>
+    pedirJson<{ conductor_id: number; aire_acondicionado: boolean; seguro: boolean }>(
+      `/api/operador/conductores/${conductorId}/vehiculo`,
+      { method: 'POST', body: JSON.stringify(datos), reintentos: 1 },
     ),
 
   referenciasOperador: (q?: string, zonaId?: number) => {

@@ -204,7 +204,7 @@ body {
   padding: 11px 13px;
   border-radius: 13px;
   background: var(--tarjeta);
-  border-left: 4px solid var(--ambar);
+  border: 1px solid var(--ambar);
   font-size: 1rem;
 }
 
@@ -217,7 +217,7 @@ body {
    calle. Se marca en rojo apagado para que se lea como dato, no como avería,
    y el botón de pedir sigue habilitado porque la decisión es suya. */
 .cobertura-vacia {
-  border-left-color: #e5484d;
+  border-color: #e5484d;
 }
 
 .cobertura-vacia small {
@@ -500,7 +500,7 @@ h1.eta small {
 .pasajero {
   background: var(--tarjeta);
   border-radius: 16px;
-  padding: 14px 16px 14px 13px;
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
   gap: 9px;
@@ -510,26 +510,27 @@ h1.eta small {
   border: 1px solid var(--ambar);
 }
 
-/* Franja de color a la izquierda del bloque, una por fase del pasajero. Se
+/* Borde de color alrededor de todo el bloque, uno por fase del pasajero. Se
    lee en el espejo retrovisor sin enfocar el texto: el taxista sabe si va de
    camino, si ya llegó o si el pasajero está a bordo por el color solo, igual
    que un semáforo. Antes la única señal era una palabra en mayúsculas a
    0,76rem —«DE CAMINO», «A BORDO»— y encima decía «de camino» aunque llevara
-   tres minutos parado esperando en la puerta. */
+   tres minutos parado esperando en la puerta. Antes de esto el color solo iba
+   en el borde izquierdo; ahora rodea el recuadro entero, como `.oferta`. */
 .pasajero {
-  border-left: 4px solid var(--borde);
+  border: 1px solid var(--borde);
 }
 
-.pasajero.fase-aceptado { border-left-color: var(--humo); }
-.pasajero.fase-camino { border-left-color: var(--ambar-claro); }
+.pasajero.fase-aceptado { border-color: var(--humo); }
+.pasajero.fase-camino { border-color: var(--ambar-claro); }
 
 .pasajero.fase-esperando {
-  border-left-color: var(--ambar);
+  border-color: var(--ambar);
   background: rgba(255, 176, 32, 0.08);
 }
 
 .pasajero.fase-bordo {
-  border-left-color: var(--ambar);
+  border-color: var(--ambar);
   background: rgba(255, 176, 32, 0.1);
 }
 
@@ -614,6 +615,23 @@ input::placeholder {
 input:focus {
   outline: none;
   border-color: var(--ambar);
+}
+
+/* Checkbox con su etiqueta al lado (aire acondicionado, seguro…), no un
+   `input` de ancho completo como los de texto. */
+.casilla {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.95rem;
+  color: var(--hueso);
+}
+
+.casilla input[type='checkbox'] {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  accent-color: var(--ambar);
 }
 
 .buscador {
@@ -861,6 +879,25 @@ button.secundario {
 .reputacion {
   color: var(--humo);
   font-size: 0.88rem;
+}
+
+/* Aire acondicionado y seguro (migración 028): lo declaró el conductor en
+   su alta, así que solo se enseña lo que dijo que SÍ tiene — nada de
+   insignia para «no tiene» o «no se sabe», que aquí es lo mismo. */
+.insignias {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.insignia {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ambar-claro);
+  background: rgba(255, 176, 32, 0.12);
+  border: 1px solid rgba(255, 176, 32, 0.35);
+  border-radius: 999px;
+  padding: 2px 8px;
 }
 
 .estrellas {

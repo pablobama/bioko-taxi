@@ -58,6 +58,10 @@ const es: Diccionario = {
   'campo.marcaModelo': 'Marca y modelo',
   'carroceria.turismo': 'Turismo',
   'carroceria.4x4': '4x4',
+  'vehiculo.aireAcondicionado': 'Tiene aire acondicionado',
+  'vehiculo.seguro': 'Tiene seguro',
+  'vehiculo.aireAcondicionadoCorto': 'A/C',
+  'vehiculo.seguroCorto': 'Seguro',
   'accion.darseDeAlta': 'Darme de alta',
   'accion.enviando': 'Enviando…',
 
@@ -320,6 +324,10 @@ const fr: Diccionario = {
   'campo.marcaModelo': 'Marque et modèle',
   'carroceria.turismo': 'Berline',
   'carroceria.4x4': '4x4',
+  'vehiculo.aireAcondicionado': 'A la climatisation',
+  'vehiculo.seguro': 'A une assurance',
+  'vehiculo.aireAcondicionadoCorto': 'Clim.',
+  'vehiculo.seguroCorto': 'Assuré',
   'accion.darseDeAlta': 'M’inscrire',
   'accion.enviando': 'Envoi…',
 
@@ -560,6 +568,10 @@ const en: Diccionario = {
   'campo.marcaModelo': 'Make and model',
   'carroceria.turismo': 'Sedan',
   'carroceria.4x4': '4x4',
+  'vehiculo.aireAcondicionado': 'Has air conditioning',
+  'vehiculo.seguro': 'Has insurance',
+  'vehiculo.aireAcondicionadoCorto': 'A/C',
+  'vehiculo.seguroCorto': 'Insured',
   'accion.darseDeAlta': 'Sign me up',
   'accion.enviando': 'Sending…',
 

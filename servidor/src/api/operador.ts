@@ -162,7 +162,8 @@ export function registrarRutasOperador(
     // es solo para no reventar la pantalla si algún día deja de serlo.
     const filas = await pool.query(
       `SELECT c.id, c.nombre, c.telefono, c.correo, c.estado_verificacion,
-              v.matricula, v.marca, v.color, v.carroceria
+              v.matricula, v.marca, v.color, v.carroceria,
+              v.aire_acondicionado, v.seguro
        FROM conductor c
        LEFT JOIN vehiculo v ON v.conductor_id = c.id
        WHERE ($1::text IS NULL OR c.estado_verificacion = $1)
@@ -189,6 +190,7 @@ export function registrarRutasOperador(
       `SELECT c.id, c.nombre, c.telefono, c.correo, c.estado_verificacion,
               c.suscrito_hasta, c.es_agente,
               v.matricula, v.marca, v.color, v.carroceria, v.plazas,
+              v.aire_acondicionado, v.seguro,
               p.estado AS presencia,
               COALESCE(sm.saldo_xaf, 0)::int AS saldo_xaf
        FROM conductor c
@@ -271,6 +273,29 @@ export function registrarRutasOperador(
       [id, agente],
     );
     if (res.rowCount === 0) throw errorHttp(404, 'Conductor no encontrado.');
+    return res.rows[0];
+  });
+
+  // Corregir aire acondicionado y seguro (migración 028): lo declara el
+  // conductor en su alta, pero el operador puede corregirlo si ve mal el
+  // dato (o si el conductor nunca lo llegó a marcar).
+  app.post('/api/operador/conductores/:id/vehiculo', async (req) => {
+    exigirOperador(req);
+    const id = Number((req.params as { id: string }).id);
+    const { aireAcondicionado, seguro } = (req.body ?? {}) as {
+      aireAcondicionado?: boolean; seguro?: boolean;
+    };
+    if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
+    if (typeof aireAcondicionado !== 'boolean' || typeof seguro !== 'boolean') {
+      throw errorHttp(400, 'Faltan aireAcondicionado y seguro (true/false).');
+    }
+    const res = await pool.query(
+      `UPDATE vehiculo SET aire_acondicionado = $2, seguro = $3
+       WHERE conductor_id = $1
+       RETURNING conductor_id, aire_acondicionado, seguro`,
+      [id, aireAcondicionado, seguro],
+    );
+    if (res.rowCount === 0) throw errorHttp(404, 'Este conductor no tiene vehículo dado de alta.');
     return res.rows[0];
   });
 
@@ -808,7 +833,7 @@ export function registrarRutasOperador(
     // entraron sin coordenadas porque ninguna fuente sabía dónde están
     // (migración 025), y hasta que alguien vaya, no existen para el reparto.
     const filas = await pool.query(
-      `SELECT z.id, z.nombre, z.centroide_lat AS lat, z.centroide_lng AS lng,
+      `SELECT z.id, z.nombre, z.distrito, z.centroide_lat AS lat, z.centroide_lng AS lng,
               z.precision_gps_m AS precision_m,
               (z.centroide_lat IS NULL) AS sin_situar,
               (SELECT count(*)::int FROM referencia r WHERE r.zona_id = z.id AND r.activa) AS referencias,

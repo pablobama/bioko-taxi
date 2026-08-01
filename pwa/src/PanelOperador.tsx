@@ -471,11 +471,34 @@ function FichaConductor({
 }) {
   const [ficha, setFicha] = useState<FichaConductorOperador | null>(null);
   const [error, setError] = useState('');
+  // Estado propio del formulario de vehículo: la ficha se recarga entera
+  // tras guardar (`cargar()`), y este par se resincroniza con ella —no se
+  // puede leer `ficha.aire_acondicionado` directamente en un checkbox
+  // controlado sin perder lo que el operador esté tecleando a medio camino.
+  const [aireAcondicionado, setAireAcondicionado] = useState(false);
+  const [seguro, setSeguro] = useState(false);
+  const [guardandoVehiculo, setGuardandoVehiculo] = useState(false);
 
   function cargar() {
-    api.fichaConductorOperador(id).then(setFicha).catch((e) => setError(e.message));
+    api.fichaConductorOperador(id).then((f) => {
+      setFicha(f);
+      setAireAcondicionado(f.aire_acondicionado);
+      setSeguro(f.seguro);
+    }).catch((e) => setError(e.message));
   }
   useEffect(cargar, [id]);
+
+  async function guardarVehiculo() {
+    setGuardandoVehiculo(true);
+    try {
+      await api.editarVehiculoOperador(id, { aireAcondicionado, seguro });
+      cargar();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGuardandoVehiculo(false);
+    }
+  }
 
   if (error) return <><p className="aviso">{error}</p><button type="button" className="secundario" onClick={alVolver}>Volver</button></>;
   if (!ficha) return <p className="nota">Cargando…</p>;
@@ -492,6 +515,21 @@ function FichaConductor({
         {ficha.matricula && ` · ${ficha.matricula}`}{ficha.marca && ` · ${ficha.marca}`}
         {ficha.carroceria && ` · ${ficha.carroceria}`}
       </p>
+      <div className="fila">
+        <label className="casilla">
+          <input type="checkbox" checked={aireAcondicionado}
+            onChange={(e) => setAireAcondicionado(e.target.checked)} />
+          Aire acondicionado
+        </label>
+        <label className="casilla">
+          <input type="checkbox" checked={seguro}
+            onChange={(e) => setSeguro(e.target.checked)} />
+          Seguro
+        </label>
+        <button type="button" className="secundario" disabled={guardandoVehiculo} onClick={guardarVehiculo}>
+          {guardandoVehiculo ? 'Guardando…' : 'Guardar'}
+        </button>
+      </div>
       <p className="nota">
         Estado: <strong>{ETIQUETA_ESTADO[ficha.estado_verificacion] ?? ficha.estado_verificacion}</strong>
         {' · '}Presencia: <strong>{ficha.presencia ?? '—'}</strong>
@@ -518,6 +556,12 @@ function FichaConductor({
         {ficha.estado_verificacion !== 'bloqueado' && (
           <button type="button" className="secundario" disabled={ocupado} onClick={() => alCambiarEstado(ficha.id, 'bloqueado').then(cargar)}>Bloquear</button>
         )}
+        <button
+          type="button" className="secundario" disabled={ocupado}
+          onClick={() => api.nombrarAgente(ficha.id, !ficha.es_agente).then(cargar)}
+        >
+          {ficha.es_agente ? 'Quitar el papel de agente de campo' : 'Nombrar agente de campo'}
+        </button>
       </div>
       <p className="nota">Últimos viajes</p>
       <ListaViajes viajes={ficha.ultimosViajes} />
@@ -1142,29 +1186,53 @@ function Zonas() {
       )}
 
       <p className="nota">Situados ({situadas.length})</p>
-      {situadas.slice(0, 60).map((z) => (
-        <div className="oferta" key={z.id}>
-          <div className="oferta-ruta">{z.nombre}</div>
-          <div className="nota">
-            {z.lat?.toFixed(5)}, {z.lng?.toFixed(5)} · {z.vecinas} vecina{z.vecinas === 1 ? '' : 's'}
-            {' · '}{z.referencias} sitio{z.referencias === 1 ? '' : 's'}
-            {z.precision_m === null
-              ? ' · precisión desconocida'
-              : ` · ±${Math.round(z.precision_m)} m`}
-            {z.vecinas === 0 && ' · ⚠ aislado del reparto'}
+      {/* Agrupado por distrito (migración 029): puramente organizativo para no
+          tener setenta barrios sueltos sin orden — no afecta al reparto, que
+          sigue funcionando por adyacencia entre zonas, no por distrito. Lo
+          que no se pudo confirmar con una fuente va al final, sin fingir. */}
+      {DISTRITOS_ORDEN.map(([clave, etiqueta]) => {
+        const deEsteDistrito = situadas.filter((z) => z.distrito === clave);
+        if (deEsteDistrito.length === 0) return null;
+        return (
+          <div key={clave ?? 'sin-distrito'}>
+            <p className="nota"><strong>{etiqueta}</strong> ({deEsteDistrito.length})</p>
+            {deEsteDistrito.map((z) => (
+              <div className="oferta" key={z.id}>
+                <div className="oferta-ruta">{z.nombre}</div>
+                <div className="nota">
+                  {z.lat?.toFixed(5)}, {z.lng?.toFixed(5)} · {z.vecinas} vecina{z.vecinas === 1 ? '' : 's'}
+                  {' · '}{z.referencias} sitio{z.referencias === 1 ? '' : 's'}
+                  {z.precision_m === null
+                    ? ' · precisión desconocida'
+                    : ` · ±${Math.round(z.precision_m)} m`}
+                  {z.vecinas === 0 && ' · ⚠ aislado del reparto'}
+                </div>
+                <button
+                  type="button" className="secundario"
+                  disabled={ocupada !== null}
+                  onClick={() => situar(z)}
+                >
+                  {ocupada === z.id ? 'Cogiendo GPS…' : 'Corregir: estoy aquí'}
+                </button>
+              </div>
+            ))}
           </div>
-          <button
-            type="button" className="secundario"
-            disabled={ocupada !== null}
-            onClick={() => situar(z)}
-          >
-            {ocupada === z.id ? 'Cogiendo GPS…' : 'Corregir: estoy aquí'}
-          </button>
-        </div>
-      ))}
+        );
+      })}
     </>
   );
 }
+
+// El orden es a propósito: los cuatro distritos confirmados primero, y al
+// final los barrios sin distrito confirmado — no se ocultan, pero tampoco se
+// mezclan con lo que sí se sabe.
+const DISTRITOS_ORDEN: Array<[ZonaOperador['distrito'], string]> = [
+  ['Malabo', 'Malabo'],
+  ['Baney', 'Baney'],
+  ['Luba', 'Luba'],
+  ['Riaba', 'Riaba'],
+  [null, 'Sin distrito confirmado'],
+];
 
 // --- Zonas: situar barrios con el GPS (migración 025) ------------------------
 

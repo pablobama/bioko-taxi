@@ -539,6 +539,8 @@ function AltaConductorFormulario({
   const [matricula, setMatricula] = useState('');
   const [marca, setMarca] = useState('');
   const [carroceria, setCarroceria] = useState<'turismo' | '4x4'>('turismo');
+  const [aireAcondicionado, setAireAcondicionado] = useState(false);
+  const [seguro, setSeguro] = useState(false);
   const [guardando, setGuardando] = useState(false);
 
   const listo = [nombre, telefono, matricula, marca].every((v) => v.trim().length > 0);
@@ -553,6 +555,8 @@ function AltaConductorFormulario({
         matricula: matricula.trim(),
         marca: marca.trim(),
         carroceria,
+        aireAcondicionado,
+        seguro,
       });
       if (respuesta.aviso) alFallar(respuesta.aviso);
       alTerminar();
@@ -593,6 +597,16 @@ function AltaConductorFormulario({
           {t('carroceria.4x4')}
         </button>
       </div>
+      <label className="casilla">
+        <input type="checkbox" checked={aireAcondicionado}
+          onChange={(e) => setAireAcondicionado(e.target.checked)} />
+        {t('vehiculo.aireAcondicionado')}
+      </label>
+      <label className="casilla">
+        <input type="checkbox" checked={seguro}
+          onChange={(e) => setSeguro(e.target.checked)} />
+        {t('vehiculo.seguro')}
+      </label>
       <button type="button" className="principal" disabled={!listo || guardando} onClick={guardar}>
         {guardando ? t('accion.enviando') : t('accion.darseDeAlta')}
       </button>
@@ -621,6 +635,8 @@ function AjustesConductor({
   const [carroceria, setCarroceria] = useState<'turismo' | '4x4'>(
     conductor.carroceria === '4x4' ? '4x4' : 'turismo',
   );
+  const [aireAcondicionado, setAireAcondicionado] = useState(conductor.aireAcondicionado);
+  const [seguro, setSeguro] = useState(conductor.seguro);
   const [silencio, setSilencio] = useState(estaSilenciado());
   const [guardando, setGuardando] = useState(false);
 
@@ -636,6 +652,8 @@ function AjustesConductor({
         matricula: matricula.trim(),
         marca: marca.trim(),
         carroceria,
+        aireAcondicionado,
+        seguro,
       });
       alTerminar();
     } catch (error) {
@@ -666,6 +684,16 @@ function AjustesConductor({
         <button type="button" className={carroceria === '4x4' ? 'principal' : 'secundario'}
           onClick={() => setCarroceria('4x4')}>{t('carroceria.4x4')}</button>
       </div>
+      <label className="casilla">
+        <input type="checkbox" checked={aireAcondicionado}
+          onChange={(e) => setAireAcondicionado(e.target.checked)} />
+        {t('vehiculo.aireAcondicionado')}
+      </label>
+      <label className="casilla">
+        <input type="checkbox" checked={seguro}
+          onChange={(e) => setSeguro(e.target.checked)} />
+        {t('vehiculo.seguro')}
+      </label>
 
       <button
         type="button"

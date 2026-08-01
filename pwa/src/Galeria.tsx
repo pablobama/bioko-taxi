@@ -77,6 +77,8 @@ function solicitud(cambios: Partial<DetalleSolicitud> = {}): DetalleSolicitud {
     matricula: 'GE-2317-A',
     marca: 'Hyundai Accent',
     color: 'azul',
+    aireAcondicionado: true,
+    seguro: true,
     pin: '4394',
     ...cambios,
   };
@@ -97,6 +99,8 @@ const conductorEjemplo: DatosConductor = {
   color: 'blanco',
   carroceria: '4x4',
   plazas: 4,
+  aireAcondicionado: true,
+  seguro: true,
   reputacion: { media: 4.8, valoraciones: 61, viajesCompletados: 88 },
 };
 

@@ -57,6 +57,7 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
         `SELECT c.nombre, c.telefono, c.correo, c.estado_verificacion, c.suscrito_hasta,
                 c.es_agente, c.telefono_verificado_en,
                 v.matricula, v.marca, v.color, v.carroceria, v.plazas,
+                v.aire_acondicionado, v.seguro,
                 sm.saldo_xaf
          FROM conductor c
          LEFT JOIN vehiculo v ON v.conductor_id = c.id
@@ -85,6 +86,8 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
           color: c.color,
           carroceria: c.carroceria,
           plazas: c.plazas,
+          aireAcondicionado: c.aire_acondicionado ?? false,
+          seguro: c.seguro ?? false,
           // Agente de campo (migración 025): el mismo panel de taxi, más las
           // herramientas para situar barrios, corregir sitios y fijar precios.
           agente: c.es_agente,
@@ -125,6 +128,7 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
     const cuerpo = (req.body ?? {}) as {
       nombre?: string; telefono?: string; correo?: string;
       matricula?: string; marca?: string; carroceria?: string; color?: string;
+      aireAcondicionado?: boolean; seguro?: boolean;
     };
 
     const nombre = cuerpo.nombre?.trim();
@@ -137,6 +141,8 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
     const matricula = cuerpo.matricula?.trim().toUpperCase();
     const marca = cuerpo.marca?.trim();
     const carroceria = cuerpo.carroceria;
+    const aireAcondicionado = cuerpo.aireAcondicionado ?? false;
+    const seguro = cuerpo.seguro ?? false;
 
     if (!nombre || !telefonoCrudo || !matricula || !marca || !carroceria) {
       throw errorHttp(400, 'Faltan datos: nombre, teléfono, matrícula, marca y carrocería son obligatorios.');
@@ -210,15 +216,16 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
       );
       if ((vehiculo.rowCount ?? 0) > 0) {
         await cliente.query(
-          `UPDATE vehiculo SET matricula = $2, marca = $3, carroceria = $4, color = COALESCE($5, color)
+          `UPDATE vehiculo SET matricula = $2, marca = $3, carroceria = $4, color = COALESCE($5, color),
+             aire_acondicionado = $6, seguro = $7
            WHERE conductor_id = $1`,
-          [conductorId, matricula, marca, carroceria, cuerpo.color?.trim() || null],
+          [conductorId, matricula, marca, carroceria, cuerpo.color?.trim() || null, aireAcondicionado, seguro],
         );
       } else {
         await cliente.query(
-          `INSERT INTO vehiculo (conductor_id, matricula, marca, carroceria, color)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [conductorId, matricula, marca, carroceria, cuerpo.color?.trim() || null],
+          `INSERT INTO vehiculo (conductor_id, matricula, marca, carroceria, color, aire_acondicionado, seguro)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [conductorId, matricula, marca, carroceria, cuerpo.color?.trim() || null, aireAcondicionado, seguro],
         );
       }
 

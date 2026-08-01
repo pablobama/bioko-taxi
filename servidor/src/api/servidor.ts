@@ -489,7 +489,8 @@ export function crearServidor(
               ro.nombre AS origen, ro.lat AS origen_lat, ro.lng AS origen_lng,
               rd.nombre AS destino, rd.lat AS destino_lat, rd.lng AS destino_lng,
               v.id AS viaje_id, v.pin, v.llegado_en,
-              c.nombre AS conductor, ve.matricula, ve.marca, ve.color
+              c.nombre AS conductor, ve.matricula, ve.marca, ve.color,
+              ve.aire_acondicionado, ve.seguro
        FROM solicitud s
        JOIN referencia ro ON ro.id = s.referencia_origen_id
        JOIN referencia rd ON rd.id = s.referencia_destino_id
@@ -615,6 +616,8 @@ export function crearServidor(
       matricula: fila.matricula,
       marca: fila.marca,
       color: fila.color,
+      aireAcondicionado: fila.aire_acondicionado ?? false,
+      seguro: fila.seguro ?? false,
       pin: fila.pin,
     };
   }
