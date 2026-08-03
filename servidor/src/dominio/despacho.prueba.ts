@@ -427,3 +427,42 @@ test('caducarPresencias: el DISPONIBLE con heartbeat vencido pasa a DESCONECTADO
   assert.equal(await estadoConductor(vencido), 'DESCONECTADO');
   assert.equal(await estadoConductor(vivo), 'DISPONIBLE');
 });
+
+// Migración 031: un barrio/calle (zona con padre) no tiene adyacencia
+// propia. Un lugar colgado de uno tiene que repartirse igual que si
+// colgara directamente de su distrito urbano — si esto fallara, cualquier
+// sitio clasificado con más precisión se quedaría sin taxis.
+test('un lugar colgado de un barrio/calle se reparte por su distrito urbano padre', async () => {
+  const escenario = await montarEscenario();
+  const barrio = await enTransaccion(pool, async (c) => {
+    const fila = await c.query(
+      `INSERT INTO zona (nombre, zona_padre_id) VALUES ($1, $2) RETURNING id`,
+      [`Barrio de prueba ${randomUUID()}`, escenario.zonaA],
+    );
+    return fila.rows[0].id as number;
+  });
+  const refOrigenEnBarrio = await enTransaccion(pool, async (c) => {
+    const r = await guardarReferencia(c, {
+      zonaId: barrio, nombre: 'Sitio en el barrio', lat: 3.7501, lng: 8.7801,
+    });
+    return r.referenciaId;
+  });
+
+  const conductorEnDistrito = await crearConductorEnZona(escenario.zonaA);
+  const creada = await enTransaccion(pool, (c) => crearSolicitud(c, {
+    dispositivoClienteId,
+    telefonoCliente: '+240222999995',
+    referenciaOrigenId: refOrigenEnBarrio,
+    referenciaDestinoId: escenario.refDestino,
+    actor: 'cliente',
+    claveIdempotencia: `despacho-barrio-${randomUUID()}`,
+  }));
+  const solicitudId = creada.solicitudId;
+  const emisor = new EmisorRegistro();
+
+  const inicio = await iniciarDespacho(pool, emisor, solicitudId);
+  assert.equal(inicio.resultado, 'EMITIDO');
+  assert.equal(inicio.ofertas, 1);
+  const ofertas = await pool.query('SELECT conductor_id FROM oferta WHERE solicitud_id = $1', [solicitudId]);
+  assert.equal(ofertas.rows[0].conductor_id, conductorEnDistrito);
+});

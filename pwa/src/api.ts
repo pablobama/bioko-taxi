@@ -367,6 +367,11 @@ export interface ZonaOperador {
   // Migración 029: agrupación puramente organizativa, no afecta al reparto.
   // null en lo que no se pudo confirmar con una fuente — no es un error.
   distrito: 'Malabo' | 'Baney' | 'Luba' | 'Riaba' | null;
+  // Migración 031: null = esta fila ES un distrito urbano (la zona de
+  // siempre, unidad de reparto). Con valor: es un barrio/calle dentro de
+  // ese distrito urbano, sin adyacencia propia — solo para clasificar
+  // lugares con más precisión.
+  zona_padre_id: number | null;
   lat: number | null;
   lng: number | null;
   sin_situar: boolean;
@@ -734,10 +739,12 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ lat, lng, precision }), reintentos: 1 },
     ),
 
-  crearZonaEnGps: (nombre: string, lat: number, lng: number, precision: number) =>
+  // zonaPadreId (migración 031): con él, crea un barrio/calle dentro de ese
+  // distrito urbano en vez de un distrito urbano nuevo.
+  crearZonaEnGps: (nombre: string, lat: number, lng: number, precision: number, zonaPadreId?: number) =>
     pedirJson<{ zonaId: number; nombre: string; vecinas: number; precisionM: number | null }>(
       '/api/operador/zonas',
-      { method: 'POST', body: JSON.stringify({ nombre, lat, lng, precision }), reintentos: 1 },
+      { method: 'POST', body: JSON.stringify({ nombre, lat, lng, precision, zonaPadreId }), reintentos: 1 },
     ),
 
   nombrarAgente: (conductorId: number, agente: boolean) =>

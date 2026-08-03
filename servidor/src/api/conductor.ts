@@ -194,9 +194,14 @@ export function registrarRutasConductor(
       // Con centroide: la aplicación del taxista ordena las zonas por cercanía
       // a donde está, para no obligarle a buscar la suya en una lista de
       // cuarenta y siete barrios mientras conduce.
+      //
+      // Solo distritos urbanos (zona_padre_id IS NULL, migración 031): un
+      // barrio/calle no es un sitio donde se pueda «trabajar» — es un nivel
+      // más fino para clasificar lugares, no una unidad de reparto.
       const zonas = await cliente.query(
         `SELECT id, nombre, centroide_lat AS lat, centroide_lng AS lng
-         FROM zona WHERE centroide_lat IS NOT NULL ORDER BY nombre`,
+         FROM zona WHERE centroide_lat IS NOT NULL AND zona_padre_id IS NULL
+         ORDER BY nombre`,
       );
       const presencia = await cliente.query('SELECT estado FROM presencia WHERE conductor_id = $1', [conductorId]);
       const saldo = await cliente.query('SELECT saldo_xaf FROM saldo_monedero WHERE conductor_id = $1', [conductorId]);
@@ -400,8 +405,14 @@ export function registrarRutasConductor(
        JOIN solicitud s ON s.id = o.solicitud_id
        JOIN referencia ro ON ro.id = s.referencia_origen_id
        JOIN referencia rd ON rd.id = s.referencia_destino_id
+       JOIN zona zo ON zo.id = ro.zona_id
+       JOIN zona zd ON zd.id = rd.zona_id
+       -- COALESCE(zona_padre_id, id): las bandas de precio son distrito
+       -- urbano a distrito urbano (migración 031); un lugar colgado de un
+       -- barrio/calle usa el precio de su padre.
        LEFT JOIN banda_precio bp
-         ON bp.zona_origen_id = ro.zona_id AND bp.zona_destino_id = rd.zona_id
+         ON bp.zona_origen_id = COALESCE(zo.zona_padre_id, zo.id)
+        AND bp.zona_destino_id = COALESCE(zd.zona_padre_id, zd.id)
        WHERE o.conductor_id = $1 AND o.resultado IS NULL AND s.estado = 'EMITIDO'
        ORDER BY o.id`,
       [sesion.conductorId],

@@ -72,8 +72,13 @@ export async function taxisCercaDe(
   cliente: pg.ClientBase | pg.Pool,
   referenciaId: number,
 ): Promise<TaxisCerca | null> {
+  // COALESCE(zona_padre_id, id): igual que en el reparto (despacho.ts) — si
+  // el lugar cuelga de un barrio/calle sin adyacencia propia, se cuenta por
+  // su distrito urbano padre. `nombre` se deja el del barrio/calle: es lo
+  // preciso que ve el pasajero, aunque el conteo sea por el padre.
   const zona = await cliente.query(
-    `SELECT z.id::int AS id, z.nombre FROM referencia r JOIN zona z ON z.id = r.zona_id
+    `SELECT COALESCE(z.zona_padre_id, z.id)::int AS id, z.nombre
+     FROM referencia r JOIN zona z ON z.id = r.zona_id
      WHERE r.id = $1`,
     [referenciaId],
   );

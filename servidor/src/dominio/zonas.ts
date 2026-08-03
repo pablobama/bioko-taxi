@@ -42,6 +42,10 @@ const DISTANCIA_SQL = `
 
 // Recose la adyacencia de UN barrio: borra sus parejas y las vuelve a calcular
 // contra las zonas situadas más cercanas. Devuelve cuántas vecinas le quedan.
+//
+// Solo entre distritos urbanos (zona_padre_id IS NULL): un barrio/calle
+// (migración 031) nunca es candidata a vecina de nadie, aunque tenga
+// centroide — el reparto solo conoce distritos urbanos.
 async function recoserAdyacencia(
   cliente: pg.ClientBase,
   zonaId: number,
@@ -52,6 +56,7 @@ async function recoserAdyacencia(
     `SELECT z.id, ${DISTANCIA_SQL} AS d
      FROM zona z
      WHERE z.id <> $1 AND z.centroide_lat IS NOT NULL AND z.centroide_lng IS NOT NULL
+       AND z.zona_padre_id IS NULL
      ORDER BY d
      LIMIT $4`,
     [zonaId, lat, lng, VECINAS_MAXIMAS],
@@ -131,22 +136,19 @@ export async function situarZona(
   // convendría volver a tomar (P25-02).
   precisionM: number | null = null,
 ): Promise<ZonaSituada> {
-  // Quiénes eran sus vecinas ANTES: si alguna se queda sin ninguna al
-  // recoser, hay que devolverla al mapa.
-  const antiguas = await cliente.query(
-    'SELECT zona_adyacente_id AS id FROM zona_adyacencia WHERE zona_id = $1',
-    [zonaId],
-  );
-
   const zona = await cliente.query(
     `UPDATE zona SET centroide_lat = $2, centroide_lng = $3, precision_gps_m = $4
-     WHERE id = $1 RETURNING nombre`,
+     WHERE id = $1 RETURNING nombre, zona_padre_id`,
     [zonaId, lat, lng, precisionM],
   );
   if (zona.rowCount === 0) {
     throw new Error(`No existe la zona con identificador ${zonaId}.`);
   }
   const nombre: string = zona.rows[0].nombre;
+  // Barrio/calle (migración 031): tiene padre, así que no es unidad de
+  // reparto — no calcula ni recibe adyacencia, solo su centroide y su
+  // referencia propia.
+  const esBarrioOCalle = zona.rows[0].zona_padre_id !== null;
 
   // La referencia del propio barrio se crea o se recoloca. Clave natural
   // (zona, nombre), como en el resto del gazetteer: mover un barrio no puede
@@ -160,26 +162,54 @@ export async function situarZona(
     [zonaId, nombre, lat, lng],
   );
 
-  const vecinas = await recoserAdyacencia(cliente, zonaId, lat, lng);
-  await reconectarAislados(cliente, antiguas.rows.map((f: { id: number }) => f.id));
+  let vecinas = 0;
+  if (!esBarrioOCalle) {
+    // Quiénes eran sus vecinas ANTES: si alguna se queda sin ninguna al
+    // recoser, hay que devolverla al mapa.
+    const antiguas = await cliente.query(
+      'SELECT zona_adyacente_id AS id FROM zona_adyacencia WHERE zona_id = $1',
+      [zonaId],
+    );
+    vecinas = await recoserAdyacencia(cliente, zonaId, lat, lng);
+    await reconectarAislados(cliente, antiguas.rows.map((f: { id: number }) => f.id));
+  }
 
   return { zonaId, nombre, referenciaId: referencia.rows[0].id, vecinas, precisionM };
 }
 
 // Crea un barrio que no estaba en ninguna lista y lo sitúa de una vez. Pasa:
 // quien va por la calle encuentra barrios que ni OSM ni el censo tenían.
+//
+// Con zonaPadreId (migración 031): crea un barrio/calle DENTRO de un
+// distrito urbano en vez de un distrito urbano nuevo. Solo un nivel de
+// hijos — si el padre indicado ya tiene padre él mismo, error explícito en
+// vez de dejar crecer una jerarquía que nadie pidió.
 export async function crearZonaEnGps(
   cliente: pg.ClientBase,
   nombre: string,
   lat: number,
   lng: number,
   precisionM: number | null = null,
+  zonaPadreId: number | null = null,
 ): Promise<ZonaSituada> {
+  if (zonaPadreId !== null) {
+    const padre = await cliente.query(
+      'SELECT zona_padre_id FROM zona WHERE id = $1',
+      [zonaPadreId],
+    );
+    if (padre.rowCount === 0) {
+      throw new Error(`No existe la zona con identificador ${zonaPadreId}.`);
+    }
+    if (padre.rows[0].zona_padre_id !== null) {
+      throw new Error('Ese distrito urbano ya es un barrio/calle: no puede tener barrios/calles dentro.');
+    }
+  }
   const creada = await cliente.query(
-    `INSERT INTO zona (nombre) VALUES ($1)
-     ON CONFLICT (nombre) DO UPDATE SET nombre = EXCLUDED.nombre
+    `INSERT INTO zona (nombre, zona_padre_id) VALUES ($1, $2)
+     ON CONFLICT (nombre) DO UPDATE
+       SET nombre = EXCLUDED.nombre, zona_padre_id = EXCLUDED.zona_padre_id
      RETURNING id`,
-    [nombre],
+    [nombre, zonaPadreId],
   );
   return situarZona(cliente, creada.rows[0].id, lat, lng, precisionM);
 }

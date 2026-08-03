@@ -16,6 +16,19 @@ export async function registrarHeartbeat(
   zonaId?: number,
   ahora: Date = new Date(),
 ): Promise<void> {
+  if (zonaId !== undefined) {
+    // Único punto donde se escribe presencia.zona_id: aquí se cierra la
+    // puerta a que un barrio/calle (migración 031) acabe siendo "donde
+    // trabaja" un conductor, aunque la app del taxista solo deje elegir
+    // distritos urbanos — esto es lo que de verdad lo impide.
+    const zona = await cliente.query('SELECT zona_padre_id FROM zona WHERE id = $1', [zonaId]);
+    if (zona.rowCount === 0) {
+      throw new ErrorEntidadInexistente('la zona', zonaId);
+    }
+    if (zona.rows[0].zona_padre_id !== null) {
+      throw new Error(`La zona ${zonaId} es un barrio/calle, no un distrito urbano: no se puede trabajar ahí.`);
+    }
+  }
   const res = await cliente.query(
     `UPDATE presencia
      SET ultimo_heartbeat = $2, zona_id = COALESCE($3, zona_id), actualizada_en = now()

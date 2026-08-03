@@ -693,7 +693,7 @@ function EditorReferencia({
           {CATEGORIAS.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
         <select value={zonaId} onChange={(e) => setZonaId(Number(e.target.value))}>
-          {zonas.map((z) => <option key={z.id} value={z.id}>{z.nombre}</option>)}
+          {opcionesZona(zonas).map((o) => <option key={o.id} value={o.id}>{o.etiqueta}</option>)}
         </select>
       </div>
       {/* Corregir un sitio estando delante: es la mitad del trabajo de campo
@@ -765,6 +765,20 @@ function EditorReferencia({
       </div>
     </>
   );
+}
+
+// Distrito urbano seguido de sus barrios/calles (migración 031), para poder
+// elegir el nivel más preciso que se conozca sin obligar a nada — un lugar
+// puede colgar directamente del distrito urbano si no se sabe más.
+function opcionesZona(zonas: ZonaOperador[]): Array<{ id: number; etiqueta: string }> {
+  const opciones: Array<{ id: number; etiqueta: string }> = [];
+  for (const padre of zonas.filter((z) => z.zona_padre_id === null)) {
+    opciones.push({ id: padre.id, etiqueta: padre.nombre });
+    for (const hijo of zonas.filter((z) => z.zona_padre_id === padre.id)) {
+      opciones.push({ id: hijo.id, etiqueta: `— ${hijo.nombre}` });
+    }
+  }
+  return opciones;
 }
 
 function Lugares() {
@@ -844,7 +858,7 @@ function Lugares() {
               {CATEGORIAS.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
             <select value={nueva.zonaId} onChange={(e) => setNueva({ ...nueva, zonaId: Number(e.target.value) })}>
-              {zonas.map((z) => <option key={z.id} value={z.id}>{z.nombre}</option>)}
+              {opcionesZona(zonas).map((o) => <option key={o.id} value={o.id}>{o.etiqueta}</option>)}
             </select>
           </div>
           {/* Lo normal es estar delante del sitio: el GPS rellena las
@@ -1044,7 +1058,9 @@ function Ajustes() {
 
   return (
     <>
-      <Bandas zonas={zonas} />
+      {/* Solo distritos urbanos (migración 031): las bandas de precio son
+          entre unidades de reparto, y un barrio/calle no lo es. */}
+      <Bandas zonas={zonas.filter((z) => z.zona_padre_id === null)} />
       <button type="button" className="secundario" onClick={() => setVerParametros(!verParametros)}>
         {verParametros ? 'Ocultar parámetros del sistema' : `Parámetros del sistema (${parametros?.length ?? '…'})`}
       </button>
@@ -1135,8 +1151,12 @@ function Zonas() {
     });
   }
 
-  const pendientes = zonas?.filter((z) => z.sin_situar) ?? [];
-  const situadas = zonas?.filter((z) => !z.sin_situar) ?? [];
+  // Solo distritos urbanos (migración 031): los barrios/calles tienen su
+  // propia sección («Barrios»), aparte — aquí mezclarlos confundiría "sin
+  // vecinas porque no le tocaba" con "sin vecinas porque algo falla".
+  const distritosUrbanos = zonas?.filter((z) => z.zona_padre_id === null) ?? [];
+  const pendientes = distritosUrbanos.filter((z) => z.sin_situar);
+  const situadas = distritosUrbanos.filter((z) => !z.sin_situar);
 
   return (
     <>
@@ -1144,7 +1164,7 @@ function Zonas() {
       {aviso && <p className="nota">{aviso}</p>}
 
       <div className="oferta">
-        <div className="oferta-ruta">Añadir un barrio donde estoy</div>
+        <div className="oferta-ruta">Añadir un distrito urbano donde estoy</div>
         <div className="nota">
           Para barrios que no están en ninguna lista. Se sitúa con el GPS de
           este teléfono, así que hay que estar allí.
@@ -1223,6 +1243,143 @@ function Zonas() {
   );
 }
 
+// --- Barrios: el nivel entre el distrito urbano y el lugar (migración 031) -
+
+function Barrios() {
+  const [zonas, setZonas] = useState<ZonaOperador[] | null>(null);
+  const [error, setError] = useState('');
+  const [aviso, setAviso] = useState('');
+  const [ocupada, setOcupada] = useState<number | 'nueva' | null>(null);
+  const [nombreNuevo, setNombreNuevo] = useState('');
+  const [padreNuevo, setPadreNuevo] = useState<number | ''>('');
+
+  function cargar() {
+    api.zonasOperador().then((r) => setZonas(r.zonas)).catch((e) => setError(e.message));
+  }
+  useEffect(cargar, []);
+
+  function conGps(alTener: (lat: number, lng: number, precision: number) => void) {
+    setError('');
+    capturarGps(alTener, setAviso, setError);
+  }
+
+  async function situar(z: ZonaOperador) {
+    conGps(async (lat, lng, precision) => {
+      setOcupada(z.id);
+      try {
+        const r = await api.situarZona(z.id, lat, lng, precision);
+        setAviso(`«${r.nombre}» situado aquí con ±${Math.round(precision)} m.`);
+        cargar();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'No se pudo situar el barrio/calle.');
+      } finally {
+        setOcupada(null);
+      }
+    });
+  }
+
+  async function crear() {
+    const nombre = nombreNuevo.trim();
+    if (!nombre || !padreNuevo) return;
+    conGps(async (lat, lng, precision) => {
+      setOcupada('nueva');
+      try {
+        const r = await api.crearZonaEnGps(nombre, lat, lng, precision, padreNuevo);
+        setAviso(`«${r.nombre}» creado aquí con ±${Math.round(precision)} m.`);
+        setNombreNuevo('');
+        cargar();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'No se pudo crear el barrio/calle.');
+      } finally {
+        setOcupada(null);
+      }
+    });
+  }
+
+  const distritosUrbanos = (zonas ?? []).filter((z) => z.zona_padre_id === null);
+  const barrios = (zonas ?? []).filter((z) => z.zona_padre_id !== null);
+  const nombrePadre = (padreId: number): string =>
+    distritosUrbanos.find((d) => d.id === padreId)?.nombre ?? `#${padreId}`;
+
+  return (
+    <>
+      <p className="nota">
+        El nivel entre el distrito urbano y el lugar: un barrio o una calle
+        dentro de Ela Nguema, Semu, Malabo Centro… No tiene vecinas propias
+        —el reparto sigue funcionando por distrito urbano— y no aparece como
+        sitio donde un taxista puede trabajar. Solo sirve para clasificar
+        lugares con más precisión.
+      </p>
+      {error && <p className="aviso">{error}</p>}
+      {aviso && <p className="nota">{aviso}</p>}
+
+      <div className="oferta">
+        <div className="oferta-ruta">Añadir un barrio/calle donde estoy</div>
+        <select value={padreNuevo} onChange={(e) => setPadreNuevo(e.target.value ? Number(e.target.value) : '')}>
+          <option value="">Distrito urbano…</option>
+          {distritosUrbanos.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+        </select>
+        <input
+          type="text"
+          value={nombreNuevo}
+          placeholder="Nombre del barrio o la calle"
+          onChange={(e) => setNombreNuevo(e.target.value)}
+        />
+        <button
+          type="button" className="principal"
+          disabled={!nombreNuevo.trim() || !padreNuevo || ocupada !== null}
+          onClick={crear}
+        >
+          Estoy aquí: crear barrio/calle
+        </button>
+      </div>
+
+      {barrios.filter((z) => z.sin_situar).length > 0 && (
+        <>
+          <p className="nota">
+            Sin situar ({barrios.filter((z) => z.sin_situar).length}). Hay
+            que ir y pulsar allí para que tengan coordenadas.
+          </p>
+          {barrios.filter((z) => z.sin_situar).map((z) => (
+            <div className="oferta oferta-alarma" key={z.id}>
+              <div className="oferta-ruta">{z.nombre}</div>
+              <div className="nota">{nombrePadre(z.zona_padre_id!)}</div>
+              <button
+                type="button" className="principal"
+                disabled={ocupada !== null}
+                onClick={() => situar(z)}
+              >
+                {ocupada === z.id ? 'Cogiendo GPS…' : 'Estoy aquí'}
+              </button>
+            </div>
+          ))}
+        </>
+      )}
+
+      <p className="nota">Situados ({barrios.filter((z) => !z.sin_situar).length})</p>
+      {barrios.filter((z) => !z.sin_situar).map((z) => (
+        <div className="oferta" key={z.id}>
+          <div className="oferta-ruta">{z.nombre}</div>
+          <div className="nota">
+            {nombrePadre(z.zona_padre_id!)} · {z.lat?.toFixed(5)}, {z.lng?.toFixed(5)}
+            {' · '}{z.referencias} sitio{z.referencias === 1 ? '' : 's'}
+            {z.precision_m === null
+              ? ' · precisión desconocida'
+              : ` · ±${Math.round(z.precision_m)} m`}
+          </div>
+          <button
+            type="button" className="secundario"
+            disabled={ocupada !== null}
+            onClick={() => situar(z)}
+          >
+            {ocupada === z.id ? 'Cogiendo GPS…' : 'Corregir: estoy aquí'}
+          </button>
+        </div>
+      ))}
+    </>
+  );
+}
+
 // El orden es a propósito: los cuatro distritos confirmados primero, y al
 // final los barrios sin distrito confirmado — no se ocultan, pero tampoco se
 // mezclan con lo que sí se sabe.
@@ -1239,14 +1396,14 @@ const DISTRITOS_ORDEN: Array<[ZonaOperador['distrito'], string]> = [
 const SECCIONES = [
   ['resumen', 'Resumen'], ['central', 'Central'], ['incidencias', 'Incidencias'],
   ['conductores', 'Conductores'], ['pasajeros', 'Pasajeros'], ['pagos', 'Pagos'],
-  ['zonas', 'Zonas'], ['lugares', 'Lugares'], ['ajustes', 'Ajustes'],
+  ['zonas', 'Zonas'], ['barrios', 'Barrios'], ['lugares', 'Lugares'], ['ajustes', 'Ajustes'],
 ] as const;
 type Seccion = (typeof SECCIONES)[number][0];
 
 // Lo que ve un agente de campo (migración 025): el mapa y los precios, nada
 // de administrar a sus compañeros ni el dinero. El servidor aplica el mismo
 // corte —esto solo evita enseñar botones que darían 403.
-const SECCIONES_AGENTE: Seccion[] = ['zonas', 'lugares', 'ajustes'];
+const SECCIONES_AGENTE: Seccion[] = ['zonas', 'barrios', 'lugares', 'ajustes'];
 
 const FILTROS_CONDUCTOR = ['pendiente', 'verificado', 'suspendido', 'bloqueado', 'todos'] as const;
 const FILTROS_RECARGA = ['pendiente', 'confirmada', 'rechazada', 'caducada', 'todas'] as const;
@@ -1562,6 +1719,7 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
         )}
 
         {seccion === 'zonas' && <Zonas />}
+        {seccion === 'barrios' && <Barrios />}
         {seccion === 'lugares' && <Lugares />}
 
         {seccion === 'ajustes' && <Ajustes />}

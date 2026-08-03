@@ -833,7 +833,7 @@ export function registrarRutasOperador(
     // entraron sin coordenadas porque ninguna fuente sabía dónde están
     // (migración 025), y hasta que alguien vaya, no existen para el reparto.
     const filas = await pool.query(
-      `SELECT z.id, z.nombre, z.distrito, z.centroide_lat AS lat, z.centroide_lng AS lng,
+      `SELECT z.id, z.nombre, z.distrito, z.zona_padre_id, z.centroide_lat AS lat, z.centroide_lng AS lng,
               z.precision_gps_m AS precision_m,
               (z.centroide_lat IS NULL) AS sin_situar,
               (SELECT count(*)::int FROM referencia r WHERE r.zona_id = z.id AND r.activa) AS referencias,
@@ -872,10 +872,14 @@ export function registrarRutasOperador(
 
   // Un barrio que no estaba en ninguna lista. Pasa: quien va por la calle
   // encuentra barrios que ni OSM ni el censo tenían.
+  //
+  // Con zonaPadreId (migración 031): en vez de un distrito urbano nuevo,
+  // crea un barrio/calle dentro de uno existente — mismo botón «estoy
+  // aquí», sin adyacencia propia (crearZonaEnGps se encarga).
   app.post('/api/operador/zonas', async (req) => {
     await exigirCampo(req);
-    const { nombre, lat, lng, precision } = (req.body ?? {}) as {
-      nombre?: string; lat?: number; lng?: number; precision?: number;
+    const { nombre, lat, lng, precision, zonaPadreId } = (req.body ?? {}) as {
+      nombre?: string; lat?: number; lng?: number; precision?: number; zonaPadreId?: number;
     };
     const limpio = nombre?.trim();
     if (!limpio) throw errorHttp(400, 'Falta el nombre del barrio.');
@@ -886,7 +890,16 @@ export function registrarRutasOperador(
       throw errorHttp(400, 'Esas coordenadas caen fuera de Malabo. ¿Se cogió el GPS de verdad?');
     }
     const precisionM = await exigirGpsFiable(pool, precision);
-    return enTransaccion(pool, (cliente) => crearZonaEnGps(cliente, limpio, lat, lng, precisionM));
+    try {
+      return await enTransaccion(pool, (cliente) => crearZonaEnGps(
+        cliente, limpio, lat, lng, precisionM, zonaPadreId ?? null,
+      ));
+    } catch (error) {
+      if (error instanceof Error && /No existe la zona|ya es un barrio\/calle/.test(error.message)) {
+        throw errorHttp(400, error.message);
+      }
+      throw error;
+    }
   });
 
   app.get('/api/operador/referencias', async (req) => {

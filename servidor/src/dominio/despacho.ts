@@ -43,12 +43,18 @@ async function bloquearSolicitud(
   solicitudId: number,
 ): Promise<SolicitudDespacho> {
   const res = await cliente.query(
+    // COALESCE(zona_padre_id, id): si el lugar cuelga de un barrio/calle
+    // (migración 031, sin adyacencia propia), el reparto usa su distrito
+    // urbano padre — la unidad de siempre. Un lugar en «Barrio Bisinga» no
+    // se queda sin taxis solo porque el barrio en sí no tiene vecinas.
     `SELECT s.id, s.estado, s.dispositivo_cliente_id, s.expira_en,
-            ro.zona_id AS zona_origen_id, ro.nombre AS origen_nombre,
-            rd.zona_id AS zona_destino_id, rd.nombre AS destino_nombre
+            COALESCE(zo.zona_padre_id, zo.id) AS zona_origen_id, ro.nombre AS origen_nombre,
+            COALESCE(zd.zona_padre_id, zd.id) AS zona_destino_id, rd.nombre AS destino_nombre
      FROM solicitud s
      JOIN referencia ro ON ro.id = s.referencia_origen_id
      JOIN referencia rd ON rd.id = s.referencia_destino_id
+     JOIN zona zo ON zo.id = ro.zona_id
+     JOIN zona zd ON zd.id = rd.zona_id
      WHERE s.id = $1
      FOR UPDATE OF s`,
     [solicitudId],
