@@ -220,6 +220,7 @@ const es: Diccionario = {
 
   // Zona y servicio
   'zona.dondeTrabajas': 'Zona donde trabajas ahora',
+  'zona.teLocaliza': 'Entrarás en servicio en el barrio donde estés ahora.',
   'accion.entrarServicio': 'Entrar en servicio',
   'accion.salirServicio': 'Salir de servicio',
 
@@ -296,6 +297,7 @@ const es: Diccionario = {
   'categoria.otro': 'Sitio',
   'aviso.noSePudo': 'No se pudo.',
   'aviso.eligeZona': 'Elige tu zona antes de entrar en servicio.',
+  'aviso.sinUbicacionServicio': 'Activa la ubicación: el barrio donde entras en servicio lo dice tu GPS.',
   'aviso.noSePudoServicio': 'No se pudo cambiar el servicio.',
   'aviso.noSePudoRenovar': 'No se pudo renovar.',
 };
@@ -470,6 +472,7 @@ const fr: Diccionario = {
   'accion.viajeTerminado': 'Trajet terminé',
 
   'zona.dondeTrabajas': 'Zone où tu travailles maintenant',
+  'zona.teLocaliza': 'Tu prendras le service dans le quartier où tu es maintenant.',
   'accion.entrarServicio': 'Prendre le service',
   'accion.salirServicio': 'Quitter le service',
 
@@ -540,6 +543,7 @@ const fr: Diccionario = {
   'categoria.otro': 'Lieu',
   'aviso.noSePudo': 'Échec de l’opération.',
   'aviso.eligeZona': 'Choisis ta zone avant de prendre le service.',
+  'aviso.sinUbicacionServicio': 'Active la localisation : c’est ton GPS qui dit dans quel quartier tu prends le service.',
   'aviso.noSePudoServicio': 'Impossible de changer le statut de service.',
   'aviso.noSePudoRenovar': 'Impossible de renouveler.',
 };
@@ -714,6 +718,7 @@ const en: Diccionario = {
   'accion.viajeTerminado': 'Trip finished',
 
   'zona.dondeTrabajas': 'Zone you’re working now',
+  'zona.teLocaliza': 'You’ll go online in the neighbourhood where you are now.',
   'accion.entrarServicio': 'Go online',
   'accion.salirServicio': 'Go offline',
 
@@ -784,6 +789,7 @@ const en: Diccionario = {
   'categoria.otro': 'Place',
   'aviso.noSePudo': 'Could not do that.',
   'aviso.eligeZona': 'Choose your zone before going online.',
+  'aviso.sinUbicacionServicio': 'Turn on location: your GPS decides which neighbourhood you go online in.',
   'aviso.noSePudoServicio': 'Could not change service status.',
   'aviso.noSePudoRenovar': 'Could not renew.',
 };

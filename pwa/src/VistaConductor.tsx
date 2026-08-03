@@ -19,7 +19,6 @@ export interface AccionesConductor {
   alAbrirRecarga: () => void;
   alSuscribir: () => void;
   alAlternarServicio: () => void;
-  alElegirZona: (zonaId: number) => void;
   alAceptar: (solicitudId: number) => void;
   alRechazar: (solicitudId: number) => void;
   alSalir: (solicitudId: number) => void;
@@ -35,8 +34,6 @@ export interface AccionesConductor {
 export interface PropiedadesVistaConductor {
   conductor: DatosConductor;
   estado: EstadoConductor | null;
-  zonas: Array<{ id: number; nombre: string }>;
-  zonaElegida: number | null;
   // Dónde se está pidiendo taxi, por barrio. null mientras no se ha pedido o
   // si no está en servicio: el dato se compra con la cuota semanal.
   demanda: { zonas: ZonaConDemanda[]; ventanaMin: number } | null;
@@ -188,7 +185,7 @@ function BloquePasajero({
 }
 
 export default function VistaConductor({
-  conductor, estado, zonas, zonaElegida, demanda, aviso, ocupado = false, t, acciones,
+  conductor, estado, demanda, aviso, ocupado = false, t, acciones,
 }: PropiedadesVistaConductor) {
   const enServicio = estado !== null && estado.estado !== 'DESCONECTADO';
   const suscripcionVigente = estado?.suscripcionVigente ?? conductor.suscripcionVigente;
@@ -320,29 +317,14 @@ export default function VistaConductor({
       {/* Servicio: siempre al final, para que no compita con lo urgente. */}
       {puedeTrabajar && (
         <>
-          {/* Zona de trabajo. Era un desplegable con los cuarenta y siete
-              barrios de Malabo, en orden alfabético, para elegir conduciendo y
-              al sol. Ahora vienen ordenados por cercanía a donde está el coche
-              —la primera es casi siempre la buena— en una fila que se arrastra
-              si hay que corregir. La lista completa sigue accesible: se
-              desplaza hasta el final. */}
-          {!enServicio && zonas.length > 0 && (
-            <div className="campo-zona">
-              <span>{t('zona.dondeTrabajas')}</span>
-              <ul className="zonas">
-                {zonas.map((z) => (
-                  <li key={z.id}>
-                    <button
-                      type="button"
-                      className={z.id === zonaElegida ? 'zona-elegida' : undefined}
-                      onClick={() => acciones.alElegirZona(z.id)}
-                    >
-                      {z.nombre}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
+          {/* El barrio ya no se elige. Era una lista de los cuarenta y siete
+              de Malabo, para buscar el tuyo conduciendo y al sol, y nada
+              impedía quedarse en el que salía primero: el pasajero acababa
+              recibiendo un taxi que no tenía cerca. Ahora al pulsar «entrar
+              en servicio» se coge el GPS y el barrio es ese, el de donde
+              estás. */}
+          {!enServicio && (
+            <p className="nota">{t('zona.teLocaliza')}</p>
           )}
           <button
             type="button"

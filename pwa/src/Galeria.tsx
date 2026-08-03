@@ -37,7 +37,7 @@ const accionesCliente: AccionesCliente = {
 
 const accionesConductor: AccionesConductor = {
   alAbrirAjustes: NADA, alAbrirEstadisticas: NADA, alAbrirRecarga: NADA, alSuscribir: NADA,
-  alAlternarServicio: NADA, alElegirZona: NADA, alAceptar: NADA,
+  alAlternarServicio: NADA, alAceptar: NADA,
   alRechazar: NADA, alSalir: NADA, alLlegar: NADA, alRecoger: NADA,
   alDeclararAusente: NADA, alCompletar: NADA, alLlamar: NADA,
 };
@@ -244,8 +244,6 @@ export default function Galeria() {
     <VistaConductor
       conductor={{ ...conductorEjemplo, ...datos }}
       estado={estado}
-      zonas={ZONAS}
-      zonaElegida={1}
       demanda={demanda}
       aviso={aviso}
       t={t}

@@ -249,11 +249,19 @@ export default function PanelConductor({
     setOcupado(true);
     setAviso('');
     try {
-      if (!enServicio && zonaEfectiva === null) {
-        setAviso(t('aviso.eligeZona'));
-        return;
+      if (!enServicio) {
+        // Se pide el GPS en el momento, no se reutiliza el último conocido:
+        // entrar en servicio declara dónde estás AHORA, y una lectura de
+        // hace media hora puede ser de otro barrio.
+        const donde = await coordenadasOportunistas();
+        if (!donde) {
+          setAviso(t('aviso.sinUbicacionServicio'));
+          return;
+        }
+        await api.servicio(true, donde);
+      } else {
+        await api.servicio(false);
       }
-      await api.servicio(!enServicio, zonaEfectiva ?? undefined);
       await refrescar();
     } catch (error) {
       setAviso(mensajeDeError(error, t('aviso.noSePudoServicio')));
@@ -276,19 +284,8 @@ export default function PanelConductor({
     }
   }
 
-  // Zonas ordenadas por cercanía a donde está el coche. La primera es la que
-  // el taxista quiere el 90 % de las veces; el resto está a un arrastre.
-  //
-  // Sin GPS se quedan en orden alfabético: es lo único honesto que se puede
-  // hacer sin saber dónde está.
+  // Dónde está el coche, para pintarlo en el plano.
   const posicion = posicionCoche ?? coordenadas.current;
-  const zonasOrdenadas = posicion ? porCercaniaA(posicion, zonas) : zonas;
-
-  // La zona por defecto es la más cercana, no la primera de la lista. Antes se
-  // cogía `zonas[0]` —alfabética— y por eso un taxista en Barrio Chino entraba
-  // en servicio declarado en «Alcaide», y las carreras de su propia calle le
-  // llegaban tarde, por la tercera oleada del reparto.
-  const zonaEfectiva = zonaElegida ?? zonasOrdenadas[0]?.id ?? null;
 
   const pasajeros = estado?.pasajeros ?? [];
 
@@ -346,8 +343,6 @@ export default function PanelConductor({
       <VistaConductor
         conductor={conductor}
         estado={estado}
-        zonas={zonasOrdenadas}
-        zonaElegida={zonaEfectiva}
         demanda={demanda}
         aviso={aviso}
         ocupado={ocupado}
@@ -359,7 +354,6 @@ export default function PanelConductor({
           alAbrirRecarga: () => setEnRecarga(true),
           alSuscribir: suscribir,
           alAlternarServicio: alternarServicio,
-          alElegirZona: setZonaElegida,
           alAceptar: (id) => accion(id, 'aceptar'),
           alRechazar: (id) => accion(id, 'rechazar'),
           alSalir: (id) => accion(id, 'salir'),

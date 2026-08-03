@@ -109,6 +109,37 @@ async function reconectarAislados(
   }
 }
 
+// En qué barrio está un punto. Sin polígonos de zona (P1-02) lo único que
+// se puede decir con lo que hay es «el barrio cuyo centro queda más cerca»,
+// que no es lo mismo que «el barrio que te contiene» pero en una ciudad de
+// barrios pequeños acierta casi siempre. Cuando existan los polígonos, esta
+// es la función que hay que cambiar, y solo esta.
+//
+// Solo barrios (zona_padre_id IS NULL): una calle o sub-barrio no es una
+// unidad de reparto, así que nadie puede estar «trabajando» en ella.
+export async function barrioMasCercano(
+  cliente: pg.ClientBase | pg.Pool,
+  lat: number,
+  lng: number,
+): Promise<{ id: number; nombre: string } | null> {
+  const res = await cliente.query(
+    `SELECT z.id, z.nombre
+     FROM zona z
+     WHERE z.zona_padre_id IS NULL
+       AND z.centroide_lat IS NOT NULL AND z.centroide_lng IS NOT NULL
+     ORDER BY 2 * 6371000 * asin(sqrt(
+       power(sin(radians($1 - z.centroide_lat) / 2), 2)
+       + cos(radians($1)) * cos(radians(z.centroide_lat))
+         * power(sin(radians($2 - z.centroide_lng) / 2), 2)
+     ))
+     LIMIT 1`,
+    [lat, lng],
+  );
+  return res.rowCount === 0
+    ? null
+    : { id: Number(res.rows[0].id), nombre: res.rows[0].nombre };
+}
+
 export interface ZonaSituada {
   zonaId: number;
   nombre: string;

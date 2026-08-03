@@ -521,11 +521,13 @@ export const api = {
 
   estadoConductor: () => pedirJson<EstadoConductor>('/api/conductor/estado'),
 
-  servicio: (enServicio: boolean, zonaId?: number) =>
-    pedirJson<{ enServicio: boolean }>('/api/conductor/servicio', {
-      method: 'POST',
-      body: JSON.stringify({ enServicio, zonaId }),
-    }),
+  // El barrio no se elige: lo decide dónde está el coche. Se mandan las
+  // coordenadas y el servidor dice en qué barrio queda.
+  servicio: (enServicio: boolean, coordenadas?: { lat: number; lng: number } | null) =>
+    pedirJson<{ enServicio: boolean; zonaId: number | null; zona: string | null }>(
+      '/api/conductor/servicio',
+      { method: 'POST', body: JSON.stringify({ enServicio, ...(coordenadas ?? {}) }) },
+    ),
 
   heartbeat: (coordenadas: { lat: number; lng: number } | null) =>
     pedirJson<{ estado: string; saldoXaf: number }>('/api/conductor/heartbeat', {

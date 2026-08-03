@@ -24,6 +24,7 @@ import { registrarPosicion } from '../dominio/proximidad.js';
 import { recargasDe, solicitarRecarga } from '../dominio/recargas.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
 import { entrarEnServicio, registrarHeartbeat, salirDeServicio } from '../dominio/presencia.js';
+import { barrioMasCercano } from '../dominio/zonas.js';
 import { transicionarConductor, transicionarSolicitud } from '../dominio/transiciones.js';
 import type { ConexionesSse } from '../eventos/adaptador-sse.js';
 
@@ -280,20 +281,44 @@ export function registrarRutasConductor(
 
   app.post('/api/conductor/servicio', async (req) => {
     const sesion = await sesionDesde(req);
-    const cuerpo = req.body as { enServicio?: boolean; zonaId?: number };
+    const cuerpo = req.body as {
+      enServicio?: boolean; zonaId?: number; lat?: number; lng?: number;
+    };
     if (typeof cuerpo?.enServicio !== 'boolean') {
       throw errorHttp(400, 'Falta enServicio (true/false).');
     }
     try {
-      await enTransaccion(pool, async (cliente) => {
-        if (cuerpo.enServicio) {
-          if (!cuerpo.zonaId) {
-            throw errorHttp(400, 'Para entrar en servicio hace falta zonaId.');
-          }
-          await entrarEnServicio(cliente, sesion.conductorId, cuerpo.zonaId);
-        } else {
+      return await enTransaccion(pool, async (cliente) => {
+        if (!cuerpo.enServicio) {
           await salirDeServicio(cliente, sesion.conductorId);
+          return { enServicio: false, zonaId: null, zona: null };
         }
+        // El barrio NO lo elige el taxista: lo dice dónde está. Antes se
+        // mandaba un `zonaId` de una lista y nada impedía declararse en un
+        // barrio al otro lado de la ciudad —ni por error ni a propósito—,
+        // con lo que el pasajero recibía un taxi que no tenía cerca.
+        //
+        // `zonaId` se sigue aceptando solo como respaldo para la app
+        // Android, que todavía no manda coordenadas. En cuanto las mande,
+        // este camino se puede quitar.
+        let zonaId = cuerpo.zonaId;
+        let nombre: string | null = null;
+        if (typeof cuerpo.lat === 'number' && typeof cuerpo.lng === 'number') {
+          const barrio = await barrioMasCercano(cliente, cuerpo.lat, cuerpo.lng);
+          if (barrio === null) {
+            throw errorHttp(409, 'Todavía no hay ningún barrio situado en el mapa.');
+          }
+          zonaId = barrio.id;
+          nombre = barrio.nombre;
+        }
+        if (!zonaId) {
+          throw errorHttp(
+            400,
+            'Para entrar en servicio hace falta saber dónde estás: activa la ubicación.',
+          );
+        }
+        await entrarEnServicio(cliente, sesion.conductorId, zonaId);
+        return { enServicio: true, zonaId, zona: nombre };
       });
     } catch (error) {
       if (error instanceof ErrorTransicionInvalida) {
@@ -301,7 +326,6 @@ export function registrarRutasConductor(
       }
       throw error;
     }
-    return { enServicio: cuerpo.enServicio };
   });
 
   app.post('/api/conductor/heartbeat', async (req) => {

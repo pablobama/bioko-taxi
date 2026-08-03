@@ -400,3 +400,54 @@ test('saldo bajo tras completar: se emite D4', async () => {
   assert.ok(emisor.deTipo('D4_saldo_bajo')
     .some((e) => e.conductorId === conductor.conductorId && e.datos.saldoXaf === 100));
 });
+
+// El barrio donde se entra en servicio lo dice el GPS, no el taxista. Antes
+// se mandaba un `zonaId` de una lista y nada impedía declararse al otro lado
+// de la ciudad, con lo que el pasajero recibía un taxi que no tenía cerca.
+test('entrar en servicio con coordenadas: el barrio lo decide dónde está el coche', async () => {
+  await crearEscenario();
+  const conductor = await darDeAlta();
+  await llamar('POST', '/api/conductor/registro', conductor.uuid, {
+    telefono: conductor.telefono,
+  });
+  await llamar('POST', '/api/conductor/suscripcion', conductor.uuid);
+
+  // Un barrio propio en un punto AL AZAR y lejos de Malabo, y se pregunta
+  // por ese mismo punto exacto: a distancia cero no hay quien lo gane. Con
+  // coordenadas fijas la prueba pasaba sola y fallaba en la batería, porque
+  // la ejecución anterior dejaba otro barrio en el mismo sitio y dos
+  // empatados a la misma distancia se ordenan como quieran (P12-03: la base
+  // de desarrollo guarda lo de todas las ejecuciones).
+  const lat = 3.30 + Math.random() * 0.05;
+  const lng = 8.45 + Math.random() * 0.05;
+  const lejano = await enTransaccion(pool, (c) => crearZona(
+    c, `Zona Lejana ${randomUUID()}`, lat, lng,
+  ));
+
+  const servicio = await llamar('POST', '/api/conductor/servicio', conductor.uuid, {
+    enServicio: true, lat, lng,
+  });
+  assert.equal(servicio.codigo, 200, JSON.stringify(servicio.json));
+  assert.equal(Number(servicio.json.zonaId), Number(lejano.zonaId));
+
+  const presencia = await pool.query(
+    'SELECT zona_id FROM presencia WHERE conductor_id = $1',
+    [conductor.conductorId],
+  );
+  assert.equal(Number(presencia.rows[0].zona_id), Number(lejano.zonaId));
+});
+
+test('entrar en servicio sin coordenadas ni zona: se rechaza con motivo', async () => {
+  await crearEscenario();
+  const conductor = await darDeAlta();
+  await llamar('POST', '/api/conductor/registro', conductor.uuid, {
+    telefono: conductor.telefono,
+  });
+  await llamar('POST', '/api/conductor/suscripcion', conductor.uuid);
+
+  const servicio = await llamar('POST', '/api/conductor/servicio', conductor.uuid, {
+    enServicio: true,
+  });
+  assert.equal(servicio.codigo, 400);
+  assert.match(servicio.json.error ?? servicio.json.message ?? '', /dónde estás/);
+});
