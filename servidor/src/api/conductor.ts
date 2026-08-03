@@ -332,7 +332,22 @@ export function registrarRutasConductor(
     const sesion = await sesionDesde(req);
     const cuerpo = (req.body ?? {}) as { zonaId?: number; lat?: number; lng?: number };
     await enTransaccion(pool, async (cliente) => {
-      await registrarHeartbeat(cliente, sesion.conductorId, cuerpo.zonaId);
+      // El barrio sigue al coche: cada latido lo recalcula desde el GPS. Sin
+      // esto, quien entraba en servicio en Semu y se iba al centro seguía
+      // recibiendo las carreras de Semu —y ninguna de donde estaba de
+      // verdad— hasta salir y volver a entrar.
+      //
+      // Es una consulta más por latido (cada 10-30 s y por conductor) sobre
+      // una tabla de decenas de filas: a la escala del piloto no se nota. Si
+      // algún día pesa, el sitio donde cachear es este.
+      let zonaId = cuerpo.zonaId;
+      if (typeof cuerpo.lat === 'number' && typeof cuerpo.lng === 'number') {
+        const barrio = await barrioMasCercano(cliente, cuerpo.lat, cuerpo.lng);
+        // Si no hay ningún barrio situado, se deja el que tuviera: mejor el
+        // último bueno que ninguno.
+        if (barrio !== null) zonaId = barrio.id;
+      }
+      await registrarHeartbeat(cliente, sesion.conductorId, zonaId);
       // GPS continuo (migración 011): la posición del conductor viaja en el
       // propio heartbeat y solo se guarda mientras hay viajes activos.
       //

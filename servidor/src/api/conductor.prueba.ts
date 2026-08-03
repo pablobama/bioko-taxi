@@ -451,3 +451,39 @@ test('entrar en servicio sin coordenadas ni zona: se rechaza con motivo', async 
   assert.equal(servicio.codigo, 400);
   assert.match(servicio.json.error ?? servicio.json.message ?? '', /dónde estás/);
 });
+
+// El barrio sigue al coche: quien entra en servicio en un sitio y se mueve a
+// otro tiene que recibir las carreras de donde está, no las de donde empezó.
+test('el latido mueve el barrio del conductor al que le corresponde por GPS', async () => {
+  await crearEscenario();
+  const conductor = await darDeAlta();
+  await llamar('POST', '/api/conductor/registro', conductor.uuid, {
+    telefono: conductor.telefono,
+  });
+  await llamar('POST', '/api/conductor/suscripcion', conductor.uuid);
+
+  // Dos barrios al azar y lejos de todo, cada uno en su sitio: se pregunta
+  // por su punto exacto, así que a distancia cero no hay empate posible.
+  const salida = { lat: 3.30 + Math.random() * 0.02, lng: 8.45 + Math.random() * 0.02 };
+  const llegada = { lat: 3.34 + Math.random() * 0.02, lng: 8.41 + Math.random() * 0.02 };
+  const zonaSalida = await enTransaccion(pool, (c) => crearZona(
+    c, `Zona Salida ${randomUUID()}`, salida.lat, salida.lng,
+  ));
+  const zonaLlegada = await enTransaccion(pool, (c) => crearZona(
+    c, `Zona Llegada ${randomUUID()}`, llegada.lat, llegada.lng,
+  ));
+
+  const servicio = await llamar('POST', '/api/conductor/servicio', conductor.uuid, {
+    enServicio: true, ...salida,
+  });
+  assert.equal(Number(servicio.json.zonaId), Number(zonaSalida.zonaId));
+
+  const latido = await llamar('POST', '/api/conductor/heartbeat', conductor.uuid, llegada);
+  assert.equal(latido.codigo, 200, JSON.stringify(latido.json));
+
+  const presencia = await pool.query(
+    'SELECT zona_id FROM presencia WHERE conductor_id = $1',
+    [conductor.conductorId],
+  );
+  assert.equal(Number(presencia.rows[0].zona_id), Number(zonaLlegada.zonaId));
+});
