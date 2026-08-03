@@ -367,6 +367,9 @@ export interface ZonaOperador {
   // Migración 029: agrupación puramente organizativa, no afecta al reparto.
   // null en lo que no se pudo confirmar con una fuente — no es un error.
   distrito: 'Malabo' | 'Baney' | 'Luba' | 'Riaba' | null;
+  // Migración 033: distrito urbano oficial, por su nombre de uso. Otra
+  // etiqueta organizativa — el reparto sigue siendo por barrio.
+  distrito_urbano: string | null;
   // Migración 031: null = esta fila ES un distrito urbano (la zona de
   // siempre, unidad de reparto). Con valor: es un barrio/calle dentro de
   // ese distrito urbano, sin adyacencia propia — solo para clasificar

@@ -833,7 +833,8 @@ export function registrarRutasOperador(
     // entraron sin coordenadas porque ninguna fuente sabía dónde están
     // (migración 025), y hasta que alguien vaya, no existen para el reparto.
     const filas = await pool.query(
-      `SELECT z.id, z.nombre, z.distrito, z.zona_padre_id, z.centroide_lat AS lat, z.centroide_lng AS lng,
+      `SELECT z.id, z.nombre, z.distrito, z.distrito_urbano, z.zona_padre_id,
+              z.centroide_lat AS lat, z.centroide_lng AS lng,
               z.precision_gps_m AS precision_m,
               (z.centroide_lat IS NULL) AS sin_situar,
               (SELECT count(*)::int FROM referencia r WHERE r.zona_id = z.id AND r.activa) AS referencias,

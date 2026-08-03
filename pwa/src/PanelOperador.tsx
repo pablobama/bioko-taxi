@@ -1213,29 +1213,43 @@ function Zonas() {
       {DISTRITOS_ORDEN.map(([clave, etiqueta]) => {
         const deEsteDistrito = situadas.filter((z) => z.distrito === clave);
         if (deEsteDistrito.length === 0) return null;
+        // Y dentro, por distrito urbano (migración 033). Los que todavía no
+        // lo tienen confirmado van al final del suyo, no escondidos.
+        const urbanos = [...new Set(deEsteDistrito.map((z) => z.distrito_urbano))]
+          .sort((a, b) => (a === null ? 1 : b === null ? -1 : a.localeCompare(b)));
         return (
           <div key={clave ?? 'sin-distrito'}>
             <p className="nota"><strong>{etiqueta}</strong> ({deEsteDistrito.length})</p>
-            {deEsteDistrito.map((z) => (
-              <div className="oferta" key={z.id}>
-                <div className="oferta-ruta">{z.nombre}</div>
-                <div className="nota">
-                  {z.lat?.toFixed(5)}, {z.lng?.toFixed(5)} · {z.vecinas} vecina{z.vecinas === 1 ? '' : 's'}
-                  {' · '}{z.referencias} sitio{z.referencias === 1 ? '' : 's'}
-                  {z.precision_m === null
-                    ? ' · precisión desconocida'
-                    : ` · ±${Math.round(z.precision_m)} m`}
-                  {z.vecinas === 0 && ' · ⚠ aislado del reparto'}
+            {urbanos.map((urbano) => {
+              const delUrbano = deEsteDistrito.filter((z) => z.distrito_urbano === urbano);
+              return (
+                <div key={urbano ?? 'sin-urbano'} style={{ marginLeft: 12 }}>
+                  <p className="nota">
+                    {urbano ?? 'Sin distrito urbano confirmado'} ({delUrbano.length})
+                  </p>
+                  {delUrbano.map((z) => (
+                    <div className="oferta" key={z.id}>
+                      <div className="oferta-ruta">{z.nombre}</div>
+                      <div className="nota">
+                        {z.lat?.toFixed(5)}, {z.lng?.toFixed(5)} · {z.vecinas} vecina{z.vecinas === 1 ? '' : 's'}
+                        {' · '}{z.referencias} sitio{z.referencias === 1 ? '' : 's'}
+                        {z.precision_m === null
+                          ? ' · precisión desconocida'
+                          : ` · ±${Math.round(z.precision_m)} m`}
+                        {z.vecinas === 0 && ' · ⚠ aislado del reparto'}
+                      </div>
+                      <button
+                        type="button" className="secundario"
+                        disabled={ocupada !== null}
+                        onClick={() => situar(z)}
+                      >
+                        {ocupada === z.id ? 'Cogiendo GPS…' : 'Corregir: estoy aquí'}
+                      </button>
+                    </div>
+                  ))}
                 </div>
-                <button
-                  type="button" className="secundario"
-                  disabled={ocupada !== null}
-                  onClick={() => situar(z)}
-                >
-                  {ocupada === z.id ? 'Cogiendo GPS…' : 'Corregir: estoy aquí'}
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         );
       })}
