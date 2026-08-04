@@ -254,11 +254,38 @@ export async function crearZonaEnGps(
       throw new Error('Ese distrito urbano ya es un barrio/calle: no puede tener barrios/calles dentro.');
     }
   }
+  // El nombre es único en toda la isla, y se repite: hay San Juan, Santa
+  // María y Puerto en más de un distrito. Antes esto era un upsert por
+  // nombre, así que teclear uno que ya existía movía el barrio existente a
+  // donde estuviera el agente y lo cambiaba de distrito, sin decir nada.
+  // Ahora se mira antes qué hay con ese nombre y se decide en voz alta.
+  const existente = await cliente.query(
+    `SELECT z.id, z.centroide_lat, z.zona_padre_id, p.nombre AS padre
+     FROM zona z LEFT JOIN zona p ON p.id = z.zona_padre_id
+     WHERE z.nombre = $1`,
+    [nombre],
+  );
+  if (existente.rowCount !== 0) {
+    const { id, centroide_lat, zona_padre_id, padre } = existente.rows[0];
+    const donde = padre !== null ? ` (en ${padre})` : '';
+    if (centroide_lat !== null) {
+      throw new Error(
+        `Ya existe «${nombre}»${donde} y ya está situado. Si es otro sitio, ponle un nombre que lo distinga; si es el mismo, muévelo desde su ficha.`,
+      );
+    }
+    // Sin coordenadas es el caso corriente del trabajo de campo: el barrio
+    // entró del censo pendiente de situar y el agente está delante. Se sitúa,
+    // pero no se le cambia el distrito de debajo de los pies.
+    if (Number(zona_padre_id ?? 0) !== Number(zonaPadreId ?? 0)) {
+      throw new Error(
+        `Ya existe «${nombre}»${donde}, sin situar. Sitúalo desde su ficha: cambiarlo de distrito desde aquí sería un accidente.`,
+      );
+    }
+    return situarZona(cliente, Number(id), lat, lng, precisionM);
+  }
+
   const creada = await cliente.query(
-    `INSERT INTO zona (nombre, zona_padre_id) VALUES ($1, $2)
-     ON CONFLICT (nombre) DO UPDATE
-       SET nombre = EXCLUDED.nombre, zona_padre_id = EXCLUDED.zona_padre_id
-     RETURNING id`,
+    'INSERT INTO zona (nombre, zona_padre_id) VALUES ($1, $2) RETURNING id',
     [nombre, zonaPadreId],
   );
   return situarZona(cliente, creada.rows[0].id, lat, lng, precisionM);

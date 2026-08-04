@@ -109,3 +109,44 @@ test('se guarda con qué precisión se situó, para poder repetir los dudosos', 
     assert.equal(importado.rows[0].precision_gps_m, null);
   }
 });
+
+// Los nombres de barrio se repiten de un distrito a otro —San Juan, Santa
+// María, Puerto—, y el agente de campo teclea de memoria. Dar de alta uno
+// que ya existe no puede acabar mudando el que ya estaba.
+test('crear un barrio con un nombre ya situado se niega, y no mueve al que estaba', async () => {
+  const nombre = `Barrio Repetido ${randomUUID().slice(0, 8)}`;
+  const primera = await enTransaccion(pool, (c) => crearZonaEnGps(c, nombre, MALABO.lat, MALABO.lng));
+
+  const lejos = cerca(3000);
+  await assert.rejects(
+    enTransaccion(pool, (c) => crearZonaEnGps(c, nombre, lejos.lat, lejos.lng)),
+    /Ya existe/,
+  );
+
+  const quieto = await pool.query('SELECT centroide_lat FROM zona WHERE id = $1', [primera.zonaId]);
+  assert.ok(
+    Math.abs(Number(quieto.rows[0].centroide_lat) - MALABO.lat) < 1e-9,
+    'el barrio que ya estaba no se movió a donde estaba el agente',
+  );
+});
+
+test('pero si el barrio existe sin situar, estar delante de él es justo lo que faltaba', async () => {
+  const nombre = `Barrio Pendiente ${randomUUID().slice(0, 8)}`;
+  const previa = await pool.query('INSERT INTO zona (nombre) VALUES ($1) RETURNING id', [nombre]);
+  const idPrevio = Number(previa.rows[0].id);
+
+  const situada = await enTransaccion(pool, (c) => crearZonaEnGps(c, nombre, MALABO.lat, MALABO.lng));
+  assert.equal(situada.zonaId, idPrevio, 'se sitúa el que ya estaba, no se duplica');
+});
+
+test('y situarlo no puede cambiarlo de distrito por el camino', async () => {
+  const sufijo = randomUUID().slice(0, 8);
+  const padre = await enTransaccion(pool, (c) => crearZonaEnGps(c, `Distrito ${sufijo}`, MALABO.lat, MALABO.lng));
+  const nombre = `Barrio Ajeno ${sufijo}`;
+  await pool.query('INSERT INTO zona (nombre) VALUES ($1)', [nombre]);
+
+  await assert.rejects(
+    enTransaccion(pool, (c) => crearZonaEnGps(c, nombre, MALABO.lat, MALABO.lng, null, padre.zonaId)),
+    /Ya existe/,
+  );
+});

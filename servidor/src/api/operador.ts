@@ -915,7 +915,7 @@ export function registrarRutasOperador(
         cliente, limpio, lat, lng, precisionM, zonaPadreId ?? null,
       ));
     } catch (error) {
-      if (error instanceof Error && /No existe la zona|ya es un barrio\/calle/.test(error.message)) {
+      if (error instanceof Error && /No existe la zona|ya es un barrio\/calle|Ya existe/.test(error.message)) {
         throw errorHttp(400, error.message);
       }
       throw error;
