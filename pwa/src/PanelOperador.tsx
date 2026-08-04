@@ -1168,6 +1168,7 @@ function Zonas() {
   const distritosUrbanos = zonas?.filter((z) => z.zona_padre_id === null) ?? [];
   const pendientes = distritosUrbanos.filter((z) => z.sin_situar);
   const situadas = distritosUrbanos.filter((z) => !z.sin_situar);
+  const fueraDeUrbanos = situadas.filter((z) => z.distrito_urbano === null);
 
   return (
     <>
@@ -1175,10 +1176,11 @@ function Zonas() {
       {aviso && <p className="nota">{aviso}</p>}
 
       <div className="oferta">
-        <div className="oferta-ruta">Añadir un distrito urbano donde estoy</div>
+        <div className="oferta-ruta">Añadir un barrio donde estoy</div>
         <div className="nota">
           Para barrios que no están en ninguna lista. Se sitúa con el GPS de
-          este teléfono, así que hay que estar allí.
+          este teléfono, así que hay que estar allí. Entra sin distrito urbano:
+          aparecerá abajo, esperando a que se le asigne uno.
         </div>
         <input
           type="text"
@@ -1217,54 +1219,78 @@ function Zonas() {
       )}
 
       <p className="nota">Situados ({situadas.length})</p>
-      {/* Agrupado por distrito (migración 029): puramente organizativo para no
-          tener setenta barrios sueltos sin orden — no afecta al reparto, que
-          sigue funcionando por adyacencia entre zonas, no por distrito. Lo
-          que no se pudo confirmar con una fuente va al final, sin fingir. */}
-      {DISTRITOS_ORDEN.map(([clave, etiqueta]) => {
-        const deEsteDistrito = situadas.filter((z) => z.distrito === clave);
-        if (deEsteDistrito.length === 0) return null;
-        // Y dentro, por distrito urbano (migración 033). Los que todavía no
-        // lo tienen confirmado van al final del suyo, no escondidos.
-        const urbanos = [...new Set(deEsteDistrito.map((z) => z.distrito_urbano))]
-          .sort((a, b) => (a === null ? 1 : b === null ? -1 : a.localeCompare(b)));
+      {/* La lista es la de los siete distritos urbanos (migración 040) y, bajo
+          cada uno, sus barrios. Agrupar es puramente organizativo: el reparto
+          no mira el distrito urbano, sigue funcionando por barrio y
+          adyacencia. */}
+      {DISTRITOS_URBANOS.map((urbano) => {
+        const barrios = situadas.filter((z) => z.distrito_urbano === urbano);
+        if (barrios.length === 0) return null;
         return (
-          <div key={clave ?? 'sin-distrito'}>
-            <p className="nota"><strong>{etiqueta}</strong> ({deEsteDistrito.length})</p>
-            {urbanos.map((urbano) => {
-              const delUrbano = deEsteDistrito.filter((z) => z.distrito_urbano === urbano);
-              return (
-                <div key={urbano ?? 'sin-urbano'} style={{ marginLeft: 12 }}>
-                  <p className="nota">
-                    {urbano ?? 'Sin distrito urbano confirmado'} ({delUrbano.length})
-                  </p>
-                  {delUrbano.map((z) => (
-                    <div className="oferta" key={z.id}>
-                      <div className="oferta-ruta">{z.nombre}</div>
-                      <div className="nota">
-                        {z.lat?.toFixed(5)}, {z.lng?.toFixed(5)} · {z.vecinas} vecina{z.vecinas === 1 ? '' : 's'}
-                        {' · '}{z.referencias} sitio{z.referencias === 1 ? '' : 's'}
-                        {z.precision_m === null
-                          ? ' · precisión desconocida'
-                          : ` · ±${Math.round(z.precision_m)} m`}
-                        {z.vecinas === 0 && ' · ⚠ aislado del reparto'}
-                      </div>
-                      <button
-                        type="button" className="secundario"
-                        disabled={ocupada !== null}
-                        onClick={() => situar(z)}
-                      >
-                        {ocupada === z.id ? 'Cogiendo GPS…' : 'Corregir: estoy aquí'}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              );
-            })}
+          <div key={urbano}>
+            <p className="nota"><strong>{urbano}</strong> ({barrios.length})</p>
+            <div style={{ marginLeft: 12 }}>
+              {barrios.map((z) => (
+                <FichaZona key={z.id} zona={z} ocupada={ocupada} alSituar={situar} />
+              ))}
+            </div>
           </div>
         );
       })}
+
+      {/* Y lo que no cae en ninguno, al final: separado y contado, no
+          escondido. Esconderlo de la única pantalla desde la que se puede
+          arreglar es como se quedan las cosas sin arreglar para siempre. */}
+      {fueraDeUrbanos.length > 0 && (
+        <>
+          <p className="nota">
+            Fuera de los siete distritos urbanos ({fueraDeUrbanos.length}). Baney,
+            Luba y Riaba no tienen; los de Malabo están pendientes de asignar.
+          </p>
+          {DISTRITOS_ORDEN.map(([clave, etiqueta]) => {
+            const delDistrito = fueraDeUrbanos.filter((z) => z.distrito === clave);
+            if (delDistrito.length === 0) return null;
+            return (
+              <div key={clave ?? 'sin-distrito'}>
+                <p className="nota"><strong>{etiqueta}</strong> ({delDistrito.length})</p>
+                <div style={{ marginLeft: 12 }}>
+                  {delDistrito.map((z) => (
+                    <FichaZona key={z.id} zona={z} ocupada={ocupada} alSituar={situar} />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </>
+      )}
     </>
+  );
+}
+
+function FichaZona({ zona, ocupada, alSituar }: {
+  zona: ZonaOperador;
+  ocupada: number | 'nueva' | null;
+  alSituar: (z: ZonaOperador) => void;
+}) {
+  return (
+    <div className="oferta">
+      <div className="oferta-ruta">{zona.nombre}</div>
+      <div className="nota">
+        {zona.lat?.toFixed(5)}, {zona.lng?.toFixed(5)} · {zona.vecinas} vecina{zona.vecinas === 1 ? '' : 's'}
+        {' · '}{zona.referencias} sitio{zona.referencias === 1 ? '' : 's'}
+        {zona.precision_m === null
+          ? ' · precisión desconocida'
+          : ` · ±${Math.round(zona.precision_m)} m`}
+        {zona.vecinas === 0 && ' · ⚠ aislado del reparto'}
+      </div>
+      <button
+        type="button" className="secundario"
+        disabled={ocupada !== null}
+        onClick={() => alSituar(zona)}
+      >
+        {ocupada === zona.id ? 'Cogiendo GPS…' : 'Corregir: estoy aquí'}
+      </button>
+    </div>
   );
 }
 
@@ -1408,6 +1434,14 @@ function Barrios() {
 // El orden es a propósito: los cuatro distritos confirmados primero, y al
 // final los barrios sin distrito confirmado — no se ocultan, pero tampoco se
 // mezclan con lo que sí se sabe.
+// Los siete que el operador reconoce sobre el terreno (migración 040). El
+// orden no es alfabético: es de dentro hacia fuera de la ciudad, que es como
+// se piensa Malabo desde dentro.
+const DISTRITOS_URBANOS = [
+  'Malabo Centro', 'Ela Nguema', 'Semu', 'Banapá', 'Santa María',
+  'Sácriba', 'Alegre',
+] as const;
+
 const DISTRITOS_ORDEN: Array<[ZonaOperador['distrito'], string]> = [
   ['Malabo', 'Malabo'],
   ['Baney', 'Baney'],
@@ -1421,7 +1455,8 @@ const DISTRITOS_ORDEN: Array<[ZonaOperador['distrito'], string]> = [
 const SECCIONES = [
   ['resumen', 'Resumen'], ['central', 'Central'], ['incidencias', 'Incidencias'],
   ['conductores', 'Conductores'], ['pasajeros', 'Pasajeros'], ['pagos', 'Pagos'],
-  ['zonas', 'Zonas'], ['barrios', 'Barrios'], ['lugares', 'Lugares'], ['ajustes', 'Ajustes'],
+  ['zonas', 'Distritos Urbanos'], ['barrios', 'Barrios'], ['lugares', 'Lugares'],
+  ['ajustes', 'Ajustes'],
 ] as const;
 type Seccion = (typeof SECCIONES)[number][0];
 
