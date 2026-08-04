@@ -396,6 +396,9 @@ export interface ReferenciaOperador {
   zona_id: number;
   zona: string;
   alias: string[];
+  // Migración 038: metros de radio del GPS con el que se fijó. null = se
+  // puso a mano, sin verificar sobre el terreno.
+  precision_m: number | null;
 }
 
 export interface BandaOperador {
@@ -514,7 +517,7 @@ export const api = {
   // --- Conductor -----------------------------------------------------------
 
   registroConductor: (telefono: string) =>
-    pedirJson<{ zonas: Zona[] }>('/api/conductor/registro', {
+    pedirJson<{ conductorId: number; nombre: string; estado: string }>('/api/conductor/registro', {
       method: 'POST',
       body: JSON.stringify({ telefono }),
     }),
@@ -774,8 +777,11 @@ export const api = {
     );
   },
 
+  // `precision` es la del GPS, en metros. Sin ella el sitio queda marcado
+  // como puesto a mano y sin verificar sobre el terreno (migración 038).
   crearReferenciaOperador: (datos: {
-    zonaId: number; nombre: string; lat: number; lng: number; categoria?: string;
+    zonaId: number; nombre: string; lat: number; lng: number;
+    categoria?: string; precision?: number;
   }) =>
     pedirJson<{ referenciaId: number; creada: boolean }>(
       '/api/operador/referencias',
@@ -784,7 +790,7 @@ export const api = {
 
   editarReferenciaOperador: (id: number, cambios: {
     nombre?: string; zonaId?: number; lat?: number; lng?: number;
-    activa?: boolean; categoria?: string;
+    activa?: boolean; categoria?: string; precision?: number;
   }) =>
     pedirJson<{ editada: boolean }>(
       `/api/operador/referencias/${id}`,

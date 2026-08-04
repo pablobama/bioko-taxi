@@ -50,15 +50,23 @@ function exigirCategoria(categoria: string | undefined): string | undefined {
   return limpia;
 }
 
-// El mismo recuadro con el que se compiló el plano. Un GPS que todavía no ha
-// fijado devuelve a veces (0, 0) o una posición de hace días en otro país:
-// guardar eso como el centro de un barrio dejaría el reparto tocado y nadie
-// sabría por qué.
-const RECUADRO_MALABO = { sur: 3.695, oeste: 8.705, norte: 3.815, este: 8.845 };
+// La isla entera, no solo Malabo ciudad. Un GPS que todavía no ha fijado
+// devuelve a veces (0, 0) o una posición de hace días en otro país: guardar
+// eso como el centro de un barrio dejaría el reparto tocado y nadie sabría
+// por qué.
+//
+// Antes el recuadro era el de Malabo ciudad (3,695–3,815 N / 8,705–8,845 E),
+// el mismo con el que se compiló el plano de calles. Pero el catálogo ya
+// llega a Luba, Moka, Riaba, Batoicopo y los Basacato: veintiséis de los
+// cincuenta barrios situados caían FUERA, así que no se podían situar ni
+// corregir desde el panel y había que tocarlos por SQL. Sigue rechazando lo
+// que importa —el (0,0), la costa de Bata, Annobón— porque Bioko es una isla
+// pequeña y aislada.
+const RECUADRO_BIOKO = { sur: 3.18, oeste: 8.38, norte: 3.81, este: 8.99 };
 
-function enMalabo(lat: number, lng: number): boolean {
-  return lat >= RECUADRO_MALABO.sur && lat <= RECUADRO_MALABO.norte
-    && lng >= RECUADRO_MALABO.oeste && lng <= RECUADRO_MALABO.este;
+function enBioko(lat: number, lng: number): boolean {
+  return lat >= RECUADRO_BIOKO.sur && lat <= RECUADRO_BIOKO.norte
+    && lng >= RECUADRO_BIOKO.oeste && lng <= RECUADRO_BIOKO.este;
 }
 
 // Lo que el recuadro NO puede detectar: un punto dentro de Malabo pero malo.
@@ -87,6 +95,17 @@ async function exigirGpsFiable(
     );
   }
   return precision;
+}
+
+// La precisión de un LUGAR. A diferencia de un barrio, aquí se permite no
+// mandarla: a veces se añade un sitio desde la oficina sabiendo dónde está, y
+// prohibirlo dejaría el catálogo sin sitios que alguien conoce de sobra. Pero
+// si viene, se valida con la misma vara que la de un barrio, y si no viene se
+// guarda NULL — que es lo que el panel enseña como «sin verificar sobre el
+// terreno» para poder repasarlo después.
+async function precisionDeSitio(pool: pg.Pool, precision: unknown): Promise<number | null> {
+  if (precision === undefined || precision === null) return null;
+  return exigirGpsFiable(pool, precision);
 }
 
 function errorHttp(codigo: number, mensaje: string): Error & { statusCode: number } {
@@ -857,8 +876,8 @@ export function registrarRutasOperador(
     if (typeof lat !== 'number' || typeof lng !== 'number') {
       throw errorHttp(400, 'Faltan las coordenadas (lat, lng).');
     }
-    if (!enMalabo(lat, lng)) {
-      throw errorHttp(400, 'Esas coordenadas caen fuera de Malabo. ¿Se cogió el GPS de verdad?');
+    if (!enBioko(lat, lng)) {
+      throw errorHttp(400, 'Esas coordenadas caen fuera de Bioko. ¿Se cogió el GPS de verdad?');
     }
     const precisionM = await exigirGpsFiable(pool, precision);
     try {
@@ -887,8 +906,8 @@ export function registrarRutasOperador(
     if (typeof lat !== 'number' || typeof lng !== 'number') {
       throw errorHttp(400, 'Faltan las coordenadas (lat, lng).');
     }
-    if (!enMalabo(lat, lng)) {
-      throw errorHttp(400, 'Esas coordenadas caen fuera de Malabo. ¿Se cogió el GPS de verdad?');
+    if (!enBioko(lat, lng)) {
+      throw errorHttp(400, 'Esas coordenadas caen fuera de Bioko. ¿Se cogió el GPS de verdad?');
     }
     const precisionM = await exigirGpsFiable(pool, precision);
     try {
@@ -910,7 +929,7 @@ export function registrarRutasOperador(
     // incluidas, porque para reactivar algo primero hay que encontrarlo.
     const filas = await pool.query(
       `SELECT r.id, r.nombre, r.lat, r.lng, r.categoria, r.activa,
-              r.veces_usada AS usos,
+              r.veces_usada AS usos, r.precision_gps_m AS precision_m,
               z.id AS zona_id, z.nombre AS zona,
               COALESCE((SELECT array_agg(a.alias ORDER BY a.alias)
                         FROM referencia_alias a WHERE a.referencia_id = r.id), '{}') AS alias
@@ -929,20 +948,23 @@ export function registrarRutasOperador(
   app.post('/api/operador/referencias', async (req) => {
     await exigirCampo(req);
     const cuerpo = (req.body ?? {}) as {
-      zonaId?: number; nombre?: string; lat?: number; lng?: number; categoria?: string;
+      zonaId?: number; nombre?: string; lat?: number; lng?: number;
+      categoria?: string; precision?: number;
     };
     if (!cuerpo.zonaId || !cuerpo.nombre?.trim()
       || typeof cuerpo.lat !== 'number' || typeof cuerpo.lng !== 'number') {
       throw errorHttp(400, 'Faltan campos: zonaId, nombre, lat y lng son obligatorios.');
     }
+    if (!enBioko(cuerpo.lat, cuerpo.lng)) {
+      throw errorHttp(400, 'Esas coordenadas caen fuera de Bioko. ¿Se cogió el GPS de verdad?');
+    }
     const categoria = exigirCategoria(cuerpo.categoria);
+    const precisionM = await precisionDeSitio(pool, cuerpo.precision);
     const resultado = await enTransaccion(pool, async (cliente) => {
       const r = await guardarReferencia(cliente, {
         zonaId: cuerpo.zonaId!, nombre: cuerpo.nombre!.trim(), lat: cuerpo.lat!, lng: cuerpo.lng!,
       });
-      if (categoria) {
-        await editarReferencia(cliente, r.referenciaId, { categoria });
-      }
+      await editarReferencia(cliente, r.referenciaId, { categoria, precisionM });
       return r;
     });
     return resultado;
@@ -954,13 +976,25 @@ export function registrarRutasOperador(
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de referencia no válido.');
     const cambios = (req.body ?? {}) as {
       nombre?: string; zonaId?: number; lat?: number; lng?: number;
-      activa?: boolean; categoria?: string;
+      activa?: boolean; categoria?: string; precision?: number;
     };
     // Al corregir vale la misma regla que al crear: una categoría inventada
     // llegaba a la base y salía el error del CHECK en crudo.
     if (cambios.categoria !== undefined) exigirCategoria(cambios.categoria);
+    if (typeof cambios.lat === 'number' && typeof cambios.lng === 'number'
+      && !enBioko(cambios.lat, cambios.lng)) {
+      throw errorHttp(400, 'Esas coordenadas caen fuera de Bioko. ¿Se cogió el GPS de verdad?');
+    }
+    // Mover un sitio reescribe con qué confianza está puesto: si se corrige
+    // con el GPS queda su precisión, y si se teclea a mano queda sin
+    // verificar. Dejar la precisión vieja pegada a unas coordenadas nuevas
+    // sería mentir sobre el dato.
+    const { precision, ...resto } = cambios;
+    const conPrecision = (typeof cambios.lat === 'number' || typeof cambios.lng === 'number')
+      ? { ...resto, precisionM: await precisionDeSitio(pool, precision) }
+      : resto;
     try {
-      await enTransaccion(pool, (cliente) => editarReferencia(cliente, id, cambios));
+      await enTransaccion(pool, (cliente) => editarReferencia(cliente, id, conPrecision));
     } catch (error) {
       if (error instanceof ErrorEntidadInexistente) throw errorHttp(404, error.message);
       throw error;

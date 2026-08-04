@@ -187,6 +187,11 @@ export interface CambiosReferencia {
   lng?: number;
   activa?: boolean;
   categoria?: string;
+  // Metros de radio que declaró el teléfono (migración 038). `null` no es lo
+  // mismo que no mandarlo: null dice «se puso a mano, sin verificar sobre el
+  // terreno» y BORRA la precisión que hubiera —porque las coordenadas que
+  // acompañan son otras—, mientras que omitir la clave deja lo que hubiera.
+  precisionM?: number | null;
 }
 
 export async function editarReferencia(
@@ -195,13 +200,17 @@ export async function editarReferencia(
   cambios: CambiosReferencia,
 ): Promise<void> {
   const res = await cliente.query(
+    // La precisión va aparte del resto: los demás campos usan COALESCE, que
+    // no distingue «no lo mandes» de «ponlo a null», y aquí esa diferencia
+    // es justo la que dice si el sitio se verificó sobre el terreno.
     `UPDATE referencia
      SET nombre = COALESCE($2, nombre),
          zona_id = COALESCE($3, zona_id),
          lat = COALESCE($4, lat),
          lng = COALESCE($5, lng),
          activa = COALESCE($6, activa),
-         categoria = COALESCE($7, categoria)
+         categoria = COALESCE($7, categoria),
+         precision_gps_m = CASE WHEN $8 THEN $9 ELSE precision_gps_m END
      WHERE id = $1`,
     [
       referenciaId,
@@ -211,6 +220,8 @@ export async function editarReferencia(
       cambios.lng ?? null,
       cambios.activa ?? null,
       cambios.categoria ?? null,
+      'precisionM' in cambios,
+      cambios.precisionM ?? null,
     ],
   );
   if (res.rowCount === 0) {

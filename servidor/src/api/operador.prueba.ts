@@ -485,3 +485,64 @@ test('parámetros: se listan con descripción, se actualizan, y los inventados d
   });
   assert.equal(inventado.statusCode, 404, 'crear parámetros desde el panel sería inventarse configuración');
 });
+
+// Migración 038: un lugar se fija con las mismas reglas que un barrio.
+test('un lugar puesto a mano queda marcado como sin verificar sobre el terreno', async () => {
+  const { zonaId } = await crearZonaConReferencias();
+
+  const aMano = await app.inject({
+    method: 'POST', url: '/api/operador/referencias', headers: cabeceras(UUID_OPERADOR),
+    payload: { zonaId, nombre: `Sitio a mano ${randomUUID()}`, lat: 3.752, lng: 8.782 },
+  });
+  assert.equal(aMano.statusCode, 200, aMano.body);
+  const sinVerificar = await pool.query(
+    'SELECT precision_gps_m FROM referencia WHERE id = $1',
+    [aMano.json().referenciaId],
+  );
+  assert.equal(sinVerificar.rows[0].precision_gps_m, null);
+
+  const conGps = await app.inject({
+    method: 'POST', url: '/api/operador/referencias', headers: cabeceras(UUID_OPERADOR),
+    payload: {
+      zonaId, nombre: `Sitio con GPS ${randomUUID()}`,
+      lat: 3.752, lng: 8.782, precision: 9,
+    },
+  });
+  assert.equal(conGps.statusCode, 200, conGps.body);
+  const verificado = await pool.query(
+    'SELECT precision_gps_m FROM referencia WHERE id = $1',
+    [conGps.json().referenciaId],
+  );
+  assert.equal(Number(verificado.rows[0].precision_gps_m), 9);
+});
+
+test('un lugar con el GPS demasiado impreciso se rechaza, como un barrio', async () => {
+  const { zonaId } = await crearZonaConReferencias();
+  const res = await app.inject({
+    method: 'POST', url: '/api/operador/referencias', headers: cabeceras(UUID_OPERADOR),
+    payload: {
+      zonaId, nombre: `Sitio impreciso ${randomUUID()}`,
+      lat: 3.752, lng: 8.782, precision: 900,
+    },
+  });
+  assert.equal(res.statusCode, 400);
+  assert.match(res.json().error, /cielo abierto/);
+});
+
+test('un lugar fuera de Bioko se rechaza; dentro de la isla pero lejos de Malabo se acepta', async () => {
+  const { zonaId } = await crearZonaConReferencias();
+
+  const fuera = await app.inject({
+    method: 'POST', url: '/api/operador/referencias', headers: cabeceras(UUID_OPERADOR),
+    payload: { zonaId, nombre: `Sitio de Bata ${randomUUID()}`, lat: 1.86, lng: 9.77 },
+  });
+  assert.equal(fuera.statusCode, 400);
+  assert.match(fuera.json().error, /fuera de Bioko/);
+
+  // Luba, al suroeste: caía fuera del recuadro viejo de Malabo ciudad.
+  const enLuba = await app.inject({
+    method: 'POST', url: '/api/operador/referencias', headers: cabeceras(UUID_OPERADOR),
+    payload: { zonaId, nombre: `Sitio de Luba ${randomUUID()}`, lat: 3.4561, lng: 8.5492 },
+  });
+  assert.equal(enLuba.statusCode, 200, enLuba.body);
+});

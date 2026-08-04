@@ -169,29 +169,48 @@ export async function situarZona(
 ): Promise<ZonaSituada> {
   const zona = await cliente.query(
     `UPDATE zona SET centroide_lat = $2, centroide_lng = $3, precision_gps_m = $4
-     WHERE id = $1 RETURNING nombre, zona_padre_id`,
+     WHERE id = $1 RETURNING nombre, zona_padre_id, referencia_id`,
     [zonaId, lat, lng, precisionM],
   );
   if (zona.rowCount === 0) {
     throw new Error(`No existe la zona con identificador ${zonaId}.`);
   }
   const nombre: string = zona.rows[0].nombre;
+  const referenciaExistente: number | null = zona.rows[0].referencia_id;
   // Barrio/calle (migración 031): tiene padre, así que no es unidad de
   // reparto — no calcula ni recibe adyacencia, solo su centroide y su
   // referencia propia.
   const esBarrioOCalle = zona.rows[0].zona_padre_id !== null;
 
-  // La referencia del propio barrio se crea o se recoloca. Clave natural
-  // (zona, nombre), como en el resto del gazetteer: mover un barrio no puede
-  // dejar dos entradas suyas en el buscador.
-  const referencia = await cliente.query(
-    `INSERT INTO referencia (zona_id, nombre, lat, lng, categoria)
-     VALUES ($1, $2, $3, $4, 'zona')
-     ON CONFLICT (zona_id, nombre) DO UPDATE
-       SET lat = EXCLUDED.lat, lng = EXCLUDED.lng, activa = true
-     RETURNING id`,
-    [zonaId, nombre, lat, lng],
-  );
+  // La entrada del propio barrio en el buscador, porque «llévame a Ela
+  // Nguema» es como se pide un taxi de verdad.
+  //
+  // Se sigue por `zona.referencia_id` (migración 038) y no por el nombre: si
+  // se busca por nombre, renombrar el barrio deja la entrada vieja huérfana
+  // con el nombre antiguo y crea otra. Con el vínculo explícito, la entrada
+  // se renombra y se mueve con su barrio.
+  let referenciaId: number;
+  if (referenciaExistente !== null) {
+    await cliente.query(
+      `UPDATE referencia
+       SET nombre = $2, lat = $3, lng = $4, precision_gps_m = $5, activa = true
+       WHERE id = $1`,
+      [referenciaExistente, nombre, lat, lng, precisionM],
+    );
+    referenciaId = referenciaExistente;
+  } else {
+    const creada = await cliente.query(
+      `INSERT INTO referencia (zona_id, nombre, lat, lng, categoria, precision_gps_m)
+       VALUES ($1, $2, $3, $4, 'zona', $5)
+       ON CONFLICT (zona_id, nombre) DO UPDATE
+         SET lat = EXCLUDED.lat, lng = EXCLUDED.lng,
+             precision_gps_m = EXCLUDED.precision_gps_m, activa = true
+       RETURNING id`,
+      [zonaId, nombre, lat, lng, precisionM],
+    );
+    referenciaId = creada.rows[0].id;
+    await cliente.query('UPDATE zona SET referencia_id = $2 WHERE id = $1', [zonaId, referenciaId]);
+  }
 
   let vecinas = 0;
   if (!esBarrioOCalle) {
@@ -205,7 +224,7 @@ export async function situarZona(
     await reconectarAislados(cliente, antiguas.rows.map((f: { id: number }) => f.id));
   }
 
-  return { zonaId, nombre, referenciaId: referencia.rows[0].id, vecinas, precisionM };
+  return { zonaId, nombre, referenciaId, vecinas, precisionM };
 }
 
 // Crea un barrio que no estaba en ninguna lista y lo sitúa de una vez. Pasa:

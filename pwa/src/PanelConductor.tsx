@@ -39,8 +39,6 @@ export default function PanelConductor({
 }) {
   const t = crearT(idioma);
   const [estado, setEstado] = useState<EstadoConductor | null>(null);
-  const [zonas, setZonas] = useState<Zona[]>([]);
-  const [zonaElegida, setZonaElegida] = useState<number | null>(null);
   const [aviso, setAviso] = useState('');
   const [ocupado, setOcupado] = useState(false);
   const [enRecarga, setEnRecarga] = useState(false);
@@ -102,11 +100,9 @@ export default function PanelConductor({
     }
   }, []);
 
-  // Registro del dispositivo como este conductor y carga de zonas.
+  // Registro del dispositivo como este conductor.
   useEffect(() => {
-    api.registroConductor(conductor.telefono)
-      .then((r) => setZonas(r.zonas))
-      .catch(() => undefined);
+    api.registroConductor(conductor.telefono).catch(() => undefined);
     void refrescar();
   }, [conductor.telefono, refrescar]);
 

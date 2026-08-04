@@ -675,12 +675,16 @@ function EditorReferencia({
   const [precision, setPrecision] = useState<number | null>(null);
   const [avisoGps, setAvisoGps] = useState('');
 
+  // `precision` va con las coordenadas: si se corrigió con el GPS viaja su
+  // radio, y si se tecleó a mano no viaja ninguno y el sitio queda marcado
+  // como sin verificar sobre el terreno.
   const guardar = () => accion(() => api.editarReferenciaOperador(referencia.id, {
     nombre: nombre.trim() || undefined,
     categoria: categoria.trim() || undefined,
     zonaId: Number(zonaId),
     lat: Number(lat),
     lng: Number(lng),
+    precision: precision ?? undefined,
   }));
 
   return (
@@ -818,6 +822,7 @@ function Lugares() {
         lat: Number(nueva.lat),
         lng: Number(nueva.lng),
         categoria: nueva.categoria.trim() || undefined,
+        precision: precisionNueva ?? undefined,
       });
       setCreando(false);
       setNueva((n) => ({ ...n, nombre: '', categoria: '', lat: '', lng: '' }));
@@ -912,6 +917,12 @@ function Lugares() {
             </span>
             <span className="nota">
               {r.zona} · {r.categoria} · {r.usos} uso{r.usos === 1 ? '' : 's'}
+              {/* Con qué confianza está puesto (migración 038). Sin
+                  precisión el sitio se tecleó a mano o vino del importador,
+                  y conviene pasar por allí a confirmarlo. */}
+              {r.precision_m === null
+                ? ' · ⚠ sin verificar sobre el terreno'
+                : ` · ±${Math.round(r.precision_m)} m`}
               {r.alias.length > 0 && ` · alias: ${r.alias.join(', ')}`}
             </span>
           </button>

@@ -192,18 +192,6 @@ export function registrarRutasConductor(
         [conductorId],
       );
 
-      // Con centroide: la aplicación del taxista ordena las zonas por cercanía
-      // a donde está, para no obligarle a buscar la suya en una lista de
-      // cuarenta y siete barrios mientras conduce.
-      //
-      // Solo distritos urbanos (zona_padre_id IS NULL, migración 031): un
-      // barrio/calle no es un sitio donde se pueda «trabajar» — es un nivel
-      // más fino para clasificar lugares, no una unidad de reparto.
-      const zonas = await cliente.query(
-        `SELECT id, nombre, centroide_lat AS lat, centroide_lng AS lng
-         FROM zona WHERE centroide_lat IS NOT NULL AND zona_padre_id IS NULL
-         ORDER BY nombre`,
-      );
       const presencia = await cliente.query('SELECT estado FROM presencia WHERE conductor_id = $1', [conductorId]);
       const saldo = await cliente.query('SELECT saldo_xaf FROM saldo_monedero WHERE conductor_id = $1', [conductorId]);
       const suscripcion = await cliente.query('SELECT suscrito_hasta FROM conductor WHERE id = $1', [conductorId]);
@@ -215,7 +203,10 @@ export function registrarRutasConductor(
         suscritoHasta: suscripcion.rows[0].suscrito_hasta,
         cuotaXaf: await leerParametroEntero(cliente, 'suscripcion_importe_xaf'),
         cuotaDias: await leerParametroEntero(cliente, 'suscripcion_dias'),
-        zonas: zonas.rows.filter((z) => !String(z.nombre).startsWith('Zona ')),
+        // Aquí viajaba la lista entera de barrios con sus coordenadas, para
+        // que el taxista eligiera el suyo. Desde que el barrio lo decide el
+        // GPS ya no la usa nadie: era medio kilobyte por registro en datos
+        // prepagados, y creciendo con cada barrio nuevo del catálogo.
       };
     });
   });
