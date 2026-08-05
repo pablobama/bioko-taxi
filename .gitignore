@@ -1,4 +1,9 @@
 node_modules/
+# Credenciales: la cadena de conexión a la base de producción, las claves de
+# Twilio. Un despiste con `git add -A` las publica en GitHub para siempre.
+.env
+.env.*
+!.env.ejemplo
 .bd-dev/
 .claude/scheduled_tasks.lock
 *.log
