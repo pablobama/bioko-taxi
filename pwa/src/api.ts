@@ -375,6 +375,10 @@ export interface ZonaOperador {
   // ese distrito urbano, sin adyacencia propia — solo para clasificar
   // lugares con más precisión.
   zona_padre_id: number | null;
+  // Migración 041: la zona que hace de cabecera de su distrito urbano. Solo
+  // hay siete, y son las únicas de las que se puede colgar un barrio o una
+  // calle — lo demás son barrios, por mucho que estén al primer nivel.
+  es_cabecera_urbana: boolean;
   lat: number | null;
   lng: number | null;
   sin_situar: boolean;

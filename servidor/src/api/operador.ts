@@ -853,6 +853,7 @@ export function registrarRutasOperador(
     // (migración 025), y hasta que alguien vaya, no existen para el reparto.
     const filas = await pool.query(
       `SELECT z.id, z.nombre, z.distrito, z.distrito_urbano, z.zona_padre_id,
+              z.es_cabecera_urbana,
               z.centroide_lat AS lat, z.centroide_lng AS lng,
               z.precision_gps_m AS precision_m,
               (z.centroide_lat IS NULL) AS sin_situar,

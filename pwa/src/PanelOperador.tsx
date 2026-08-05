@@ -1347,10 +1347,15 @@ function Barrios() {
     });
   }
 
-  const distritosUrbanos = (zonas ?? []).filter((z) => z.zona_padre_id === null);
+  // Solo las siete cabeceras (migración 041). Antes era «toda zona de primer
+  // nivel», que son los setenta y pico barrios de la isla: el desplegable
+  // ofrecía Abayak o Bar Peaje como si fueran distritos urbanos.
+  const cabeceras = (zonas ?? []).filter((z) => z.es_cabecera_urbana);
   const barrios = (zonas ?? []).filter((z) => z.zona_padre_id !== null);
   const nombrePadre = (padreId: number): string =>
-    distritosUrbanos.find((d) => d.id === padreId)?.nombre ?? `#${padreId}`;
+    (zonas ?? []).find((d) => d.id === padreId)?.distrito_urbano
+    ?? (zonas ?? []).find((d) => d.id === padreId)?.nombre
+    ?? `#${padreId}`;
 
   return (
     <>
@@ -1368,7 +1373,9 @@ function Barrios() {
         <div className="oferta-ruta">Añadir un barrio/calle donde estoy</div>
         <select value={padreNuevo} onChange={(e) => setPadreNuevo(e.target.value ? Number(e.target.value) : '')}>
           <option value="">Distrito urbano…</option>
-          {distritosUrbanos.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+          {cabeceras.map((d) => (
+            <option key={d.id} value={d.id}>{d.distrito_urbano}</option>
+          ))}
         </select>
         <input
           type="text"
