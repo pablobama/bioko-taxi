@@ -15,6 +15,7 @@
     "gazetteer": "tsx scripts/gazetteer.ts",
     "bd:pois-reales": "tsx scripts/importar-pois-reales.ts",
     "bd:barrios": "tsx scripts/importar-barrios.ts",
+    "bd:osm": "tsx scripts/importar-osm-bioko.ts",
     "limpiar": "tsx scripts/limpiar-pruebas.ts"
   },
   "dependencies": {

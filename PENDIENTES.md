@@ -320,6 +320,23 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   dudosos. Los barrios cargados por el importador la tienen a NULL: no se
   sabe con qué precisión se tomaron, y fingir un número sería peor.
 
+- **[P41-01] Google Maps no puede ser la fuente del catálogo.** Se planteó
+  coger de Google las ubicaciones que faltan. No se puede: sus términos
+  prohíben guardar sus coordenadas para construir una base de datos propia y
+  prohíben enseñar sus datos sobre un mapa que no sea el suyo, que es
+  exactamente lo que son `zona` y `referencia`. Se puede usar su buscador en
+  vivo, pagando por consulta y sin guardar nada, pero eso no fija nada: al día
+  siguiente se está igual. Y aparte, Google conoce Malabo por encima: tiene los
+  hoteles y las embajadas, no tiene Comandachina ni Barrio Bisinga. La fuente
+  es OpenStreetMap (ODbL, cita obligatoria), que es de donde ya salió el
+  catálogo actual — ver `scripts/importar-osm-bioko.ts`.
+
+- **[P41-02] Los pueblos que OSM conoce y aquí no son zona.** El importador de
+  Bioko los lista y no los da de alta a propósito: crear una zona cambia la
+  topología del reparto (vecinas, oleadas), y quién es un barrio de verdad en
+  Baney o Luba no lo decide un punto de OpenStreetMap. Queda como cola de
+  trabajo para el operador, que los va confirmando.
+
 ## Resueltos
 
 - **[P27-01] Verificación de teléfono por SMS (Twilio Verify)** — resuelto el
