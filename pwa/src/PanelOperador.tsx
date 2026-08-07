@@ -10,11 +10,13 @@ import {
   api,
   type BandaOperador, type ConductorOperador, type EstadisticasOperador,
   type FichaConductorOperador, type FichaPasajeroOperador, type IncidenciaOperador,
-  type ParametroOperador, type PasajeroOperador, type RecargaOperador,
-  type ReferenciaOperador, type SaludOperador, type SolicitudCentral,
-  type TransicionOperador, type ViajeResumenOperador, type ZonaOperador,
+  type ParametroOperador, type PasajeroOperador, type PeriodoRecorrido,
+  type RecargaOperador, type RecorridoOperador, type ReferenciaOperador,
+  type SaludOperador, type SolicitudCentral, type TransicionOperador,
+  type ViajeResumenOperador, type ZonaOperador,
 } from './api';
 import { ESTILO_CATEGORIA } from './categorias';
+import Mapa from './Mapa';
 
 // Las categorías que la base acepta (CHECK de la migración 021). Se sacan de
 // donde ya estaban —el mismo sitio que dibuja los pictogramas del mapa— para
@@ -563,6 +565,7 @@ function FichaConductor({
           {ficha.es_agente ? 'Quitar el papel de agente de campo' : 'Nombrar agente de campo'}
         </button>
       </div>
+      <RecorridoConductor id={ficha.id} />
       <p className="nota">Últimos viajes</p>
       <ListaViajes viajes={ficha.ultimosViajes} />
       {ficha.recargas.length > 0 && (
@@ -575,6 +578,74 @@ function FichaConductor({
               </li>
             ))}
           </ul>
+        </>
+      )}
+    </>
+  );
+}
+
+// Por dónde anduvo este taxi (migración 042). Se pide al abrir y al cambiar
+// de periodo, no antes: un mes de recorrido son cientos de puntos, y la mayor
+// parte de las veces que se abre una ficha de conductor es para verificarlo o
+// para mirarle el saldo.
+const PERIODOS: Array<[PeriodoRecorrido, string]> = [
+  ['dia', 'Hoy'], ['semana', 'Semana'], ['mes', 'Mes'],
+];
+
+function RecorridoConductor({ id }: { id: number }) {
+  const [periodo, setPeriodo] = useState<PeriodoRecorrido>('dia');
+  const [recorrido, setRecorrido] = useState<RecorridoOperador | null>(null);
+  const [error, setError] = useState('');
+  const [cargando, setCargando] = useState(true);
+
+  useEffect(() => {
+    let vivo = true;
+    setCargando(true);
+    setError('');
+    api.recorridoConductor(id, periodo)
+      .then((r) => { if (vivo) setRecorrido(r); })
+      .catch((e) => { if (vivo) setError(e.message); })
+      .finally(() => { if (vivo) setCargando(false); });
+    return () => { vivo = false; };
+  }, [id, periodo]);
+
+  const tramos = recorrido?.tramos ?? [];
+  const km = ((recorrido?.metros ?? 0) / 1000).toFixed(1);
+
+  return (
+    <>
+      <p className="nota">Recorrido</p>
+      <div className="fila">
+        {PERIODOS.map(([clave, etiqueta]) => (
+          <button
+            key={clave}
+            type="button"
+            className={periodo === clave ? 'principal' : 'secundario'}
+            onClick={() => setPeriodo(clave)}
+          >
+            {etiqueta}
+          </button>
+        ))}
+      </div>
+      {error && <p className="aviso">{error}</p>}
+      {cargando && <p className="nota">Cargando el recorrido…</p>}
+      {!cargando && !error && tramos.length === 0 && (
+        <p className="nota">
+          Sin recorrido en este periodo. O no entró en servicio, o el registro
+          es anterior a que esto existiera: solo hay datos desde entonces.
+        </p>
+      )}
+      {tramos.length > 0 && (
+        <>
+          <div className="mapa-recorrido">
+            <Mapa puntos={[]} encuadre="recorrido" recorrido={tramos} />
+          </div>
+          <p className="nota">
+            {km} km · {tramos.length} tramo{tramos.length === 1 ? '' : 's'}
+            {' · '}{recorrido?.puntos} puntos
+            {' · '}<span style={{ color: '#7ee081' }}>●</span> empieza
+            {' '}<span style={{ color: '#ff6b6b' }}>●</span> acaba
+          </p>
         </>
       )}
     </>

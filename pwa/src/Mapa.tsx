@@ -39,7 +39,9 @@ export type Encuadre =
   // El coche viniendo a por ella, con el recorrido que le queda.
   | 'recogida'
   // El trayecto del viaje, ya a bordo.
-  | 'viaje';
+  | 'viaje'
+  // Todo lo que anduvo un taxi en un periodo. Solo lo usa el operador.
+  | 'recorrido';
 
 export interface PropiedadesMapa {
   puntos: PuntoMapa[];
@@ -50,6 +52,10 @@ export interface PropiedadesMapa {
   encuadre?: Encuadre;
   // Paradas del taxi compartido: solo el lugar, nunca de quién es.
   paradas?: Array<{ lat: number; lng: number; esTuya: boolean }>;
+  // Por dónde anduvo un taxi (migración 042). Una lista de TRAMOS, no de
+  // puntos: entre dos tramos hay un hueco —salió de servicio, se quedó sin
+  // cobertura— y unirlos con una recta dibujaría un viaje que no existió.
+  recorrido?: Array<Array<{ lat: number; lng: number }>>;
 }
 
 // El plano se prepara una sola vez para toda la vida de la aplicación: son
@@ -81,7 +87,7 @@ const PRIORIDAD: Record<string, number> = {
 };
 
 export default function Mapa({
-  puntos, origen, destino, taxi, buscando, encuadre = 'persona', paradas,
+  puntos, origen, destino, taxi, buscando, encuadre = 'persona', paradas, recorrido,
 }: PropiedadesMapa) {
   const contenedor = useRef<HTMLDivElement>(null);
   const [caja, setCaja] = useState({ ancho: 0, alto: 0 });
@@ -172,6 +178,12 @@ export default function Mapa({
       if (destino) enfoque.push(aMundo(destino.lat, destino.lng));
       for (const p of rutaViaje ?? []) enfoque.push(aMundo(p.lat, p.lng));
       for (const p of paradas ?? []) enfoque.push(aMundo(p.lat, p.lng));
+    } else if (encuadre === 'recorrido') {
+      // Entero: el sentido de esta vista es ver hasta dónde llegó, y un
+      // encuadre que recorte la punta del recorrido no dice nada.
+      for (const tramo of recorrido ?? []) {
+        for (const p of tramo) enfoque.push(aMundo(p.lat, p.lng));
+      }
     }
 
     const ajustado = encuadrar(enfoque, ancho, alto, listo.proy, {
@@ -192,7 +204,7 @@ export default function Mapa({
       cy: centro[1],
       escala: ancho / (5_000 * listo.proy.unidadesPorMetro),
     };
-  }, [listo, ancho, alto, origen, destino, taxi, encuadre, rutaTaxi, rutaViaje, paradas]);
+  }, [listo, ancho, alto, origen, destino, taxi, encuadre, rutaTaxi, rutaViaje, paradas, recorrido]);
 
   const pantalla = (lat: number, lng: number): Punto2D =>
     aPantalla(listo!.proy.aMundo(lat, lng), camara!, ancho, alto);
@@ -361,6 +373,31 @@ export default function Mapa({
                     strokeLinejoin="round"
                   />
                 </g>
+              </g>
+            );
+          })}
+
+          {/* Por dónde anduvo el taxi. Cada tramo por separado, sin unir los
+              huecos, y con un punto en el principio y el final de cada uno:
+              en un recorrido de un mes, media ciudad pintada de naranja no
+              dice nada si no se ve dónde arrancó cada trozo. */}
+          {encuadre === 'recorrido' && (recorrido ?? []).map((tramo, i) => {
+            const d = tramo
+              .map((p, j) => {
+                const xy = pantalla(p.lat, p.lng);
+                return `${j === 0 ? 'M' : 'L'}${xy[0].toFixed(1)} ${xy[1].toFixed(1)}`;
+              })
+              .join('');
+            const inicio = pantalla(tramo[0].lat, tramo[0].lng);
+            const fin = pantalla(tramo[tramo.length - 1].lat, tramo[tramo.length - 1].lng);
+            return (
+              <g key={`rastro-${i}`}>
+                <path d={d} fill="none" stroke="#08080a" strokeWidth={7}
+                  strokeLinecap="round" strokeLinejoin="round" opacity={0.9} />
+                <path d={d} fill="none" stroke="#ffb020" strokeWidth={3}
+                  strokeLinecap="round" strokeLinejoin="round" opacity={0.85} />
+                <circle cx={inicio[0]} cy={inicio[1]} r={4} fill="#7ee081" stroke="#08080a" strokeWidth={1.5} />
+                <circle cx={fin[0]} cy={fin[1]} r={4} fill="#ff6b6b" stroke="#08080a" strokeWidth={1.5} />
               </g>
             );
           })}

@@ -21,6 +21,7 @@ import {
 } from '../dominio/monedero.js';
 import { estadoPorOcupacion, ocupacionDe, rutaDe } from '../dominio/ocupacion.js';
 import { registrarPosicion } from '../dominio/proximidad.js';
+import { registrarRastro } from '../dominio/rastro.js';
 import { recargasDe, solicitarRecarga } from '../dominio/recargas.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
 import { entrarEnServicio, registrarHeartbeat, salirDeServicio } from '../dominio/presencia.js';
@@ -354,6 +355,11 @@ export function registrarRutasConductor(
         for (const viaje of viajes.rows) {
           await registrarPosicion(cliente, viaje.id, 'conductor', cuerpo.lat, cuerpo.lng);
         }
+        // Y el recorrido del turno entero (migración 042), lleve viaje o no:
+        // es lo que enseña dónde esperó y por dónde volvió de vacío. Se
+        // guarda filtrado, y solo estando en servicio — de eso se encarga
+        // `registrarRastro`, que lo comprueba contra la presencia.
+        await registrarRastro(cliente, sesion.conductorId, cuerpo.lat, cuerpo.lng);
       }
     });
     const presencia = await pool.query(

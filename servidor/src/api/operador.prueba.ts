@@ -546,3 +546,61 @@ test('un lugar fuera de Bioko se rechaza; dentro de la isla pero lejos de Malabo
   });
   assert.equal(enLuba.statusCode, 200, enLuba.body);
 });
+
+// Migración 042: el recorrido de un taxi durante su turno.
+test('el recorrido: lo ve el operador, no un agente de campo, y sale por tramos', async () => {
+  const { conductorId, uuidAgente } = await enTransaccion(pool, async (c) => {
+    const conductor = await c.query(
+      `INSERT INTO conductor (telefono, nombre, estado_verificacion, es_agente)
+       VALUES ($1, 'Taxi REC', 'verificado', true) RETURNING id`,
+      [telefonoUnico()],
+    );
+    const conductorId: number = conductor.rows[0].id;
+    const uuidAgente = randomUUID();
+    await c.query(
+      `INSERT INTO dispositivo (uuid_persistente, tipo, conductor_id)
+       VALUES ($1, 'conductor', $2)`,
+      [uuidAgente, conductorId],
+    );
+    await c.query(
+      `INSERT INTO presencia (conductor_id, estado, ultimo_heartbeat)
+       VALUES ($1, 'DISPONIBLE', now())`,
+      [conductorId],
+    );
+    // Dos puntos hace un rato y dos hace mucho menos: dos tramos.
+    const hace = (min: number) => new Date(Date.now() - min * 60_000);
+    await c.query(
+      `INSERT INTO rastro (conductor_id, lat, lng, creado_en) VALUES
+        ($1, 3.750, 8.780, $2), ($1, 3.753, 8.780, $3),
+        ($1, 3.780, 8.800, $4), ($1, 3.783, 8.800, $5)`,
+      [conductorId, hace(300), hace(299), hace(60), hace(59)],
+    );
+    return { conductorId, uuidAgente };
+  });
+
+  // Un agente de campo sitúa barrios; no le toca saber por dónde anduvo un
+  // compañero. Esta ruta pide operador, no campo, y esto lo fija.
+  const agente = await app.inject({
+    method: 'GET', url: `/api/operador/conductores/${conductorId}/recorrido?periodo=dia`,
+    headers: cabeceras(uuidAgente),
+  });
+  assert.equal(agente.statusCode, 403, 'un agente de campo no vigila a sus compañeros');
+
+  const res = await app.inject({
+    method: 'GET', url: `/api/operador/conductores/${conductorId}/recorrido?periodo=dia`,
+    headers: cabeceras(UUID_OPERADOR),
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  const cuerpo = res.json();
+  assert.equal(cuerpo.puntos, 4);
+  assert.equal(cuerpo.tramos.length, 2, 'las cinco horas de hueco no se unen con una recta');
+  assert.ok(cuerpo.metros > 300, `esperaba unos cientos de metros y salieron ${cuerpo.metros}`);
+
+  // Un periodo que no existe se rechaza, en vez de caer en el de por defecto
+  // y devolver un recorrido de otro plazo sin decirlo.
+  const malo = await app.inject({
+    method: 'GET', url: `/api/operador/conductores/${conductorId}/recorrido?periodo=trimestre`,
+    headers: cabeceras(UUID_OPERADOR),
+  });
+  assert.equal(malo.statusCode, 400);
+});

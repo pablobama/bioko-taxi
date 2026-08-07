@@ -110,6 +110,19 @@ body {
   z-index: 0;
 }
 
+/* El recorrido de un taxi en la ficha del operador. A diferencia de
+   `.capa-mapa`, aquí el plano NO se come la pantalla: es un recuadro dentro
+   de una ficha que sigue teniendo cosas debajo, así que la altura es fija.
+   Sigue siendo `relative` porque el SVG se pega a los cuatro lados. */
+.mapa-recorrido {
+  position: relative;
+  height: 300px;
+  margin: 6px 0 4px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--tinta);
+}
+
 /* Pegado a los cuatro lados de la capa en lugar de `height: 100%`: la altura
    de la capa la decide `flex-grow`, y un porcentaje contra una altura que
    todavía no es definitiva se resuelve a cero. */

@@ -320,6 +320,20 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   dudosos. Los barrios cargados por el importador la tienen a NULL: no se
   sabe con qué precisión se tomaron, y fingir un número sería peor.
 
+- **[P42-01] Al taxista no se le ha dicho que su recorrido queda guardado.**
+  La migración 042 guarda por dónde anda cada taxi mientras está en servicio,
+  y el operador lo ve en su ficha. Se registra solo en servicio y se borra a
+  los noventa días, pero el taxista no se ha enterado por ninguna pantalla.
+  Es su coche y su jornada: enterarse por casualidad destruye más confianza de
+  la que ahorra el silencio. Una línea en su panel bastaría.
+
+- **[P42-02] La tabla `rastro` es la que más crece de toda la base.** Un punto
+  por taxi cada minuto de turno. Se filtra al escribir y se purga sola cada
+  seis horas por `rastro_retencion_dias` (90), pero nadie ha medido todavía
+  cuánto ocupa de verdad con la flota real. Si aprieta, lo primero que hay que
+  tocar son los parámetros (`rastro_intervalo_min_seg`,
+  `rastro_distancia_min_m`), que se cambian desde Ajustes sin desplegar.
+
 - **[P41-01] Google Maps no puede ser la fuente del catálogo.** Se planteó
   coger de Google las ubicaciones que faltan. No se puede: sus términos
   prohíben guardar sus coordenadas para construir una base de datos propia y

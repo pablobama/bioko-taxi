@@ -361,6 +361,22 @@ export interface SolicitudCentral {
   matricula: string | null;
 }
 
+// Por dónde anduvo un taxi (migración 042). Ventanas móviles hacia atrás
+// desde ahora, no días de calendario: «el mes» a primera hora del día 1 no
+// puede ser una pantalla en blanco.
+export type PeriodoRecorrido = 'dia' | 'semana' | 'mes';
+
+export interface RecorridoOperador {
+  periodo: PeriodoRecorrido;
+  desde: string;
+  hasta: string;
+  // Puntos que hay de verdad, antes de aligerar para dibujarlos.
+  puntos: number;
+  metros: number;
+  // Tramos, no puntos sueltos: entre dos tramos hay un hueco de verdad.
+  tramos: Array<Array<{ lat: number; lng: number }>>;
+}
+
 export interface ZonaOperador {
   id: number;
   nombre: string;
@@ -769,6 +785,11 @@ export const api = {
     pedirJson<{ conductor_id: number; aire_acondicionado: boolean; seguro: boolean }>(
       `/api/operador/conductores/${conductorId}/vehiculo`,
       { method: 'POST', body: JSON.stringify(datos), reintentos: 1 },
+    ),
+
+  recorridoConductor: (conductorId: number, periodo: PeriodoRecorrido) =>
+    pedirJson<RecorridoOperador>(
+      `/api/operador/conductores/${conductorId}/recorrido?periodo=${periodo}`,
     ),
 
   referenciasOperador: (q?: string, zonaId?: number) => {

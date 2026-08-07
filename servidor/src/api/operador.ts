@@ -18,6 +18,7 @@ import {
   anadirAlias, editarReferencia, guardarReferencia, quitarAlias,
 } from '../dominio/gazetteer.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
+import { recorridoDe } from '../dominio/rastro.js';
 import { confirmarRecarga, rechazarRecarga, recargasDe } from '../dominio/recargas.js';
 import { reputacionDe } from '../dominio/reputacion.js';
 import { normalizarTelefono } from '../dominio/telefono.js';
@@ -63,6 +64,11 @@ function exigirCategoria(categoria: string | undefined): string | undefined {
 // que importa —el (0,0), la costa de Bata, Annobón— porque Bioko es una isla
 // pequeña y aislada.
 const RECUADRO_BIOKO = { sur: 3.18, oeste: 8.38, norte: 3.81, este: 8.99 };
+
+// Los tres periodos del recorrido, en días hacia atrás desde ahora. Ventanas
+// móviles, no días de calendario: «el mes» a las nueve de la mañana del día 1
+// no puede ser una pantalla en blanco.
+const DIAS_POR_PERIODO: Record<string, number> = { dia: 1, semana: 7, mes: 30 };
 
 function enBioko(lat: number, lng: number): boolean {
   return lat >= RECUADRO_BIOKO.sur && lat <= RECUADRO_BIOKO.norte
@@ -316,6 +322,34 @@ export function registrarRutasOperador(
     );
     if (res.rowCount === 0) throw errorHttp(404, 'Este conductor no tiene vehículo dado de alta.');
     return res.rows[0];
+  });
+
+  // Por dónde anduvo un taxi (migración 042). `exigirOperador`, no
+  // `exigirCampo`: un agente de campo sitúa barrios, no vigila a sus
+  // compañeros.
+  app.get('/api/operador/conductores/:id/recorrido', async (req) => {
+    exigirOperador(req);
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
+    const { periodo } = (req.query ?? {}) as { periodo?: string };
+    const dias = DIAS_POR_PERIODO[periodo ?? 'dia'];
+    if (dias === undefined) {
+      throw errorHttp(400, 'periodo tiene que ser dia, semana o mes.');
+    }
+    const hasta = new Date();
+    const desde = new Date(hasta.getTime() - dias * 24 * 60 * 60 * 1000);
+    const recorrido = await recorridoDe(pool, id, desde, hasta);
+    return {
+      periodo: periodo ?? 'dia',
+      desde: recorrido.desde.toISOString(),
+      hasta: recorrido.hasta.toISOString(),
+      puntos: recorrido.puntos,
+      metros: recorrido.metros,
+      // Sin las horas: al operador le importa el dibujo y cuánto anduvo, y
+      // mandar la marca de tiempo de cada punto dobla el tamaño de la
+      // respuesta para nada.
+      tramos: recorrido.tramos.map((t) => t.map((p) => ({ lat: p.lat, lng: p.lng }))),
+    };
   });
 
   // Números gruesos del sistema entero: para ver de un vistazo si algo va

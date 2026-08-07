@@ -122,6 +122,15 @@ async function principal(): Promise<void> {
         `DELETE FROM enrutamiento WHERE evento LIKE 'PRUEBA\\_%' RETURNING evento`,
       );
 
+      // Recorridos de las pruebas (migración 042). Se acumulan rápido —cada
+      // ejecución de rastro.prueba.ts deja un centenar de puntos— y la purga
+      // de producción no se los lleva: los fabrica con fechas de hoy.
+      const rastros = await cliente.query(
+        `DELETE FROM rastro WHERE conductor_id IN (
+           SELECT id FROM conductor WHERE nombre LIKE 'Taxi RAS%' OR nombre LIKE 'Taxi REC%'
+         ) RETURNING id`,
+      );
+
       // Eventos sin entregar: ya no interesan.
       const eventos = await cliente.query(
         `UPDATE evento_salida SET entregado_en = now(), canal_entregado = 'descartado_limpieza'
@@ -136,6 +145,7 @@ async function principal(): Promise<void> {
         referenciasDesactivadas: referenciasDesactivadas.rowCount ?? 0,
         adyacencias: adyacencias.rowCount ?? 0,
         zonas: zonas.rowCount ?? 0,
+        rastros: rastros.rowCount ?? 0,
         reglas: reglas.rowCount ?? 0,
         eventos: eventos.rowCount ?? 0,
       };
@@ -148,6 +158,7 @@ async function principal(): Promise<void> {
       + `${resumen.referenciasDesactivadas} referencias de prueba desactivadas (aún ligadas a una solicitud real), `
       + `${resumen.adyacencias} adyacencias de zonas de prueba borradas, `
       + `${resumen.zonas} zonas de prueba borradas, `
+      + `${resumen.rastros} puntos de recorrido de prueba borrados, `
       + `${resumen.reglas} reglas de enrutamiento de prueba borradas, `
       + `${resumen.eventos} eventos descartados.`,
     );

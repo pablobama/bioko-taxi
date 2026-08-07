@@ -14,6 +14,7 @@ import { ErrorSaldoInsuficiente } from '../dominio/errores.js';
 import { renovarSuscripcion } from '../dominio/monedero.js';
 import { caducarPresencias } from '../dominio/presencia.js';
 import { procesarProximidad } from '../dominio/proximidad.js';
+import { purgarRastro } from '../dominio/rastro.js';
 import { AdaptadorFcm } from '../eventos/adaptador-fcm.js';
 import { AdaptadorNoop } from '../eventos/adaptador-noop.js';
 import { AdaptadorSse, ConexionesSse } from '../eventos/adaptador-sse.js';
@@ -163,6 +164,19 @@ async function principal(): Promise<void> {
   // el único margen que quedaba entre «crear la solicitud» y «que suene el
   // teléfono del taxista».
   despachadorEventos.iniciar(700);
+
+  // El recorrido de los taxis se borra solo (migración 042). Es la tabla que
+  // más rápido crece de toda la base —un punto por taxi cada minuto de
+  // turno—, así que sin esto se come el plan contratado en unos meses. Cada
+  // seis horas basta: lo que se borra son días enteros, y una purga que se
+  // salte un despliegue no rompe nada.
+  const purgar = () => {
+    void purgarRastro(pool)
+      .then((filas) => { if (filas > 0) console.log(`Rastro purgado: ${filas} puntos.`); })
+      .catch((error) => console.error('Error purgando el rastro:', error));
+  };
+  purgar();
+  setInterval(purgar, 6 * 60 * 60 * 1000);
 
   // Planificador del despacho: oleadas, expiraciones, presencias y rescate.
   setInterval(() => {
