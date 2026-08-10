@@ -146,6 +146,25 @@ body {
   font-size: 0.85rem;
 }
 
+/* Rosa de los vientos: solo sale cuando el plano gira con el coche. Arriba a
+   la derecha y con hueco de sobra para el dedo —se toca conduciendo—, pero
+   sin tapar el plano: es un círculo pequeño sobre fondo translúcido. */
+.mapa-brujula {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  z-index: 1;
+}
+
 /* Atribución de OpenStreetMap: obligatoria por la licencia ODbL de los datos. */
 .mapa-atribucion {
   position: absolute;

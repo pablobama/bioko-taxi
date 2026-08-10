@@ -105,6 +105,13 @@ export interface Camara {
   cx: number;
   cy: number;
   escala: number;
+  // Hacia dónde mira la cámara, en RADIANES desde el norte y en el sentido de
+  // las agujas del reloj: 0 (o sin valor) es el norte arriba, como toda la
+  // vida; π/2 es el este arriba. Con el rumbo del coche, el plano gira para
+  // que lo que el conductor tiene delante del parabrisas esté arriba en la
+  // pantalla, que es lo que evita tener que traducir «giro a la derecha del
+  // mapa» a «giro a mi izquierda» a sesenta por hora.
+  rumbo?: number;
 }
 
 export interface OpcionesEncuadre {
@@ -115,6 +122,19 @@ export interface OpcionesEncuadre {
   // llega el zoom, el máximo lo más lejos.
   metrosMinimos?: number;
   metrosMaximos?: number;
+  // El mismo rumbo con el que se va a dibujar. Hace falta aquí porque al
+  // girar cambia qué cabe: una ruta que en vertical entra justa, en diagonal
+  // no. Sin esto, encuadrar con el mapa girado deja medio recorrido fuera.
+  rumbo?: number;
+}
+
+// El mundo se dibuja con el norte hacia arriba (y crece hacia el sur), así
+// que poner el rumbo `r` arriba es girar el mundo `-r`.
+function girar([x, y]: Punto2D, radianes: number): Punto2D {
+  if (radianes === 0) return [x, y];
+  const cos = Math.cos(radianes);
+  const sen = Math.sin(radianes);
+  return [x * cos - y * sen, x * sen + y * cos];
 }
 
 // Encuadra todos los puntos dados dentro de un rectángulo de ancho×alto
@@ -132,8 +152,11 @@ export function encuadrar(
   const metrosMinimos = opciones.metrosMinimos ?? 420;
   const metrosMaximos = opciones.metrosMaximos ?? 14_000;
 
-  const xs = puntos.map((p) => p[0]);
-  const ys = puntos.map((p) => p[1]);
+  // La caja se mide en el espacio YA GIRADO: es el que se va a ver.
+  const rumbo = opciones.rumbo ?? 0;
+  const girados = puntos.map((p) => girar(p, -rumbo));
+  const xs = girados.map((p) => p[0]);
+  const ys = girados.map((p) => p[1]);
   const minX = Math.min(...xs);
   const maxX = Math.max(...xs);
   const minY = Math.min(...ys);
@@ -154,7 +177,10 @@ export function encuadrar(
   const escalaMasLejos = ancho / (metrosMaximos * proy.unidadesPorMetro);
   const escala = Math.min(escalaMasCerca, Math.max(escalaMasLejos, ajuste));
 
-  return { cx: (minX + maxX) / 2, cy: (minY + maxY) / 2, escala };
+  // Y el centro se devuelve otra vez en coordenadas de mundo, que es lo que
+  // toda la aplicación entiende: el giro lo vuelve a aplicar quien dibuja.
+  const [cx, cy] = girar([(minX + maxX) / 2, (minY + maxY) / 2], rumbo);
+  return { cx, cy, escala, rumbo };
 }
 
 // Coordenadas de mundo → píxeles del SVG.
@@ -164,16 +190,27 @@ export function aPantalla(
   ancho: number,
   alto: number,
 ): Punto2D {
-  return [
-    (punto[0] - camara.cx) * camara.escala + ancho / 2,
-    (punto[1] - camara.cy) * camara.escala + alto / 2,
-  ];
+  const [dx, dy] = girar(
+    [(punto[0] - camara.cx) * camara.escala, (punto[1] - camara.cy) * camara.escala],
+    -(camara.rumbo ?? 0),
+  );
+  return [dx + ancho / 2, dy + alto / 2];
 }
 
 // `transform` del grupo que contiene el plano entero.
 export function transformacion(camara: Camara, ancho: number, alto: number): string {
   const { cx, cy, escala } = camara;
-  return `translate(${(ancho / 2 - cx * escala).toFixed(2)},${(alto / 2 - cy * escala).toFixed(2)}) scale(${escala.toFixed(5)})`;
+  const rumbo = camara.rumbo ?? 0;
+  // Sin rumbo se deja la forma corta de siempre: es la que se dibuja el 99 %
+  // del tiempo y un `transform` con tres pasos más cuesta en un Android viejo.
+  if (rumbo === 0) {
+    return `translate(${(ancho / 2 - cx * escala).toFixed(2)},${(alto / 2 - cy * escala).toFixed(2)}) scale(${escala.toFixed(5)})`;
+  }
+  const grados = (-rumbo * 180) / Math.PI;
+  return `translate(${(ancho / 2).toFixed(2)},${(alto / 2).toFixed(2)})`
+    + ` rotate(${grados.toFixed(2)})`
+    + ` scale(${escala.toFixed(5)})`
+    + ` translate(${(-cx).toFixed(2)},${(-cy).toFixed(2)})`;
 }
 
 // --- Tema del plano --------------------------------------------------------

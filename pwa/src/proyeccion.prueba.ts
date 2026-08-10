@@ -186,3 +186,113 @@ test('los trazados del plano salen completos y en forma de path de SVG', () => {
   assert.ok(trazados.mar.includes('Z'), 'el mar tiene que ser un polígono cerrado');
   assert.ok(!trazados.costa.includes('Z'), 'la costa es una línea abierta, no un polígono');
 });
+
+// --- Plano girado con el rumbo del coche ------------------------------------
+//
+// Lo que se comprueba: que «hacia donde voy» quede ARRIBA en la pantalla. Es
+// la única propiedad que importa, y la que hace que el conductor no tenga que
+// traducir «gira a la derecha del mapa» a «gira a mi izquierda» conduciendo.
+
+// Un punto al norte del centro, a unos 300 m.
+const NORTE = { lat: 3.7531 + 300 / 111_320, lng: 8.7752 };
+// Y otro al este.
+const ESTE = { lat: 3.7531, lng: 8.7752 + 300 / (111_320 * Math.cos(3.7531 * Math.PI / 180)) };
+
+const GRADOS = (g: number) => (g * Math.PI) / 180;
+
+test('sin rumbo, el norte sigue estando arriba', () => {
+  const camara = encuadrar([mundo(MERCADO_CENTRAL), mundo(NORTE)], ANCHO, ALTO, proy);
+  const centro = aPantalla(mundo(MERCADO_CENTRAL), camara!, ANCHO, ALTO);
+  const norte = aPantalla(mundo(NORTE), camara!, ANCHO, ALTO);
+  assert.ok(norte[1] < centro[1], 'el punto al norte se dibuja por encima');
+  assert.ok(Math.abs(norte[0] - centro[0]) < 1, 'y en la misma vertical');
+});
+
+test('yendo al este, el este queda arriba', () => {
+  // El coche circula hacia el este: rumbo 90°.
+  const camara = encuadrar(
+    [mundo(MERCADO_CENTRAL), mundo(ESTE)], ANCHO, ALTO, proy, { rumbo: GRADOS(90) },
+  );
+  const centro = aPantalla(mundo(MERCADO_CENTRAL), camara!, ANCHO, ALTO);
+  const este = aPantalla(mundo(ESTE), camara!, ANCHO, ALTO);
+  assert.ok(este[1] < centro[1], 'lo que tiene delante se dibuja por encima');
+  assert.ok(Math.abs(este[0] - centro[0]) < 1, 'y en la misma vertical: es hacia donde va');
+
+  // Y el norte, que antes estaba arriba, pasa a la izquierda.
+  const norte = aPantalla(mundo(NORTE), camara!, ANCHO, ALTO);
+  assert.ok(norte[0] < centro[0], 'el norte queda a la izquierda');
+  assert.ok(Math.abs(norte[1] - centro[1]) < 1, 'a la misma altura');
+});
+
+test('yendo al sur, lo de delante sigue arriba y el mundo está del revés', () => {
+  const camara = encuadrar(
+    [mundo(MERCADO_CENTRAL), mundo(NORTE)], ANCHO, ALTO, proy, { rumbo: GRADOS(180) },
+  );
+  const centro = aPantalla(mundo(MERCADO_CENTRAL), camara!, ANCHO, ALTO);
+  const norte = aPantalla(mundo(NORTE), camara!, ANCHO, ALTO);
+  assert.ok(norte[1] > centro[1], 'yendo al sur, el norte queda detrás: abajo');
+});
+
+test('girar no cambia las distancias en pantalla: el plano no se deforma', () => {
+  // La MISMA cámara, cambiando solo el rumbo. (Con `encuadrar` la escala sí
+  // cambia, y debe: al girar, lo que hay que encajar en la pantalla ocupa
+  // otra caja. Lo que no puede cambiar es la separación entre dos sitios.)
+  const base = encuadrar([mundo(MERCADO_CENTRAL), mundo(SEMU)], ANCHO, ALTO, proy)!;
+  const separacion = (rumbo: number) => {
+    const camara = { ...base, rumbo };
+    const a = aPantalla(mundo(MERCADO_CENTRAL), camara, ANCHO, ALTO);
+    const b = aPantalla(mundo(CATEDRAL), camara, ANCHO, ALTO);
+    return Math.hypot(a[0] - b[0], a[1] - b[1]);
+  };
+  const derecho = separacion(0);
+  for (const grados of [37, 90, 180, 271]) {
+    assert.ok(
+      Math.abs(separacion(GRADOS(grados)) - derecho) < 0.01,
+      `con rumbo ${grados}° la distancia en pantalla cambia: girar no es acercar`,
+    );
+  }
+});
+
+test('encuadrar girado no deja fuera lo que hay que ver', () => {
+  // Semu y el Mercado están en diagonal: es el caso que se sale de pantalla
+  // si la caja se mide sin contar el giro.
+  const puntos = [mundo(MERCADO_CENTRAL), mundo(SEMU)];
+  for (const grados of [0, 30, 45, 90, 137, 210, 300]) {
+    const camara = encuadrar(puntos, ANCHO, ALTO, proy, { rumbo: GRADOS(grados) });
+    for (const p of puntos) {
+      const [x, y] = aPantalla(p, camara!, ANCHO, ALTO);
+      assert.ok(
+        x >= 0 && x <= ANCHO && y >= 0 && y <= ALTO,
+        `con rumbo ${grados}° un punto se sale de la pantalla: ${x.toFixed(0)},${y.toFixed(0)}`,
+      );
+    }
+  }
+});
+
+test('el transform del plano y la proyección de los pines dicen lo mismo', () => {
+  // El plano se dibuja con un `transform` de SVG y los marcadores en píxeles
+  // ya calculados: si los dos no aplican EXACTAMENTE el mismo giro, los pines
+  // se despegan de las calles. Se comprueba resolviendo el transform a mano.
+  const camara = encuadrar(
+    [mundo(MERCADO_CENTRAL), mundo(SEMU)], ANCHO, ALTO, proy, { rumbo: GRADOS(63) },
+  );
+  const t = transformacion(camara!, ANCHO, ALTO);
+  const [, tx, ty, giro, escala, mx, my] = t.match(
+    /translate\(([-\d.]+),([-\d.]+)\) rotate\(([-\d.]+)\) scale\(([\d.]+)\) translate\(([-\d.]+),([-\d.]+)\)/,
+  )!.map(Number) as unknown as number[];
+
+  for (const p of [mundo(MERCADO_CENTRAL), mundo(SEMU), mundo(CATEDRAL)]) {
+    // Aplicar el transform de derecha a izquierda, como hace SVG.
+    const x1 = (p[0] + mx) * escala;
+    const y1 = (p[1] + my) * escala;
+    const r = (giro * Math.PI) / 180;
+    const x2 = x1 * Math.cos(r) - y1 * Math.sin(r) + tx;
+    const y2 = x1 * Math.sin(r) + y1 * Math.cos(r) + ty;
+
+    const [x, y] = aPantalla(p, camara!, ANCHO, ALTO);
+    assert.ok(
+      Math.hypot(x2 - x, y2 - y) < 0.5,
+      `el plano y los pines se despegan: transform (${x2.toFixed(1)},${y2.toFixed(1)}) vs pin (${x.toFixed(1)},${y.toFixed(1)})`,
+    );
+  }
+});

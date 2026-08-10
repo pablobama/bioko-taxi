@@ -12,7 +12,7 @@ import {
   type ZonaConDemanda,
 } from './api';
 import { mensajeDeError } from './conexion';
-import { porCercaniaA } from './geo';
+import { metrosEntre, porCercaniaA, rumboEntre } from './geo';
 import { crearT, localeVoz, type Idioma } from './i18n';
 import { useLlamada, type SenalRecibida } from './llamada';
 import Mapa from './Mapa';
@@ -50,6 +50,9 @@ export default function PanelConductor({
   // (20-30 s, más otros 60 de caché del GPS): conduciendo, eso es quedarse
   // quieto en otra calle.
   const [posicionCoche, setPosicionCoche] = useState<{ lat: number; lng: number } | null>(null);
+  // Hacia dónde va el coche, para girar el plano y poner delante arriba. null
+  // hasta que se sepa: el mapa se queda con el norte arriba mientras tanto.
+  const [rumbo, setRumbo] = useState<number | null>(null);
   const ofertasAvisadas = useRef<Set<number>>(new Set());
 
   // Cambia el estado solo si el coche se ha movido de verdad (~13 m): las
@@ -62,6 +65,43 @@ export default function PanelConductor({
         && Math.abs(previa.lng - nueva.lng) < 0.00012) return previa;
       return nueva;
     });
+  }, []);
+
+  // Hacia dónde va el coche. Dos fuentes, por este orden:
+  //
+  //   1. `coords.heading` del GPS, que es el rumbo sobre el terreno y es el
+  //      bueno. Pero solo vale con el coche EN MARCHA: parado, el GPS deriva
+  //      unos metros al azar y el rumbo que calcula de ahí es ruido puro.
+  //   2. Si no lo da —muchos Android baratos devuelven null siempre—, el
+  //      rumbo entre esta posición y la última que estuviera lo bastante
+  //      lejos. Veinticinco metros son más que el error del GPS y menos que
+  //      una manzana.
+  //
+  // Y si ninguna sirve, NO se toca: el plano se queda como estaba. Volver al
+  // norte en cada semáforo marearía más que no girar nunca.
+  const VELOCIDAD_MINIMA_MS = 2;
+  const DISTANCIA_MINIMA_M = 25;
+  const ultimaParaRumbo = useRef<{ lat: number; lng: number } | null>(null);
+  const anotarRumbo = useCallback((
+    donde: { lat: number; lng: number } | null,
+    delGps: number | null,
+    velocidad: number | null,
+  ) => {
+    if (!donde) return;
+    const enMarcha = velocidad === null || velocidad >= VELOCIDAD_MINIMA_MS;
+    if (delGps !== null && Number.isFinite(delGps) && enMarcha) {
+      setRumbo(((delGps % 360) + 360) % 360);
+      ultimaParaRumbo.current = donde;
+      return;
+    }
+    const previa = ultimaParaRumbo.current;
+    if (previa === null) {
+      ultimaParaRumbo.current = donde;
+      return;
+    }
+    if (metrosEntre(previa, donde) < DISTANCIA_MINIMA_M) return;
+    setRumbo(rumboEntre(previa, donde));
+    ultimaParaRumbo.current = donde;
   }, []);
 
   const llamada = useLlamada({ vivo: true, locale: localeVoz(idioma) });
@@ -157,6 +197,11 @@ export default function PanelConductor({
       // elegir zona nunca se sabía dónde estaba el coche.
       coordenadas.current = await coordenadasOportunistas();
       moverCoche(coordenadas.current);
+      // El latido no trae rumbo del GPS —`coordenadasOportunistas` devuelve
+      // solo lat/lng—, pero sí sirve de segunda fuente: entre dos latidos con
+      // el coche andando hay más que los veinticinco metros que hacen falta.
+      // Es lo que salva a los teléfonos que nunca dan `heading`.
+      anotarRumbo(coordenadas.current, null, null);
       if (enServicio) {
         try {
           await api.heartbeat(coordenadas.current);
@@ -191,12 +236,13 @@ export default function PanelConductor({
         const nueva = { lat: p.coords.latitude, lng: p.coords.longitude };
         coordenadas.current = nueva;
         moverCoche(nueva);
+        anotarRumbo(nueva, p.coords.heading, p.coords.speed);
       },
       () => undefined,
       { enableHighAccuracy: true, maximumAge: 5000 },
     );
     return () => navigator.geolocation.clearWatch(vigilante);
-  }, [moverCoche]);
+  }, [moverCoche, anotarRumbo]);
 
   // Dónde hay trabajo. Va en su propia petición y no pegada al latido para
   // poder pedirla una vez por minuto en vez de tres: el latido va cada 20 s y
@@ -321,6 +367,7 @@ export default function PanelConductor({
             }
             : null}
           encuadre={siguienteParada ? 'recogida' : 'persona'}
+          rumbo={rumbo}
         />
       </div>
 

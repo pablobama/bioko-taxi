@@ -56,6 +56,14 @@ export interface PropiedadesMapa {
   // puntos: entre dos tramos hay un hueco —salió de servicio, se quedó sin
   // cobertura— y unirlos con una recta dibujaría un viaje que no existió.
   recorrido?: Array<Array<{ lat: number; lng: number }>>;
+  // Hacia dónde va el coche, en grados desde el norte y en el sentido de las
+  // agujas del reloj (lo que da `coords.heading` del GPS). Con valor, el plano
+  // gira para poner eso arriba: lo que el conductor ve por el parabrisas es lo
+  // que ve en la parte de arriba de la pantalla, y deja de tener que traducir
+  // «a la derecha en el mapa» a «a mi izquierda» a sesenta por hora.
+  //
+  // null o sin valor: norte arriba, como siempre.
+  rumbo?: number | null;
 }
 
 // El plano se prepara una sola vez para toda la vida de la aplicación: son
@@ -88,12 +96,38 @@ const PRIORIDAD: Record<string, number> = {
 
 export default function Mapa({
   puntos, origen, destino, taxi, buscando, encuadre = 'persona', paradas, recorrido,
+  rumbo = null,
 }: PropiedadesMapa) {
   const contenedor = useRef<HTMLDivElement>(null);
   const [caja, setCaja] = useState({ ancho: 0, alto: 0 });
   const [listo, setListo] = useState<PlanoListo | null>(planoCompartido);
   const [rutaTaxi, setRutaTaxi] = useState<Punto[] | null>(null);
   const [rutaViaje, setRutaViaje] = useState<Punto[] | null>(null);
+  // Girar el plano ayuda conduciendo y estorba mirándolo parado, así que se
+  // puede clavar el norte arriba tocando la rosa de los vientos.
+  const [norteFijo, setNorteFijo] = useState(false);
+  const [rumboAplicado, setRumboAplicado] = useState<number | null>(null);
+
+  // El rumbo del GPS baila unos grados en cada lectura aunque el coche vaya
+  // recto. Aplicarlo tal cual sería un plano temblando sin parar, que además
+  // de marear obliga a redibujar 3.700 calles cada vez. Por debajo de este
+  // umbral se mantiene el giro que ya había.
+  const UMBRAL_GIRO_GRADOS = 8;
+  useEffect(() => {
+    // Sin rumbo (parado, o el GPS no lo da) se CONSERVA el último: volver al
+    // norte de golpe en cada semáforo es peor que quedarse como estaba.
+    if (rumbo === null || !Number.isFinite(rumbo)) return;
+    setRumboAplicado((previo) => {
+      if (previo === null) return rumbo;
+      // Diferencia por el lado corto: de 359° a 1° hay 2 grados, no 358.
+      const diferencia = Math.abs(((rumbo - previo + 540) % 360) - 180);
+      return diferencia < UMBRAL_GIRO_GRADOS ? previo : rumbo;
+    });
+  }, [rumbo]);
+
+  const rumboMapa = norteFijo || rumboAplicado === null
+    ? 0
+    : (rumboAplicado * Math.PI) / 180;
 
   useEffect(() => {
     if (listo) return;
@@ -190,6 +224,9 @@ export default function Mapa({
       margen: Math.min(52, Math.max(24, Math.round(ancho * 0.11))),
       // Encuadrando a una sola persona no hace falta ver medio Malabo.
       metrosMinimos: encuadre === 'persona' ? 700 : 420,
+      // El giro entra en el encuadre, no solo en el dibujo: una ruta que en
+      // vertical cabe justa, en diagonal no, y sin esto se saldría media.
+      rumbo: rumboMapa,
     });
     if (ajustado) return ajustado;
 
@@ -203,8 +240,10 @@ export default function Mapa({
       cx: centro[0],
       cy: centro[1],
       escala: ancho / (5_000 * listo.proy.unidadesPorMetro),
+      rumbo: rumboMapa,
     };
-  }, [listo, ancho, alto, origen, destino, taxi, encuadre, rutaTaxi, rutaViaje, paradas, recorrido]);
+  }, [listo, ancho, alto, origen, destino, taxi, encuadre, rutaTaxi, rutaViaje, paradas,
+    recorrido, rumboMapa]);
 
   const pantalla = (lat: number, lng: number): Punto2D =>
     aPantalla(listo!.proy.aMundo(lat, lng), camara!, ancho, alto);
@@ -478,6 +517,37 @@ export default function Mapa({
         </svg>
       ) : (
         <p className="mapa-cargando">Cargando el plano de Malabo…</p>
+      )}
+      {/* Rosa de los vientos. Aparece solo cuando hay rumbo que seguir, que es
+          conduciendo: un mapa que gira sin decir dónde está el norte
+          desorienta más de lo que orienta. Y tocarla clava el norte arriba,
+          porque girando se conduce pero mirando el plano parado se entiende
+          peor. La aguja apunta siempre al norte de verdad. */}
+      {rumboAplicado !== null && (
+        <button
+          type="button"
+          className="mapa-brujula"
+          onClick={() => setNorteFijo((fijo) => !fijo)}
+          aria-label={norteFijo
+            ? 'Norte fijo arriba. Tocar para girar el plano con el coche.'
+            : 'El plano gira con el coche. Tocar para fijar el norte arriba.'}
+          aria-pressed={norteFijo}
+        >
+          <svg viewBox="-18 -18 36 36" width={36} height={36} aria-hidden="true">
+            <circle
+              r={17}
+              fill="rgba(8,8,10,0.72)"
+              stroke={norteFijo ? '#ffb020' : 'rgba(247,245,242,0.25)'}
+            />
+            {/* La aguja y su «N» giran juntas: siempre señalan el norte de
+                verdad, esté el plano como esté. */}
+            <g transform={`rotate(${((-rumboMapa * 180) / Math.PI).toFixed(1)})`}>
+              <path d="M0 -9 L3.5 3 L0 1 L-3.5 3 Z" fill="#ff6b6b" />
+              <path d="M0 9 L3.5 -3 L0 -1 L-3.5 -3 Z" fill="rgba(247,245,242,0.5)" />
+              <text x={0} y={-10.5} textAnchor="middle" fontSize={7} fill="#ff6b6b">N</text>
+            </g>
+          </svg>
+        </button>
       )}
       <span className="mapa-atribucion">Calles © OpenStreetMap</span>
     </div>

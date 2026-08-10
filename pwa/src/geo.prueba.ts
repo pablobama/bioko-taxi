@@ -9,7 +9,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { metrosEntre, porCercaniaA } from './geo.js';
+import { metrosEntre, porCercaniaA, rumboEntre } from './geo.js';
 
 // Barrios reales de Malabo, con los centroides del gazetteer.
 const BARRIO_CHINO = { id: 1, nombre: 'Barrio Chino', lat: 3.74966, lng: 8.77969 };
@@ -69,4 +69,38 @@ test('las distancias salen crecientes: es lo que hace fiable la primera opción'
     assert.ok(distancias[i] >= distancias[i - 1],
       `la ${i + 1}ª está más cerca que la ${i}ª: ${Math.round(distancias[i])} < ${Math.round(distancias[i - 1])}`);
   }
+});
+
+// --- Rumbo -------------------------------------------------------------------
+//
+// Lo que decide hacia dónde se gira el plano del taxista mientras conduce. Si
+// se equivoca, el conductor ve el plano al revés de por donde va, que es peor
+// que no girarlo.
+
+test('el rumbo entre dos puntos sale en grados desde el norte', () => {
+  const centro = { lat: 3.7531, lng: 8.7752 };
+  const norte = { lat: 3.7631, lng: 8.7752 };
+  const sur = { lat: 3.7431, lng: 8.7752 };
+  const este = { lat: 3.7531, lng: 8.7852 };
+  const oeste = { lat: 3.7531, lng: 8.7652 };
+
+  assert.ok(Math.abs(rumboEntre(centro, norte) - 0) < 0.5, 'al norte, 0°');
+  assert.ok(Math.abs(rumboEntre(centro, este) - 90) < 0.5, 'al este, 90°');
+  assert.ok(Math.abs(rumboEntre(centro, sur) - 180) < 0.5, 'al sur, 180°');
+  assert.ok(Math.abs(rumboEntre(centro, oeste) - 270) < 0.5, 'al oeste, 270°');
+});
+
+test('el rumbo nunca sale negativo: 0 a 360, como el del GPS', () => {
+  const centro = { lat: 3.7531, lng: 8.7752 };
+  // Al noroeste: la cuenta directa daría -45°, que giraría el plano igual pero
+  // rompería la comparación con el rumbo del GPS, que va de 0 a 360.
+  const noroeste = { lat: 3.7631, lng: 8.7652 };
+  const rumbo = rumboEntre(centro, noroeste);
+  assert.ok(rumbo >= 0 && rumbo < 360, `salió ${rumbo}`);
+  assert.ok(Math.abs(rumbo - 315) < 1, 'al noroeste, 315°');
+});
+
+test('un caso de verdad: del Barrio Chino a Ela Nguema se va hacia el nordeste', () => {
+  const rumbo = rumboEntre(BARRIO_CHINO, ELA_NGUEMA);
+  assert.ok(rumbo > 45 && rumbo < 90, `esperaba nordeste y salió ${rumbo.toFixed(0)}°`);
 });
