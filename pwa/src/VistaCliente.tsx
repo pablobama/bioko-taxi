@@ -3,6 +3,7 @@
 // todos los estados sin duplicar el maquetado.
 
 import type { DestinoSugerido, DetalleSolicitud, ReferenciaSugerida, TaxisCerca } from './api';
+import CompartirViaje from './CompartirViaje';
 import IconoCategoria from './IconoCategoria';
 import type { crearT } from './i18n';
 
@@ -301,6 +302,11 @@ export default function VistaCliente({
           <button type="button" className="secundario llamar" onClick={acciones.alLlamar}>
             {t('llamada.llamar')} <small>{t('llamada.privada')}</small>
           </button>
+
+          {/* «Mírame llegar» (migración 043). Aquí abajo y no arriba del todo
+              a propósito: lo primero que el pasajero necesita ver es qué coche
+              viene y poder llamar al taxista. */}
+          <CompartirViaje solicitudId={detalle.solicitudId} t={t} />
 
           <p className="nota">
             {detalle.estado === 'RECOGIDO'

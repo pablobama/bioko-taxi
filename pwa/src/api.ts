@@ -361,6 +361,29 @@ export interface SolicitudCentral {
   matricula: string | null;
 }
 
+// «Mírame llegar» (migración 043). Lo que ve quien sigue el viaje: menos que
+// el pasajero a propósito — ni teléfonos, ni PIN de recogida, ni precio.
+export interface ViajeSeguido {
+  estado: string;
+  enMarcha: boolean;
+  origen: string;
+  destino: string;
+  destinoLat: number;
+  destinoLng: number;
+  posicion: { lat: number; lng: number; de: 'pasajero' | 'taxi'; frescuraSeg: number } | null;
+  conductor: string | null;
+  matricula: string | null;
+  marca: string | null;
+  color: string | null;
+  expiraEn: string;
+}
+
+export interface EstadoSeguimiento {
+  activo: boolean;
+  expiraEn: string | null;
+  visitas: Array<{ telefono: string; primeraEn: string; ultimaEn: string }>;
+}
+
 // Por dónde anduvo un taxi (migración 042). Ventanas móviles hacia atrás
 // desde ahora, no días de calendario: «el mes» a primera hora del día 1 no
 // puede ser una pantalla en blanco.
@@ -599,6 +622,30 @@ export const api = {
 
   perfil: () =>
     pedirJson<{ registrado: boolean; perfil: Perfil | null; bloqueado: boolean }>('/api/perfil'),
+
+  // --- «Mírame llegar» (migración 043) -------------------------------------
+  //
+  // El cuerpo vacío va como '{}' y no omitido: `pedirJson` manda siempre
+  // content-type JSON, y Fastify rechaza con un 400 un POST que lo declare y
+  // llegue sin nada.
+
+  compartirViaje: (solicitudId: number) =>
+    pedirJson<{ token: string; expiraEn: string }>(
+      `/api/solicitudes/${solicitudId}/seguimiento`,
+      { method: 'POST', body: '{}' },
+    ),
+
+  cortarSeguimiento: (solicitudId: number) =>
+    pedirJson<{ revocado: boolean }>(
+      `/api/solicitudes/${solicitudId}/seguimiento/revocar`,
+      { method: 'POST', body: '{}' },
+    ),
+
+  estadoSeguimiento: (solicitudId: number) =>
+    pedirJson<EstadoSeguimiento>(`/api/solicitudes/${solicitudId}/seguimiento`),
+
+  verSeguimiento: (token: string) =>
+    pedirJson<ViajeSeguido>(`/api/seguimiento/${encodeURIComponent(token)}`),
 
   guardarPerfil: (perfil: Partial<Perfil>) =>
     pedirJson<{ registrado: boolean; perfil: Perfil }>('/api/perfil', {

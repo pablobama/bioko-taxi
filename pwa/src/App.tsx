@@ -27,6 +27,7 @@ import Mapa from './Mapa';
 import PanelCliente from './PanelCliente';
 import PanelConductor from './PanelConductor';
 import PanelOperador from './PanelOperador';
+import VistaSeguimiento from './VistaSeguimiento';
 import { alternarSilencio, estaSilenciado, prepararSonido } from './sonidos';
 
 const IDIOMAS: Array<{ id: Idioma; etiqueta: string }> = [
@@ -266,6 +267,17 @@ export default function App() {
         ? 'conductor' as const
         : null;
   const conmutador = <ConmutadorRol actual={rolActual} />;
+
+  // «Mírame llegar» (migración 043): quien abre el enlace de un viaje
+  // compartido. Va ANTES que todo lo demás —incluida la pantalla de carga— a
+  // propósito: casi nunca es alguien que use la aplicación, así que no tiene
+  // sesión que resolver ni papel que elegir, y meterle por delante «¿eres
+  // pasajero o taxista?» sería absurdo cuando lo único que quiere es ver si
+  // su hija ha llegado.
+  const tokenSeguimiento = parametros.get('seguir');
+  if (tokenSeguimiento) {
+    return <>{cinta}{bandaSinConexion}<VistaSeguimiento token={tokenSeguimiento} t={t} /></>;
+  }
 
   if (pantalla === 'cargando') {
     return <main className="lienzo">{cinta}{bandaSinConexion}<PantallaArranque texto={t('app.cargando')} /></main>;

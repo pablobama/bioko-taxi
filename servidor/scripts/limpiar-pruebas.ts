@@ -131,6 +131,17 @@ async function principal(): Promise<void> {
          ) RETURNING id`,
       );
 
+      // Enlaces de «mírame llegar» (migración 043) de viajes que ya no están
+      // en marcha. En producción caducan solos; aquí se acumulan porque cada
+      // ejecución de la batería abre unos cuantos.
+      const seguimientos = await cliente.query(
+        `DELETE FROM seguimiento s
+         WHERE NOT EXISTS (
+           SELECT 1 FROM solicitud so JOIN estado e ON e.nombre = so.estado
+           WHERE so.id = s.solicitud_id AND e.ambito = 'solicitud' AND NOT e.es_terminal
+         ) RETURNING s.id`,
+      );
+
       // Eventos sin entregar: ya no interesan.
       const eventos = await cliente.query(
         `UPDATE evento_salida SET entregado_en = now(), canal_entregado = 'descartado_limpieza'
@@ -146,6 +157,7 @@ async function principal(): Promise<void> {
         adyacencias: adyacencias.rowCount ?? 0,
         zonas: zonas.rowCount ?? 0,
         rastros: rastros.rowCount ?? 0,
+        seguimientos: seguimientos.rowCount ?? 0,
         reglas: reglas.rowCount ?? 0,
         eventos: eventos.rowCount ?? 0,
       };
@@ -159,6 +171,7 @@ async function principal(): Promise<void> {
       + `${resumen.adyacencias} adyacencias de zonas de prueba borradas, `
       + `${resumen.zonas} zonas de prueba borradas, `
       + `${resumen.rastros} puntos de recorrido de prueba borrados, `
+      + `${resumen.seguimientos} enlaces de seguimiento cerrados, `
       + `${resumen.reglas} reglas de enrutamiento de prueba borradas, `
       + `${resumen.eventos} eventos descartados.`,
     );

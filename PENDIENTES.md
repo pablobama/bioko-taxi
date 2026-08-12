@@ -320,6 +320,21 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   dudosos. Los barrios cargados por el importador la tienen a NULL: no se
   sabe con qué precisión se tomaron, y fingir un número sería peor.
 
+- **[P43-01] Compartir el viaje cuesta un SMS por cada persona que mira.**
+  Decisión del operador (migración 043): quien abre el enlace de «mírame
+  llegar» tiene que verificar su propio número. Convierte un enlace suelto en
+  una lista de personas con número —que el pasajero ve en su pantalla— pero
+  tiene dos costes que hay que vigilar cuando esto se use de verdad: el dinero
+  de los SMS, y el estorbo para alguien asustado a las once de la noche que
+  solo quiere ver si su hija ha llegado. Si el segundo pesa demasiado, la
+  alternativa es un enlace secreto sin verificar (como Uber), que ya se
+  descartó a propósito.
+
+- **[P43-02] El pasajero pierde el enlace si recarga la página.** El token se
+  guarda hasheado, así que el servidor no puede devolverlo. Mientras la
+  pantalla siga abierta se puede copiar; después solo queda cortarlo y
+  compartir otro. Guardarlo en el propio teléfono lo arreglaría.
+
 - **[P42-01] Al taxista no se le ha dicho que su recorrido queda guardado.**
   La migración 042 guarda por dónde anda cada taxi mientras está en servicio,
   y el operador lo ve en su ficha. Se registra solo en servicio y se borra a

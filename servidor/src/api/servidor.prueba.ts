@@ -1268,3 +1268,161 @@ test('el mismo número escrito de otra forma no crea una segunda identidad', asy
   // Guardado siempre en forma canónica, no como lo teclearon.
   assert.equal(conPrefijo.json().perfil.telefono, `+240${local}`);
 });
+
+// --- «Mírame llegar» (migración 043) ---------------------------------------
+
+// Un pasajero con el teléfono ya verificado: es la puerta de entrada de todo
+// esto, así que casi ninguna prueba de aquí tiene sentido sin él.
+async function pasajeroVerificado(uuid: string, telefono = telefonoUnico()): Promise<void> {
+  const res = await app.inject({
+    method: 'PUT', url: '/api/perfil', headers: cabeceras(uuid),
+    payload: { telefono, nombre: 'Pasajera SEG' },
+  });
+  assert.ok(res.statusCode < 300, `perfil falló: ${res.statusCode} ${res.body}`);
+  await pool.query(
+    `UPDATE perfil_cliente SET telefono_verificado_en = now()
+     WHERE dispositivo_id = (SELECT id FROM dispositivo WHERE uuid_persistente = $1)`,
+    [uuid],
+  );
+}
+
+// Un viaje en marcha, con taxi asignado y en camino.
+async function viajeEnMarcha(uuid: string): Promise<number> {
+  const conductorId = await crearConductorEnZona();
+  await pasajeroVerificado(uuid);
+  const { solicitudId } = await pedirTaxi(uuid);
+  await reclamarSolicitud(pool, emisor, solicitudId, conductorId);
+  await enTransaccion(pool, (c) =>
+    transicionarSolicitud(c, solicitudId, 'EN_CAMINO', 'conductor', 'prueba'));
+  return solicitudId;
+}
+
+test('seguimiento: sin el teléfono verificado no se puede compartir el viaje', async () => {
+  const conductorId = await crearConductorEnZona();
+  const uuid = randomUUID();
+  const { solicitudId } = await pedirTaxi(uuid);
+  await reclamarSolicitud(pool, emisor, solicitudId, conductorId);
+
+  const res = await app.inject({
+    method: 'POST', url: `/api/solicitudes/${solicitudId}/seguimiento`,
+    headers: cabeceras(uuid), payload: {},
+  });
+  assert.equal(res.statusCode, 403);
+  assert.match(res.json().error, /[Vv]erifica tu teléfono/);
+});
+
+test('seguimiento: quien MIRA también tiene que verificar su número', async () => {
+  const pasajera = randomUUID();
+  const solicitudId = await viajeEnMarcha(pasajera);
+  const { token } = (await app.inject({
+    method: 'POST', url: `/api/solicitudes/${solicitudId}/seguimiento`,
+    headers: cabeceras(pasajera), payload: {},
+  })).json();
+  assert.ok(token, 'debería devolver un token');
+
+  // Una desconocida con el enlace, sin número confirmado: no ve nada. Es la
+  // decisión que distingue esto de un enlace de Uber, y cuesta un SMS por
+  // persona, así que más vale que esté fijada por una prueba.
+  const curiosa = randomUUID();
+  const negado = await app.inject({
+    method: 'GET', url: `/api/seguimiento/${token}`, headers: cabeceras(curiosa),
+  });
+  assert.equal(negado.statusCode, 403);
+
+  await pasajeroVerificado(curiosa);
+  const visto = await app.inject({
+    method: 'GET', url: `/api/seguimiento/${token}`, headers: cabeceras(curiosa),
+  });
+  assert.equal(visto.statusCode, 200, visto.body);
+  assert.equal(visto.json().enMarcha, true);
+});
+
+test('seguimiento: quien mira ve el coche, y NO el teléfono ni el PIN', async () => {
+  const pasajera = randomUUID();
+  const solicitudId = await viajeEnMarcha(pasajera);
+  const { token } = (await app.inject({
+    method: 'POST', url: `/api/solicitudes/${solicitudId}/seguimiento`,
+    headers: cabeceras(pasajera), payload: {},
+  })).json();
+  const seguidora = randomUUID();
+  await pasajeroVerificado(seguidora);
+
+  const res = await app.inject({
+    method: 'GET', url: `/api/seguimiento/${token}`, headers: cabeceras(seguidora),
+  });
+  const vista = res.json();
+  // La mitad del valor de esto es poder decir «se subió al GE-1234».
+  assert.ok(vista.matricula, 'la matrícula identifica el coche');
+  assert.ok(vista.conductor, 'y el nombre del conductor');
+  assert.ok(vista.destino, 'y a dónde va');
+  // Y la otra mitad es lo que NO viaja: el PIN es la prueba de identidad del
+  // viaje, y los teléfonos no son asunto de quien mira.
+  const crudo = JSON.stringify(vista);
+  assert.equal('pin' in vista, false, 'el PIN de recogida no sale de aquí');
+  assert.equal(/\+240\d/.test(crudo), false, `se ha colado un teléfono: ${crudo}`);
+});
+
+test('seguimiento: cortarlo mata el enlace, y compartir dos veces no deja dos vivos', async () => {
+  const pasajera = randomUUID();
+  const solicitudId = await viajeEnMarcha(pasajera);
+  const { token } = (await app.inject({
+    method: 'POST', url: `/api/solicitudes/${solicitudId}/seguimiento`,
+    headers: cabeceras(pasajera), payload: {},
+  })).json();
+
+  // Dos veces seguidas no puede dejar dos enlaces vivos: cortar uno dejaría
+  // el otro abierto sin que la pasajera lo supiera.
+  const repetido = await app.inject({
+    method: 'POST', url: `/api/solicitudes/${solicitudId}/seguimiento`,
+    headers: cabeceras(pasajera), payload: {},
+  });
+  assert.equal(repetido.statusCode, 409);
+
+  const seguidora = randomUUID();
+  await pasajeroVerificado(seguidora);
+  assert.equal((await app.inject({
+    method: 'GET', url: `/api/seguimiento/${token}`, headers: cabeceras(seguidora),
+  })).statusCode, 200);
+
+  await app.inject({
+    method: 'POST', url: `/api/solicitudes/${solicitudId}/seguimiento/revocar`,
+    headers: cabeceras(pasajera), payload: {},
+  });
+  assert.equal((await app.inject({
+    method: 'GET', url: `/api/seguimiento/${token}`, headers: cabeceras(seguidora),
+  })).statusCode, 404, 'cortado es cortado');
+});
+
+test('seguimiento: la pasajera ve quién está mirando su viaje', async () => {
+  const pasajera = randomUUID();
+  const solicitudId = await viajeEnMarcha(pasajera);
+  const { token } = (await app.inject({
+    method: 'POST', url: `/api/solicitudes/${solicitudId}/seguimiento`,
+    headers: cabeceras(pasajera), payload: {},
+  })).json();
+
+  const seguidora = randomUUID();
+  const telefonoSeguidora = telefonoUnico();
+  await pasajeroVerificado(seguidora, telefonoSeguidora);
+  await app.inject({ method: 'GET', url: `/api/seguimiento/${token}`, headers: cabeceras(seguidora) });
+  // Mirar dos veces es una visita, no dos: la lista es de personas.
+  await app.inject({ method: 'GET', url: `/api/seguimiento/${token}`, headers: cabeceras(seguidora) });
+
+  const estado = (await app.inject({
+    method: 'GET', url: `/api/solicitudes/${solicitudId}/seguimiento`,
+    headers: cabeceras(pasajera), payload: {},
+  })).json();
+  assert.equal(estado.activo, true);
+  assert.equal(estado.visitas.length, 1);
+  // Entero, no medio: la pasajera tiene que poder reconocer el de su madre.
+  assert.equal(estado.visitas[0].telefono, telefonoSeguidora);
+});
+
+test('seguimiento: un token inventado no abre nada', async () => {
+  const curiosa = randomUUID();
+  await pasajeroVerificado(curiosa);
+  const res = await app.inject({
+    method: 'GET', url: '/api/seguimiento/estonoesuntokendeverdad', headers: cabeceras(curiosa),
+  });
+  assert.equal(res.statusCode, 404);
+});

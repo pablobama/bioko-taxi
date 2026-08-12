@@ -19,6 +19,10 @@ import { ocupacionDe, rutaDe } from '../dominio/ocupacion.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
 import { registrarPosicion } from '../dominio/proximidad.js';
 import { estimarLlegada, reputacionDe, valorarViaje } from '../dominio/reputacion.js';
+import {
+  EN_MARCHA, crearSeguimiento, graciaMin, registrarVisita, revocarSeguimiento,
+  seguimientoPorToken, terminadoHaceMin, visitasDe, vistaSeguida,
+} from '../dominio/seguimiento.js';
 import { crearSolicitud, transicionarConductor, transicionarSolicitud } from '../dominio/transiciones.js';
 import type { ConexionesSse } from '../eventos/adaptador-sse.js';
 import { ServicioVerificacionRegistro, type ServicioVerificacionTelefono } from '../dominio/verificacion-telefono.js';
@@ -763,6 +767,136 @@ export function crearServidor(
     await enTransaccion(pool, (c) =>
       registrarPosicion(c, viaje.rows[0].id, 'cliente', cuerpo.lat!, cuerpo.lng!));
     return { guardada: true };
+  });
+
+  // --- «Mírame llegar» (migración 043) -------------------------------------
+  //
+  // Las dos puertas son teléfonos verificados: el de quien comparte y el de
+  // quien mira. Ver la migración para el porqué de la segunda.
+
+  // Como `dispositivoDesde`, pero sin exigir que el móvil sea de pasajero:
+  // quien sigue un viaje puede tener instalada la app de taxista.
+  async function dispositivoDeCualquiera(req: FastifyRequest): Promise<{ id: number }> {
+    const uuid = (req.headers['x-dispositivo'] as string | undefined)
+      ?? (req.query as Record<string, string | undefined>).dispositivo;
+    if (!uuid || !PATRON_UUID.test(uuid)) {
+      throw errorHttp(400, 'Falta la cabecera x-dispositivo con un UUID válido.');
+    }
+    const res = await pool.query(
+      `INSERT INTO dispositivo (uuid_persistente, tipo)
+       VALUES ($1, 'cliente')
+       ON CONFLICT (uuid_persistente) DO UPDATE SET ultimo_heartbeat = now()
+       RETURNING id`,
+      [uuid.toLowerCase()],
+    );
+    return { id: res.rows[0].id };
+  }
+
+  // El teléfono verificado de este dispositivo, o null. Vale tanto el de un
+  // pasajero como el de un taxista: un taxista que quiere seguir el viaje de
+  // su hija es una persona con un número confirmado como cualquier otra.
+  async function telefonoVerificado(dispositivoId: number): Promise<string | null> {
+    const res = await pool.query(
+      `SELECT COALESCE(c.telefono, p.telefono) AS telefono
+       FROM dispositivo d
+       LEFT JOIN conductor c
+         ON c.id = d.conductor_id AND c.telefono_verificado_en IS NOT NULL
+       LEFT JOIN perfil_cliente p
+         ON p.dispositivo_id = d.id AND p.telefono_verificado_en IS NOT NULL
+       WHERE d.id = $1`,
+      [dispositivoId],
+    );
+    return res.rows[0]?.telefono ?? null;
+  }
+
+  app.post('/api/solicitudes/:id/seguimiento', async (req) => {
+    const dispositivo = await dispositivoDesde(req);
+    const solicitudId = Number((req.params as { id: string }).id);
+    const detalle = await solicitudPropia(solicitudId, dispositivo.id);
+    if (!EN_MARCHA.includes(detalle.estado as string)) {
+      throw errorHttp(409, 'Este viaje ya terminó: no hay nada que seguir.');
+    }
+    if (await telefonoVerificado(dispositivo.id) === null) {
+      throw errorHttp(403, 'Verifica tu teléfono antes de compartir tu viaje.');
+    }
+    const gracia = await graciaMin(pool);
+    const creado = await enTransaccion(pool, (c) =>
+      crearSeguimiento(c, solicitudId, dispositivo.id, gracia));
+    if (creado === null) {
+      // Ya había uno abierto. Su token está hasheado y no se puede devolver:
+      // quien lo abrió lo tiene en su pantalla, y si lo perdió, lo corta y
+      // abre otro. Reenviarle uno nuevo dejaría dos vivos a la vez.
+      throw errorHttp(409, 'Ya compartiste este viaje. Corta el enlace anterior para crear otro.');
+    }
+    return { token: creado.token, expiraEn: creado.expiraEn.toISOString() };
+  });
+
+  app.post('/api/solicitudes/:id/seguimiento/revocar', async (req) => {
+    const dispositivo = await dispositivoDesde(req);
+    const solicitudId = Number((req.params as { id: string }).id);
+    await solicitudPropia(solicitudId, dispositivo.id);
+    return { revocado: await revocarSeguimiento(pool, solicitudId, dispositivo.id) };
+  });
+
+  // Quién está mirando: se lo enseña al pasajero mientras va dentro.
+  app.get('/api/solicitudes/:id/seguimiento', async (req) => {
+    const dispositivo = await dispositivoDesde(req);
+    const solicitudId = Number((req.params as { id: string }).id);
+    await solicitudPropia(solicitudId, dispositivo.id);
+    const abierto = await pool.query(
+      `SELECT expira_en FROM seguimiento
+       WHERE solicitud_id = $1 AND dispositivo_id = $2
+         AND revocado_en IS NULL AND expira_en > now()`,
+      [solicitudId, dispositivo.id],
+    );
+    return {
+      activo: abierto.rowCount !== 0,
+      expiraEn: abierto.rows[0]?.expira_en ?? null,
+      // Los números se enseñan enteros a propósito: el pasajero tiene que
+      // poder reconocer el de su madre, y medio número no lo reconoce nadie.
+      visitas: (await visitasDe(pool, solicitudId)).map((v) => ({
+        telefono: v.telefono,
+        primeraEn: v.primeraEn.toISOString(),
+        ultimaEn: v.ultimaEn.toISOString(),
+      })),
+    };
+  });
+
+  // Lo que ve quien sigue el viaje. Nótese que aquí NO se usa
+  // `solicitudPropia`: quien mira no es el dueño del viaje, y lo que recibe
+  // es bastante menos (ver `vistaSeguida`).
+  app.get('/api/seguimiento/:token', async (req) => {
+    // A propósito NO se usa `dispositivoDesde`, que exige que el móvil sea de
+    // pasajero: aquí vale cualquiera. Un taxista siguiendo el viaje de su
+    // hija es de lo más normal en una ciudad donde todo el mundo se conoce, y
+    // rechazarlo por tener la app de trabajo instalada sería absurdo.
+    const dispositivo = await dispositivoDeCualquiera(req);
+    const token = (req.params as { token: string }).token;
+    const seguimiento = await seguimientoPorToken(pool, token);
+    if (seguimiento === null) {
+      throw errorHttp(404, 'Este enlace ya no vale: o se cortó, o el viaje terminó hace rato.');
+    }
+    const telefono = await telefonoVerificado(dispositivo.id);
+    if (telefono === null) {
+      // Código aparte del mensaje: la pantalla necesita distinguir «verifica
+      // tu número» —que tiene arreglo ahí mismo— de un enlace muerto.
+      const error = errorHttp(403, 'Para ver este viaje verifica tu número de teléfono.');
+      (error as Error & { codigo?: string }).codigo = 'telefono_no_verificado';
+      throw error;
+    }
+    const vista = await vistaSeguida(pool, seguimiento.solicitudId, seguimiento.expiraEn);
+    if (vista === null) throw errorHttp(404, 'Este viaje ya no existe.');
+    // Terminado el viaje, el enlace aguanta un rato más: cortarlo en el mismo
+    // instante en que el taxi para dejaría a quien seguía delante de un
+    // «este enlace ya no vale» justo cuando quiere confirmar que llegó bien.
+    if (!vista.enMarcha) {
+      const terminadoHace = await terminadoHaceMin(pool, seguimiento.solicitudId);
+      if (terminadoHace !== null && terminadoHace > await graciaMin(pool)) {
+        throw errorHttp(404, 'Este viaje terminó hace rato y el enlace ya se cerró.');
+      }
+    }
+    await registrarVisita(pool, seguimiento.id, dispositivo.id, telefono);
+    return vista;
   });
 
   // El cliente no reporta precio (migración 012): su sesión termina cuando
