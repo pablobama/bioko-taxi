@@ -18,6 +18,7 @@ import { buscarReferencias, referenciasMasUsadas } from '../dominio/gazetteer.js
 import { ocupacionDe, rutaDe } from '../dominio/ocupacion.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
 import { registrarPosicion } from '../dominio/proximidad.js';
+import { puntoDeRecogida } from '../dominio/recogida.js';
 import { estimarLlegada, reputacionDe, valorarViaje } from '../dominio/reputacion.js';
 import {
   EN_MARCHA, crearSeguimiento, graciaMin, registrarVisita, revocarSeguimiento,
@@ -428,6 +429,7 @@ export function crearServidor(
     }
     const cuerpo = req.body as {
       telefono?: string; origenId?: number; destinoId?: number; lat?: number; lng?: number;
+      precision?: number;
     };
     if (!cuerpo?.origenId || !cuerpo.destinoId) {
       throw errorHttp(400, 'Faltan campos: origenId y destinoId son obligatorios.');
@@ -466,6 +468,8 @@ export function crearServidor(
       // Lectura GPS única y voluntaria (señal antifraude, migración 010).
       latCliente: typeof cuerpo.lat === 'number' ? cuerpo.lat : undefined,
       lngCliente: typeof cuerpo.lng === 'number' ? cuerpo.lng : undefined,
+      precisionClienteM: typeof cuerpo.precision === 'number' && cuerpo.precision >= 0
+        ? cuerpo.precision : undefined,
     }));
 
     if (!creada.yaExistia) {
@@ -490,7 +494,8 @@ export function crearServidor(
   ): Promise<Record<string, unknown>> {
     const res = await pool.query(
       `SELECT s.id, s.estado, s.expira_en, s.conductor_id,
-              ro.nombre AS origen, ro.lat AS origen_lat, ro.lng AS origen_lng,
+              ro.nombre AS origen, ro.lat AS ref_origen_lat, ro.lng AS ref_origen_lng,
+              s.lat_cliente, s.lng_cliente, s.precision_cliente_m,
               rd.nombre AS destino, rd.lat AS destino_lat, rd.lng AS destino_lng,
               v.id AS viaje_id, v.pin, v.llegado_en,
               c.nombre AS conductor, ve.matricula, ve.marca, ve.color,
@@ -541,6 +546,18 @@ export function crearServidor(
     let taxi: {
       lat: number; lng: number; etaMin: number; distanciaM: number; frescuraSeg: number;
     } | null = null;
+    // Dónde recoger de verdad (migración 046): la posición con la que pidió el
+    // taxi si vino con precisión suficiente, y el sitio del catálogo si no. Es
+    // el mismo cálculo que ve el taxista, para que los dos mapas coincidan.
+    const recogida = puntoDeRecogida({
+      referenciaLat: Number(fila.ref_origen_lat),
+      referenciaLng: Number(fila.ref_origen_lng),
+      latCliente: fila.lat_cliente === null ? null : Number(fila.lat_cliente),
+      lngCliente: fila.lng_cliente === null ? null : Number(fila.lng_cliente),
+      precisionClienteM: fila.precision_cliente_m === null
+        ? null : Number(fila.precision_cliente_m),
+    }, await leerParametroEntero(pool, 'recogida_precision_maxima_m'));
+
     let reputacion: Awaited<ReturnType<typeof reputacionDe>> | null = null;
     if (fila.conductor_id !== null) {
       reputacion = await reputacionDe(pool, fila.conductor_id);
@@ -560,7 +577,7 @@ export function crearServidor(
           const estimacion = await estimarLlegada(
             pool,
             { lat: Number(p.lat), lng: Number(p.lng) },
-            { lat: Number(fila.origen_lat), lng: Number(fila.origen_lng) },
+            { lat: recogida.lat, lng: recogida.lng },
           );
           taxi = {
             lat: Number(p.lat),
@@ -600,8 +617,11 @@ export function crearServidor(
       solicitudId: fila.id,
       estado: fila.estado,
       origen: fila.origen,
-      origenLat: Number(fila.origen_lat),
-      origenLng: Number(fila.origen_lng),
+      origenLat: recogida.lat,
+      origenLng: recogida.lng,
+      recogidaEnGps: recogida.origen === 'gps',
+      metrosDeLaReferencia: recogida.metrosDeLaReferencia === null
+        ? null : Math.round(recogida.metrosDeLaReferencia),
       destino: fila.destino,
       destinoLat: Number(fila.destino_lat),
       destinoLng: Number(fila.destino_lng),

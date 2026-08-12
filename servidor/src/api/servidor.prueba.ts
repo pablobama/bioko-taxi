@@ -1426,3 +1426,105 @@ test('seguimiento: un token inventado no abre nada', async () => {
   });
   assert.equal(res.statusCode, 404);
 });
+
+// --- La regla que la migración 039 no podía imponer sola -------------------
+
+// Supabase publica el esquema `public` por HTTP. La 039 activó RLS en todas
+// las tablas que existían ese día, y tres migraciones después `rastro`,
+// `seguimiento` y `seguimiento_visita` nacieron abiertas sin que nadie se
+// diera cuenta hasta que lo dijo el linter de Supabase.
+//
+// Un comentario en la 039 no lo habría evitado: nadie lee los comentarios de
+// una migración de hace tres semanas. Esto sí, porque no deja pasar la
+// batería.
+test('ninguna tabla nueva se queda sin RLS: la API pública de Supabase no perdona', async () => {
+  // Tablas de OTRO proyecto que comparte esta base de desarrollo. No son
+  // nuestras y no las tocamos; esta lista debería quedarse vacía el día que
+  // dejen de compartir base.
+  const AJENAS = new Set(['registrador', 'zona_excluida', 'exposicion']);
+
+  const abiertas = await pool.query(
+    `SELECT c.relname FROM pg_class c
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public' AND c.relkind = 'r' AND NOT c.relrowsecurity
+     ORDER BY c.relname`,
+  );
+  const nuestras = abiertas.rows
+    .map((f: { relname: string }) => f.relname)
+    .filter((t: string) => !AJENAS.has(t));
+
+  assert.deepEqual(
+    nuestras, [],
+    `Estas tablas están expuestas por PostgREST sin ninguna política: ${nuestras.join(', ')}. `
+    + 'Añade «ALTER TABLE <tabla> ENABLE ROW LEVEL SECURITY;» a la migración que la crea.',
+  );
+});
+
+// --- Punto de recogida (migración 046) -------------------------------------
+
+test('el punto de recogida es donde está la persona, no el sitio del catálogo', async () => {
+  await crearConductorEnZona();
+  const uuid = randomUUID();
+
+  // La referencia de origen está en 3.75, 8.78. La persona, unos 90 m al
+  // norte, con un GPS bueno: es el caso del supermercado que destapó esto.
+  const aNoventaMetros = { lat: 3.750809, lng: 8.78 };
+  const res = await app.inject({
+    method: 'POST', url: '/api/solicitudes', headers: cabeceras(uuid),
+    payload: {
+      telefono: '+240222999992', origenId, destinoId,
+      ...aNoventaMetros, precision: 11,
+    },
+  });
+  assert.ok(res.statusCode < 300, res.body);
+  const { solicitudId } = res.json();
+
+  const detalle = (await app.inject({
+    method: 'GET', url: `/api/solicitudes/${solicitudId}`, headers: cabeceras(uuid),
+  })).json();
+
+  assert.equal(detalle.recogidaEnGps, true, 'con ±11 m manda la posición real');
+  assert.ok(Math.abs(detalle.origenLat - aNoventaMetros.lat) < 1e-9,
+    `el pin va a la persona, no a la referencia (salió ${detalle.origenLat})`);
+  assert.ok(Math.abs(detalle.metrosDeLaReferencia - 90) < 5,
+    `y se dice a cuánto queda del sitio conocido (salió ${detalle.metrosDeLaReferencia})`);
+});
+
+test('con el GPS malo se usa el sitio del catálogo, y se dice que es aproximado', async () => {
+  await crearConductorEnZona();
+  const uuid = randomUUID();
+
+  // ±900 m es lo que devuelve Android cuando no enciende el GPS y resuelve por
+  // antena. Ese punto no es un punto: es lo que ponía a la gente en el
+  // supermercado de al lado.
+  const res = await app.inject({
+    method: 'POST', url: '/api/solicitudes', headers: cabeceras(uuid),
+    payload: {
+      telefono: '+240222999992', origenId, destinoId,
+      lat: 3.750809, lng: 8.78, precision: 900,
+    },
+  });
+  assert.ok(res.statusCode < 300, res.body);
+
+  const detalle = (await app.inject({
+    method: 'GET', url: `/api/solicitudes/${res.json().solicitudId}`, headers: cabeceras(uuid),
+  })).json();
+  assert.equal(detalle.recogidaEnGps, false);
+  assert.ok(Math.abs(detalle.origenLat - 3.75) < 1e-9, 'vuelve a la referencia');
+});
+
+test('pedir taxi sin GPS sigue funcionando: no todo el mundo lo tiene encendido', async () => {
+  await crearConductorEnZona();
+  const uuid = randomUUID();
+  const res = await app.inject({
+    method: 'POST', url: '/api/solicitudes', headers: cabeceras(uuid),
+    payload: { telefono: '+240222999992', origenId, destinoId },
+  });
+  assert.ok(res.statusCode < 300, res.body);
+
+  const detalle = (await app.inject({
+    method: 'GET', url: `/api/solicitudes/${res.json().solicitudId}`, headers: cabeceras(uuid),
+  })).json();
+  assert.equal(detalle.recogidaEnGps, false);
+  assert.equal(detalle.metrosDeLaReferencia, null, 'sin GPS no hay distancia que dar');
+});

@@ -57,6 +57,10 @@ function solicitud(cambios: Partial<DetalleSolicitud> = {}): DetalleSolicitud {
     origen: mercado.nombre,
     origenLat: mercado.lat,
     origenLng: mercado.lng,
+    // Migración 046: la galería enseña el caso bueno —posición real, a 90 m
+    // del sitio conocido—, que es el que hay que poder mirar de un vistazo.
+    recogidaEnGps: true,
+    metrosDeLaReferencia: 90,
     destino: catedral.nombre,
     destinoLat: catedral.lat,
     destinoLng: catedral.lng,

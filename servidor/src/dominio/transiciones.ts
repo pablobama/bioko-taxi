@@ -83,6 +83,9 @@ export interface DatosNuevaSolicitud {
   // antifraude, migración 010). Nunca es obligatoria.
   latCliente?: number;
   lngCliente?: number;
+  // Radio de error del GPS en metros (migración 046). Sin él, la coordenada no
+  // se puede usar como punto de recogida: no se sabe si vale.
+  precisionClienteM?: number;
 }
 
 export interface SolicitudCreada {
@@ -101,8 +104,9 @@ export async function crearSolicitud(
   const insercion = await cliente.query(
     `INSERT INTO solicitud
        (dispositivo_cliente_id, telefono_cliente, referencia_origen_id,
-        referencia_destino_id, expira_en, clave_idempotencia, lat_cliente, lng_cliente)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        referencia_destino_id, expira_en, clave_idempotencia, lat_cliente, lng_cliente,
+        precision_cliente_m)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (clave_idempotencia) DO NOTHING
      RETURNING id`,
     [
@@ -114,6 +118,7 @@ export async function crearSolicitud(
       datos.claveIdempotencia,
       datos.latCliente ?? null,
       datos.lngCliente ?? null,
+      datos.precisionClienteM ?? null,
     ],
   );
 

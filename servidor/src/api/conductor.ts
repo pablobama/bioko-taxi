@@ -22,6 +22,7 @@ import {
 import { estadoPorOcupacion, ocupacionDe, rutaDe } from '../dominio/ocupacion.js';
 import { registrarPosicion } from '../dominio/proximidad.js';
 import { registrarRastro } from '../dominio/rastro.js';
+import { puntoDeRecogida } from '../dominio/recogida.js';
 import { recargasDe, solicitarRecarga } from '../dominio/recargas.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
 import { entrarEnServicio, registrarHeartbeat, salirDeServicio } from '../dominio/presencia.js';
@@ -458,7 +459,8 @@ export function registrarRutasConductor(
     const pasajeros = await pool.query(
       `SELECT s.id AS solicitud_id, s.estado, s.telefono_cliente,
               v.id AS viaje_id, v.llegado_en,
-              ro.nombre AS origen, ro.lat AS origen_lat, ro.lng AS origen_lng,
+              ro.nombre AS origen, ro.lat AS ref_origen_lat, ro.lng AS ref_origen_lng,
+              s.lat_cliente, s.lng_cliente, s.precision_cliente_m,
               rd.nombre AS destino, rd.lat AS destino_lat, rd.lng AS destino_lng
        FROM solicitud s
        JOIN viaje v ON v.solicitud_id = s.id
@@ -468,6 +470,10 @@ export function registrarRutasConductor(
        ORDER BY s.id`,
       [sesion.conductorId],
     );
+    // Dónde recoger de verdad (migración 046): la posición con la que pidió el
+    // taxi si venía con precisión suficiente, y el sitio del catálogo si no.
+    const precisionMaxima = await leerParametroEntero(pool, 'recogida_precision_maxima_m');
+
     // Posición en vivo de cada pasajero que ESPERA (decisión de sesión): el
     // taxista necesita saber dónde está de verdad, no solo la referencia que
     // dijo. Se corta al subirse (RECOGIDO): van en el mismo coche y compartir
@@ -519,13 +525,27 @@ export function registrarRutasConductor(
         expiraEn: o.expira_en,
         bandaPrecio: o.p50 === null ? null : { p25: Number(o.p25), p50: Number(o.p50), p75: Number(o.p75) },
       })),
-      pasajeros: pasajeros.rows.map((fila) => ({
+      pasajeros: pasajeros.rows.map((fila) => {
+        const recogida = puntoDeRecogida({
+          referenciaLat: Number(fila.ref_origen_lat),
+          referenciaLng: Number(fila.ref_origen_lng),
+          latCliente: fila.lat_cliente === null ? null : Number(fila.lat_cliente),
+          lngCliente: fila.lng_cliente === null ? null : Number(fila.lng_cliente),
+          precisionClienteM: fila.precision_cliente_m === null
+            ? null : Number(fila.precision_cliente_m),
+        }, precisionMaxima);
+        return {
         solicitudId: fila.solicitud_id,
         viajeId: fila.viaje_id,
         estado: fila.estado,
         origen: fila.origen,
-        origenLat: Number(fila.origen_lat),
-        origenLng: Number(fila.origen_lng),
+        origenLat: recogida.lat,
+        origenLng: recogida.lng,
+        // Para que la app pueda decir «a 40 m de la Farmacia Nueva» en vez de
+        // plantar un pin y callarse. Ver dominio/recogida.ts.
+        recogidaEnGps: recogida.origen === 'gps',
+        metrosDeLaReferencia: recogida.metrosDeLaReferencia === null
+          ? null : Math.round(recogida.metrosDeLaReferencia),
         destino: fila.destino,
         destinoLat: Number(fila.destino_lat),
         destinoLng: Number(fila.destino_lng),
@@ -535,7 +555,8 @@ export function registrarRutasConductor(
         relojEsperaSeg: relojSeg,
         // null si el pasajero no comparte ubicación o ya va a bordo.
         posicionCliente: porViaje.get(String(fila.viaje_id)) ?? null,
-      })),
+        };
+      }),
     };
   });
 

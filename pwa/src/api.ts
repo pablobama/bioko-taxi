@@ -143,6 +143,11 @@ export interface DetalleSolicitud {
   graciaCancelacionSeg: number | null;
   // El taxista pulsó «he llegado»: no depende del GPS del pasajero.
   taxiHaLlegado: boolean;
+  // Migración 046: si el punto de recogida es la posición real con la que se
+  // pidió el taxi, o el sitio del catálogo más cercano, y a cuántos metros
+  // queda uno de otro.
+  recogidaEnGps: boolean;
+  metrosDeLaReferencia: number | null;
   // Posición del coche acercándose y tiempo estimado. null si el conductor no
   // ha enviado posición reciente: el tiempo es aproximado, no una promesa.
   taxi: { lat: number; lng: number; etaMin: number; distanciaM: number; frescuraSeg: number } | null;
@@ -513,6 +518,12 @@ export interface PasajeroConductor {
   telefonoCliente: string | null;
   llegadoEn: string | null;
   relojEsperaSeg: number;
+  // Migración 046: si el punto de recogida es la posición real con la que
+  // pidió el taxi (true) o el sitio del catálogo más cercano (false), y a
+  // cuántos metros está uno del otro. Sin esto, el taxista veía un pin y no
+  // podía saber si era la persona o un supermercado a 90 m.
+  recogidaEnGps: boolean;
+  metrosDeLaReferencia: number | null;
   // Dónde está el pasajero de verdad mientras espera. null si no comparte
   // ubicación o si ya va a bordo.
   posicionCliente: { lat: number; lng: number; frescuraSeg: number } | null;
@@ -919,29 +930,70 @@ function coordenadasFingidas(): { lat: number; lng: number } | null {
 // Lectura GPS única y voluntaria al pedir (señal antifraude del servidor).
 // Si no hay permiso, no hay señal o tarda más de 4 s, se pide sin ella:
 // la ubicación jamás es requisito.
-export function coordenadasOportunistas(): Promise<{ lat: number; lng: number } | null> {
+// La posición de quien usa la app, con la precisión que traiga.
+//
+// Antes esto pedía la posición sin `enableHighAccuracy`, con 3,5 s de espera y
+// aceptando una lectura de hasta un minuto. Tres decisiones que parecían
+// prudentes —no gastar batería, no hacer esperar— y que juntas producían el
+// fallo por el que se reescribió: sin alta precisión Android no enciende el
+// GPS, devuelve una posición por wifi y antena que se va de cientos de metros,
+// y ESA aterriza en sitios «conocidos». De ahí el pasajero situado en un
+// supermercado en vez de en la acera donde estaba.
+//
+// Ahora se pide bien y se espera: se coge la mejor lectura que llegue en
+// `esperaMs`, y se corta antes en cuanto una baja de `objetivoM`. Y se
+// devuelve `precision`, que es lo que permite decidir después si la posición
+// vale como punto de recogida o no. Sin ese número no se puede distinguir
+// «estoy aquí» de «estoy en algún sitio de este barrio».
+export interface Posicion {
+  lat: number;
+  lng: number;
+  // Radio de error en metros, tal cual lo da el navegador. null si el GPS va
+  // fingido por la URL en pruebas locales.
+  precision: number | null;
+}
+
+export function coordenadasOportunistas(
+  { objetivoM = 40, esperaMs = 8000 } = {},
+): Promise<Posicion | null> {
   return new Promise((resolver) => {
     const fingidas = coordenadasFingidas();
     if (fingidas) {
-      resolver(fingidas);
+      resolver({ ...fingidas, precision: null });
       return;
     }
     if (!('geolocation' in navigator)) {
       resolver(null);
       return;
     }
-    const limite = setTimeout(() => resolver(null), 4000);
-    navigator.geolocation.getCurrentPosition(
-      (posicion) => {
-        clearTimeout(limite);
-        resolver({ lat: posicion.coords.latitude, lng: posicion.coords.longitude });
+
+    let mejor: GeolocationPosition | null = null;
+    let terminado = false;
+    const acabar = () => {
+      if (terminado) return;
+      terminado = true;
+      navigator.geolocation.clearWatch(vigilancia);
+      clearTimeout(reloj);
+      resolver(mejor === null ? null : {
+        lat: mejor.coords.latitude,
+        lng: mejor.coords.longitude,
+        precision: mejor.coords.accuracy,
+      });
+    };
+
+    // `watchPosition` y no `getCurrentPosition`: el primer aviso del sistema
+    // suele ser la posición gruesa de la red, y la del GPS llega unos segundos
+    // después. Con getCurrentPosition se cogía la primera y se descartaba la
+    // buena sin llegar a verla.
+    const vigilancia = navigator.geolocation.watchPosition(
+      (p) => {
+        if (mejor === null || p.coords.accuracy < mejor.coords.accuracy) mejor = p;
+        if (mejor.coords.accuracy <= objetivoM) acabar();
       },
-      () => {
-        clearTimeout(limite);
-        resolver(null);
-      },
-      { timeout: 3500, maximumAge: 60_000 },
+      () => acabar(),
+      { enableHighAccuracy: true, maximumAge: 0, timeout: esperaMs },
     );
+    const reloj = setTimeout(acabar, esperaMs);
   });
 }
 

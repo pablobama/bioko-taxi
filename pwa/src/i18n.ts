@@ -274,6 +274,9 @@ const es: Diccionario = {
   'llamada.noSePudo': 'No se pudo conectar',
   'llamada.noSePudoNota': 'La red no dejó pasar la llamada. Inténtalo otra vez o espera a que llegue.',
   'llamada.privada': 'Sin dar tu número',
+  // Migración 046: de dónde sale el punto de recogida.
+  'recogida.aMetros': 'a {m} m',
+  'recogida.aproximada': 'punto aproximado',
 
   // «Mírame llegar» (migración 043): compartir el viaje con alguien de fuera.
   'seguir.titulo': 'Que alguien te siga',
@@ -548,6 +551,8 @@ const fr: Diccionario = {
   'llamada.noSePudo': 'Connexion impossible',
   'llamada.noSePudoNota': 'Le réseau n’a pas laissé passer l’appel. Réessaie ou attends son arrivée.',
   'llamada.privada': 'Sans donner ton numéro',
+  'recogida.aMetros': 'à {m} m',
+  'recogida.aproximada': 'point approximatif',
 
   'seguir.titulo': 'Fais-toi suivre',
   'seguir.explicacion': 'Envoie un lien : la personne verra où tu vas et dans quelle voiture, jusqu’à ton arrivée.',
@@ -818,6 +823,8 @@ const en: Diccionario = {
   'llamada.noSePudo': 'Could not connect',
   'llamada.noSePudoNota': 'The network would not let the call through. Try again or wait for them.',
   'llamada.privada': 'Without giving your number',
+  'recogida.aMetros': '{m} m away',
+  'recogida.aproximada': 'approximate point',
 
   'seguir.titulo': 'Let someone follow you',
   'seguir.explicacion': 'Send a link and they will see where you are going and in which car, until you arrive.',

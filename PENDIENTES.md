@@ -320,6 +320,35 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   dudosos. Los barrios cargados por el importador la tienen a NULL: no se
   sabe con qué precisión se tomaron, y fingir un número sería peor.
 
+- **[P46-04] El mapa del pasajero se envía recortado y eso empeora el nombre
+  del sitio.** `/api/mapa` tiene un tope de 800 referencias y el catálogo ya va
+  por 2.249 tras la importación de OpenStreetMap: el servidor manda las 800 más
+  usadas y lo avisa por el registro. La PWA deduce el nombre del origen
+  buscando el punto más cercano DE ESA LISTA, así que puede acabar nombrando un
+  sitio lejano teniendo uno al lado que no viajó. Con la migración 046 el punto
+  de recogida ya no depende de esto —va la coordenada real—, pero el nombre que
+  lee el taxista sí. Se arregla mandando también los cercanos al GPS, no solo
+  los más usados.
+
+- **[P46-01] La posición en vivo del pasajero que espera sigue sin usarse.**
+  `/api/conductor/estado` manda `posicionCliente` —dónde está de verdad quien
+  espera, refrescado mientras su pantalla esté encendida— y la app del taxista
+  no la lee. El punto de recogida ya es correcto al pedir el taxi (migración
+  046), pero si la persona se mueve mientras espera —cruza la calle, sale del
+  portal— el taxista sigue viendo el punto de partida. Es el mismo tipo de
+  fallo que la 046 arregló: el dato correcto existe y nadie lo consume.
+
+- **[P46-02] El pasajero no puede corregir su punto de recogida.** Si el GPS lo
+  sitúa mal, o si está esperando en otra esquina a propósito, no hay forma de
+  mover el pin. Con el punto ya viniendo del GPS esto importa menos que antes,
+  pero sigue siendo la salida cuando la máquina se equivoca.
+
+- **[P46-03] Las solicitudes anteriores a la 046 no tienen precisión.**
+  `precision_cliente_m` es NULL en todas ellas, así que su punto de recogida
+  sigue siendo la referencia del catálogo aunque tengan coordenada guardada. Es
+  deliberado —no se sabe si esa coordenada vale— y se corrige solo a medida que
+  entran solicitudes nuevas.
+
 - **[P43-01] Compartir el viaje cuesta un SMS por cada persona que mira.**
   Decisión del operador (migración 043): quien abre el enlace de «mírame
   llegar» tiene que verificar su propio número. Convierte un enlace suelto en

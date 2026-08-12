@@ -84,7 +84,20 @@ function BloquePasajero({
       <div className="pasajero-cabecera">
         <span className="numero-pasajero">{numero}</span>
         <div className="pasajero-ruta">
-          <span className="ruta-desde">{pasajero.origen}</span>
+          {/* De dónde recogerlo (migración 046). El pin del mapa está en la
+              posición real cuando la hay, y aquí se dice a cuántos metros del
+              sitio conocido queda: sin esa cifra, el taxista ve un punto en
+              medio de una manzana y no sabe si buscar en la puerta del
+              supermercado o cien metros más allá. Nunca va el nombre de la
+              persona: al taxista no le hace falta para llegar. */}
+          <span className="ruta-desde">
+            {pasajero.origen}
+            {pasajero.recogidaEnGps && pasajero.metrosDeLaReferencia !== null
+              && pasajero.metrosDeLaReferencia >= 25 && (
+              <small> · {t('recogida.aMetros', { m: pasajero.metrosDeLaReferencia })}</small>
+            )}
+            {!pasajero.recogidaEnGps && <small> · {t('recogida.aproximada')}</small>}
+          </span>
           <span className="ruta-hasta">{pasajero.destino}</span>
         </div>
       </div>
