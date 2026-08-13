@@ -1528,3 +1528,65 @@ test('pedir taxi sin GPS sigue funcionando: no todo el mundo lo tiene encendido'
   assert.equal(detalle.recogidaEnGps, false);
   assert.equal(detalle.metrosDeLaReferencia, null, 'sin GPS no hay distancia que dar');
 });
+
+test('seguimiento: la posición sigue al taxi cuando la del pasajero se queda rancia', async () => {
+  const pasajera = randomUUID();
+  const solicitudId = await viajeEnMarcha(pasajera);
+  const { token } = (await app.inject({
+    method: 'POST', url: `/api/solicitudes/${solicitudId}/seguimiento`,
+    headers: cabeceras(pasajera), payload: {},
+  })).json();
+  const seguidora = randomUUID();
+  await pasajeroVerificado(seguidora);
+
+  const viaje = await pool.query('SELECT id FROM viaje WHERE solicitud_id = $1', [solicitudId]);
+  const viajeId = viaje.rows[0].id;
+
+  // El móvil del pasajero solo manda posición con la pantalla encendida. Aquí
+  // mandó una y se lo guardó en el bolsillo hace diez minutos; el taxi sigue
+  // mandando la suya cada pocos segundos. Antes ganaba SIEMPRE la del
+  // pasajero, así que quien seguía el viaje veía un punto congelado el resto
+  // del trayecto: es el fallo que se vio en la primera prueba de verdad.
+  await pool.query(
+    `INSERT INTO posicion (viaje_id, actor, lat, lng, creado_en)
+     VALUES ($1, 'cliente', 3.7000, 8.7000, now() - interval '10 minutes'),
+            ($1, 'conductor', 3.7600, 8.7900, now())`,
+    [viajeId],
+  );
+
+  const vista = (await app.inject({
+    method: 'GET', url: `/api/seguimiento/${token}`, headers: cabeceras(seguidora),
+  })).json();
+  assert.equal(vista.posicion.de, 'taxi', 'la rancia del pasajero no puede ganar a la fresca del taxi');
+  assert.ok(Math.abs(vista.posicion.lat - 3.76) < 1e-9);
+
+  // Y el tiempo de llegada, que tampoco estaba: quien abre esto viene a saber
+  // «¿ha llegado ya?», y se le enseñaba dónde iba pero nada sobre cuándo.
+  assert.ok(vista.etaMin > 0, `esperaba minutos y salió ${vista.etaMin}`);
+  assert.ok(vista.distanciaM > 0);
+});
+
+test('seguimiento: si el pasajero manda posición fresca, esa es la que manda', async () => {
+  const pasajera = randomUUID();
+  const solicitudId = await viajeEnMarcha(pasajera);
+  const { token } = (await app.inject({
+    method: 'POST', url: `/api/solicitudes/${solicitudId}/seguimiento`,
+    headers: cabeceras(pasajera), payload: {},
+  })).json();
+  const seguidora = randomUUID();
+  await pasajeroVerificado(seguidora);
+
+  const viaje = await pool.query('SELECT id FROM viaje WHERE solicitud_id = $1', [solicitudId]);
+  await pool.query(
+    `INSERT INTO posicion (viaje_id, actor, lat, lng, creado_en)
+     VALUES ($1, 'conductor', 3.7600, 8.7900, now()),
+            ($1, 'cliente', 3.7010, 8.7010, now())`,
+    [viaje.rows[0].id],
+  );
+
+  const vista = (await app.inject({
+    method: 'GET', url: `/api/seguimiento/${token}`, headers: cabeceras(seguidora),
+  })).json();
+  assert.equal(vista.posicion.de, 'pasajero', 'es SU ubicación la que se comparte');
+  assert.ok(Math.abs(vista.posicion.lat - 3.701) < 1e-9);
+});

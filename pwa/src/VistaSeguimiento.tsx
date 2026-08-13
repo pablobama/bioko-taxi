@@ -179,6 +179,12 @@ export default function VistaSeguimiento({ token, t }: { token: string; t: T }) 
         {viaje && (
           <>
             <p>{t('seguido.destino', { destino: viaje.destino })}</p>
+            {/* Cuánto falta. Es la pregunta entera de quien abre esto —«¿ha
+                llegado ya?»— y en la primera prueba no estaba: se veía dónde
+                iba y nada sobre cuándo. Va lo primero y en grande. */}
+            {viaje.etaMin !== null && (
+              <p className="eta-seguido">{t('seguido.llegaEn', { min: viaje.etaMin })}</p>
+            )}
             {viaje.matricula && (
               <p className="nota">
                 {t('seguido.enCoche', {

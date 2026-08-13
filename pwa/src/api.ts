@@ -376,6 +376,10 @@ export interface ViajeSeguido {
   destinoLat: number;
   destinoLng: number;
   posicion: { lat: number; lng: number; de: 'pasajero' | 'taxi'; frescuraSeg: number } | null;
+  // Cuánto falta para llegar al destino. null si aún no hay posición o si el
+  // viaje terminó.
+  etaMin: number | null;
+  distanciaM: number | null;
   conductor: string | null;
   matricula: string | null;
   marca: string | null;

@@ -10,6 +10,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type pg from 'pg';
 import { leerParametroEntero } from './parametros.js';
+import { estimarLlegada } from './reputacion.js';
 
 // Estados en los que el viaje sigue vivo y tiene sentido seguirlo.
 const EN_MARCHA = ['SOLICITADO', 'EMITIDO', 'ACEPTADO', 'EN_CAMINO', 'RECOGIDO'];
@@ -167,6 +168,10 @@ export interface VistaSeguida {
   // Dónde va. Del propio pasajero si su móvil lo está mandando; si no, del
   // taxi, que es el coche en el que va — no es lo mismo, y se dice cuál es.
   posicion: { lat: number; lng: number; de: 'pasajero' | 'taxi'; frescuraSeg: number } | null;
+  // Cuánto falta para llegar al destino, desde donde va ahora mismo. null si
+  // no hay posición o si el viaje ya terminó.
+  etaMin: number | null;
+  distanciaM: number | null;
   // Con qué coche va. Es la mitad del valor de esto: quien mira quiere poder
   // decir «se subió al GE-1234 con Juan» si algo pasa.
   conductor: string | null;
@@ -204,24 +209,57 @@ export async function vistaSeguida(
 
   let posicion: VistaSeguida['posicion'] = null;
   if (f.viaje_id !== null) {
-    // El pasajero primero: es SU ubicación lo que está compartiendo. Solo si
-    // su móvil no la manda —pantalla apagada, permiso denegado, batería— se
-    // recurre a la del taxi, y se dice que es la del taxi.
+    // La última posición de CADA UNO, y luego se elige.
+    //
+    // Antes esto era un solo ORDER BY que ponía al pasajero primero pasara lo
+    // que pasara, y ahí estaba el fallo que se vio en la prueba: el móvil del
+    // pasajero solo manda posición mientras su pantalla está encendida, así que
+    // en cuanto se lo guarda en el bolsillo, su última lectura se queda fija
+    // para siempre —y las del taxi, que siguen llegando cada diez segundos, se
+    // descartaban por ser «del taxi»—. Quien seguía el viaje veía un punto
+    // congelado el resto del trayecto.
     const p = await cliente.query(
-      `SELECT lat, lng, actor, extract(epoch from (now() - creado_en))::int AS antiguedad
+      `SELECT DISTINCT ON (actor)
+              lat, lng, actor, extract(epoch from (now() - creado_en))::int AS antiguedad
        FROM posicion WHERE viaje_id = $1
-       ORDER BY (actor = 'cliente') DESC, creado_en DESC LIMIT 1`,
+       ORDER BY actor, creado_en DESC`,
       [f.viaje_id],
     );
-    if ((p.rowCount ?? 0) > 0) {
-      const fila = p.rows[0];
+    const filas = p.rows as Array<{ lat: number; lng: number; actor: string; antiguedad: number }>;
+    const delPasajero = filas.find((x) => x.actor === 'cliente');
+    const delTaxi = filas.find((x) => x.actor === 'conductor');
+
+    // La del pasajero manda solo si está fresca: es SU ubicación la que se
+    // está compartiendo y es la buena mientras exista. Rancia, vale más la del
+    // coche en el que va, que sí se está moviendo.
+    const frescuraSeg = await leerParametroEntero(cliente, 'gps_frescura_seg');
+    const elegida = delPasajero !== undefined && delPasajero.antiguedad <= frescuraSeg
+      ? delPasajero
+      : (delTaxi ?? delPasajero);
+
+    if (elegida !== undefined) {
       posicion = {
-        lat: Number(fila.lat),
-        lng: Number(fila.lng),
-        de: fila.actor === 'cliente' ? 'pasajero' : 'taxi',
-        frescuraSeg: Number(fila.antiguedad),
+        lat: Number(elegida.lat),
+        lng: Number(elegida.lng),
+        de: elegida.actor === 'cliente' ? 'pasajero' : 'taxi',
+        frescuraSeg: Number(elegida.antiguedad),
       };
     }
+  }
+
+  // Cuánto falta para que llegue. Es la pregunta entera de quien sigue el
+  // viaje —«¿ha llegado ya?»— y no estaba: se enseñaba dónde va y nada sobre
+  // cuándo. Se calcula igual que el que ve el pasajero en su propio mapa.
+  let etaMin: number | null = null;
+  let distanciaM: number | null = null;
+  if (posicion !== null && EN_MARCHA.includes(f.estado)) {
+    const estimacion = await estimarLlegada(
+      cliente,
+      { lat: posicion.lat, lng: posicion.lng },
+      { lat: Number(f.destino_lat), lng: Number(f.destino_lng) },
+    );
+    etaMin = estimacion.minutos;
+    distanciaM = estimacion.distanciaM;
   }
 
   return {
@@ -232,6 +270,8 @@ export async function vistaSeguida(
     destinoLat: Number(f.destino_lat),
     destinoLng: Number(f.destino_lng),
     posicion,
+    etaMin,
+    distanciaM,
     conductor: f.conductor,
     matricula: f.matricula,
     marca: f.marca,

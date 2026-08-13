@@ -1698,3 +1698,11 @@ button.importe.elegido-importe {
   color: #6d6d66;
   font-size: 1.05rem;
 }
+
+/* El tiempo de llegada en la pantalla de quien sigue un viaje (migración 043).
+   Grande a propósito: es lo único que esa persona ha venido a saber. */
+.eta-seguido {
+  font-size: 1.35rem;
+  font-weight: 600;
+  margin: 2px 0 6px;
+}
