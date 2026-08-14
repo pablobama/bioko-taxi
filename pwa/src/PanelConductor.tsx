@@ -8,8 +8,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   abrirEventosConductor, api, coordenadasOportunistas, enPruebasLocales,
-  type DatosConductor, type EstadoConductor, type PuntoMapa, type Zona,
-  type ZonaConDemanda,
+  type DatosConductor, type EstadoConductor, type Posicion, type PuntoMapa,
+  type Zona, type ZonaConDemanda,
 } from './api';
 import { mensajeDeError } from './conexion';
 import { metrosEntre, porCercaniaA, rumboEntre } from './geo';
@@ -43,7 +43,9 @@ export default function PanelConductor({
   const [ocupado, setOcupado] = useState(false);
   const [enRecarga, setEnRecarga] = useState(false);
   const [demanda, setDemanda] = useState<{ zonas: ZonaConDemanda[]; ventanaMin: number } | null>(null);
-  const coordenadas = useRef<{ lat: number; lng: number } | null>(null);
+  // Con `precision`: desde la migración 047 el servidor la necesita para no
+  // cerrar un viaje por una lectura mala del GPS.
+  const coordenadas = useRef<Posicion | null>(null);
   // La misma posición, pero como estado: es lo que mueve el coche en el mapa.
   // La referencia sola no basta — mutarla no repinta nada, y el mapa del
   // taxista se quedaba con el coche clavado hasta el siguiente latido
@@ -233,7 +235,11 @@ export default function PanelConductor({
     if (!('geolocation' in navigator)) return;
     const vigilante = navigator.geolocation.watchPosition(
       (p) => {
-        const nueva = { lat: p.coords.latitude, lng: p.coords.longitude };
+        const nueva = {
+          lat: p.coords.latitude,
+          lng: p.coords.longitude,
+          precision: p.coords.accuracy,
+        };
         coordenadas.current = nueva;
         moverCoche(nueva);
         anotarRumbo(nueva, p.coords.heading, p.coords.speed);

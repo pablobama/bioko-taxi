@@ -98,8 +98,12 @@ async function ponerPosicion(
   lat: number,
   lng: number,
   ahora: Date,
+  // Radio de error de la lectura (migración 047). Por defecto una buena: las
+  // pruebas de siempre comprueban el comportamiento con GPS decente.
+  precisionM: number | null = 10,
 ): Promise<void> {
-  await enTransaccion(pool, (c) => registrarPosicion(c, viajeId, actor, lat, lng, ahora));
+  await enTransaccion(pool, (c) =>
+    registrarPosicion(c, viajeId, actor, lat, lng, ahora, precisionM));
 }
 
 async function estadoDe(solicitudId: number): Promise<string> {
@@ -195,6 +199,53 @@ test('una posición rancia (más vieja que gps_frescura_seg) no cuenta', async (
   // El cliente mandó su posición hace 2 minutos y cerró la pantalla.
   await ponerPosicion(viaje.viajeId, 'cliente', 3.7500, 8.7800, new Date(t0.getTime() - 120_000));
   await ponerPosicion(viaje.viajeId, 'conductor', 3.7500, 8.7800, t0);
+  await procesarProximidad(pool, emisor, t0);
+  assert.equal(await estadoDe(viaje.solicitudId), 'EN_CAMINO');
+});
+
+// Migración 047: lo que pasó en producción el 2026-08-06 —viajes cerrándose
+// solos sin que lo pulsara nadie— y lo que lo impide ahora.
+test('una lectura mala del GPS no cierra el viaje: se compara con su margen de error', async () => {
+  const viaje = await montarViajeEnCamino();
+  const emisor = new EmisorRegistro();
+  const t0 = new Date();
+
+  await ponerPosicion(viaje.viajeId, 'conductor', 3.7500, 8.7800, t0);
+  await ponerPosicion(viaje.viajeId, 'cliente', 3.7503, 8.7802, t0);
+  await procesarProximidad(pool, emisor, t0);
+  assert.equal(await estadoDe(viaje.solicitudId), 'RECOGIDO');
+
+  // Van juntos en el coche, pero el teléfono del pasajero rebota en un
+  // edificio y devuelve un punto a ~330 m… declarando ±140 m de error. Antes
+  // esto pasaba el umbral de 250 m y daba el viaje por terminado con la
+  // persona todavía dentro.
+  const t1 = new Date(t0.getTime() + 60_000);
+  await ponerPosicion(viaje.viajeId, 'conductor', 3.7500, 8.7800, t1, 15);
+  await ponerPosicion(viaje.viajeId, 'cliente', 3.7530, 8.7800, t1, 140);
+  await procesarProximidad(pool, emisor, t1);
+  assert.equal(
+    await estadoDe(viaje.solicitudId), 'RECOGIDO',
+    'con ±140 m de error, 330 m de separación no prueban que se haya bajado',
+  );
+
+  // Bajarse de verdad y alejarse, con lecturas buenas, sí cierra.
+  const t2 = new Date(t0.getTime() + 120_000);
+  await ponerPosicion(viaje.viajeId, 'conductor', 3.7500, 8.7800, t2, 12);
+  await ponerPosicion(viaje.viajeId, 'cliente', 3.7560, 8.7800, t2, 12);
+  await procesarProximidad(pool, emisor, t2);
+  assert.equal(await estadoDe(viaje.solicitudId), 'COMPLETADO');
+});
+
+test('una lectura malísima no decide nada, ni para recoger ni para cerrar', async () => {
+  const viaje = await montarViajeEnCamino();
+  const emisor = new EmisorRegistro();
+  const t0 = new Date();
+
+  // ±900 m es lo que da un teléfono resolviendo por antena. Aunque caiga justo
+  // encima del taxi, no prueba nada: no puede marcar como recogido a quien
+  // sigue esperando en la acera.
+  await ponerPosicion(viaje.viajeId, 'conductor', 3.7500, 8.7800, t0, 10);
+  await ponerPosicion(viaje.viajeId, 'cliente', 3.7500, 8.7800, t0, 900);
   await procesarProximidad(pool, emisor, t0);
   assert.equal(await estadoDe(viaje.solicitudId), 'EN_CAMINO');
 });

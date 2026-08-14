@@ -65,10 +65,25 @@ function exigirCategoria(categoria: string | undefined): string | undefined {
 // pequeña y aislada.
 const RECUADRO_BIOKO = { sur: 3.18, oeste: 8.38, norte: 3.81, este: 8.99 };
 
-// Los tres periodos del recorrido, en días hacia atrás desde ahora. Ventanas
-// móviles, no días de calendario: «el mes» a las nueve de la mañana del día 1
-// no puede ser una pantalla en blanco.
+// Cuántos días de CALENDARIO abarca cada periodo del recorrido, contando hoy.
+// «dia: 1» es hoy desde las 00:00, no las últimas 24 horas: la pestaña se
+// llama «Hoy», y a las diez de la mañana una ventana de 24 h enseñaba también
+// el turno de ayer por la tarde. Se vio en producción y no cuadraba.
 const DIAS_POR_PERIODO: Record<string, number> = { dia: 1, semana: 7, mes: 30 };
+
+// Malabo va en UTC+1 todo el año (no hay cambio de hora). Se fija aquí y no se
+// lee del reloj del servidor a propósito: el servidor está en Fráncfort y
+// corre en UTC, así que su medianoche no es la de nadie que use esto.
+const HORAS_MALABO = 1;
+
+// Las 00:00 de Malabo de hace `dias - 1` días, en UTC.
+function inicioDelDiaEnMalabo(dias: number, ahora: Date): Date {
+  const local = new Date(ahora.getTime() + HORAS_MALABO * 3_600_000);
+  const medianocheLocal = Date.UTC(
+    local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate() - (dias - 1),
+  );
+  return new Date(medianocheLocal - HORAS_MALABO * 3_600_000);
+}
 
 function enBioko(lat: number, lng: number): boolean {
   return lat >= RECUADRO_BIOKO.sur && lat <= RECUADRO_BIOKO.norte
@@ -337,7 +352,7 @@ export function registrarRutasOperador(
       throw errorHttp(400, 'periodo tiene que ser dia, semana o mes.');
     }
     const hasta = new Date();
-    const desde = new Date(hasta.getTime() - dias * 24 * 60 * 60 * 1000);
+    const desde = inicioDelDiaEnMalabo(dias, hasta);
     const recorrido = await recorridoDe(pool, id, desde, hasta);
     return {
       periodo: periodo ?? 'dia',

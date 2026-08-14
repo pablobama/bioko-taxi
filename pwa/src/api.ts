@@ -590,7 +590,7 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ enServicio, ...(coordenadas ?? {}) }) },
     ),
 
-  heartbeat: (coordenadas: { lat: number; lng: number } | null) =>
+  heartbeat: (coordenadas: Posicion | null) =>
     pedirJson<{ estado: string; saldoXaf: number }>('/api/conductor/heartbeat', {
       method: 'POST',
       body: JSON.stringify(coordenadas ?? {}),
@@ -706,7 +706,9 @@ export const api = {
       body: '{}',
     }),
 
-  enviarPosicion: (solicitudId: number, coordenadas: { lat: number; lng: number }) =>
+  // `Posicion` incluye `precision`, y viaja: desde la migración 047 es lo que
+  // impide que una lectura mala cierre un viaje con la persona todavía dentro.
+  enviarPosicion: (solicitudId: number, coordenadas: Posicion) =>
     pedirJson<{ guardada: boolean }>(`/api/solicitudes/${solicitudId}/posicion`, {
       method: 'POST',
       body: JSON.stringify(coordenadas),

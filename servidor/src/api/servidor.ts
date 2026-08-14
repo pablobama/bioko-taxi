@@ -772,10 +772,14 @@ export function crearServidor(
   app.post('/api/solicitudes/:id/posicion', async (req) => {
     const dispositivo = await dispositivoDesde(req);
     const solicitudId = Number((req.params as { id: string }).id);
-    const cuerpo = req.body as { lat?: number; lng?: number };
+    const cuerpo = req.body as { lat?: number; lng?: number; precision?: number };
     if (typeof cuerpo?.lat !== 'number' || typeof cuerpo?.lng !== 'number') {
       throw errorHttp(400, 'Faltan lat y lng numéricos.');
     }
+    // Migración 047: sin la precisión, el cierre automático decidía sobre
+    // ruido. Opcional para no romper a los clientes que aún no la manden.
+    const precision = typeof cuerpo.precision === 'number' && cuerpo.precision >= 0
+      ? cuerpo.precision : null;
     const detalle = await solicitudPropia(solicitudId, dispositivo.id);
     if (!['ACEPTADO', 'EN_CAMINO', 'RECOGIDO'].includes(detalle.estado as string)) {
       return { guardada: false };
@@ -785,7 +789,8 @@ export function crearServidor(
       return { guardada: false };
     }
     await enTransaccion(pool, (c) =>
-      registrarPosicion(c, viaje.rows[0].id, 'cliente', cuerpo.lat!, cuerpo.lng!));
+      registrarPosicion(c, viaje.rows[0].id, 'cliente', cuerpo.lat!, cuerpo.lng!,
+        new Date(), precision));
     return { guardada: true };
   });
 

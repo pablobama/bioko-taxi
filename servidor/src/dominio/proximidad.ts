@@ -27,20 +27,26 @@ export async function registrarPosicion(
   lat: number,
   lng: number,
   ahora: Date = new Date(),
+  // Radio de error de esta lectura (migración 047). Opcional para no romper a
+  // quien todavía no lo manda; sin él, las decisiones automáticas le suponen
+  // el margen de `gps_precision_supuesta_m`.
+  precisionM: number | null = null,
 ): Promise<void> {
   const res = await cliente.query(
-    `INSERT INTO posicion (viaje_id, actor, lat, lng, creado_en)
-     SELECT $1, $2, $3, $4, $5 WHERE EXISTS (SELECT 1 FROM viaje WHERE id = $1)`,
-    [viajeId, actor, lat, lng, ahora],
+    `INSERT INTO posicion (viaje_id, actor, lat, lng, creado_en, precision_m)
+     SELECT $1, $2, $3, $4, $5, $6 WHERE EXISTS (SELECT 1 FROM viaje WHERE id = $1)`,
+    [viajeId, actor, lat, lng, ahora, precisionM],
   );
   if (res.rowCount === 0) {
     throw new ErrorEntidadInexistente('el viaje', viajeId);
   }
 }
 
+interface PosicionFresca { lat: number; lng: number; precisionM: number | null }
+
 interface UltimasPosiciones {
-  cliente?: { lat: number; lng: number };
-  conductor?: { lat: number; lng: number };
+  cliente?: PosicionFresca;
+  conductor?: PosicionFresca;
 }
 
 async function ultimasPosicionesFrescas(
@@ -50,7 +56,7 @@ async function ultimasPosicionesFrescas(
   ahora: Date,
 ): Promise<UltimasPosiciones> {
   const res = await cliente.query(
-    `SELECT DISTINCT ON (actor) actor, lat, lng
+    `SELECT DISTINCT ON (actor) actor, lat, lng, precision_m
      FROM posicion
      WHERE viaje_id = $1
        AND creado_en >= $2::timestamptz - make_interval(secs => $3)
@@ -59,7 +65,11 @@ async function ultimasPosicionesFrescas(
   );
   const resultado: UltimasPosiciones = {};
   for (const fila of res.rows) {
-    resultado[fila.actor as ActorPosicion] = { lat: fila.lat, lng: fila.lng };
+    resultado[fila.actor as ActorPosicion] = {
+      lat: fila.lat,
+      lng: fila.lng,
+      precisionM: fila.precision_m === null ? null : Number(fila.precision_m),
+    };
   }
   return resultado;
 }
@@ -152,9 +162,47 @@ async function procesarViaje(
         posiciones.cliente.lat, posiciones.cliente.lng,
       );
 
+      // Margen de error de las dos medidas juntas (migración 047). Sin esto se
+      // comparaban dos PUNTOS, y un punto con ±400 m no es un punto: hoy en
+      // producción hubo viajes cerrándose solos porque una lectura mala del
+      // GPS «alejó» al pasajero del coche en el que iba sentado.
+      const supuesta = await leerParametroEntero(cliente, 'gps_precision_supuesta_m');
+      const maximaDecision = await leerParametroEntero(cliente, 'gps_precision_maxima_decision_m');
+      // Una precisión desconocida se trata distinto según lo que esté en juego,
+      // y la asimetría es deliberada:
+      //
+      //   - Para CERRAR un viaje cuenta como `gps_precision_supuesta_m`. Cerrar
+      //     de más es el daño que se vio hoy en producción: el pasajero sigue
+      //     dentro del coche y el servicio ya consta como terminado. Ante la
+      //     duda, no se cierra.
+      //   - Para RECOGER cuenta como cero, es decir, no estorba. Recoger de más
+      //     lo arregla el taxista con un botón —la confirmación manual es el
+      //     camino de todos los días—, mientras que exigir margen aquí rompería
+      //     la recogida automática para todo cliente que aún no mande el dato:
+      //     dos posiciones sin precisión sumarían 120 m de margen contra un
+      //     umbral de 75, y no se recogería a nadie jamás.
+      const errorCierre = (posiciones.cliente.precisionM ?? supuesta)
+        + (posiciones.conductor.precisionM ?? supuesta);
+      const errorRecogida = (posiciones.cliente.precisionM ?? 0)
+        + (posiciones.conductor.precisionM ?? 0);
+
+      // Una lectura demasiado mala no decide nada por sí sola. Se sigue
+      // pintando en el mapa —algo es mejor que nada para orientarse— pero no
+      // mueve el estado de un viaje, que es dinero y es la palabra de dos
+      // personas.
+      // Esto sí vale para las dos: una lectura que se sabe malísima no decide
+      // nada en ninguna dirección.
+      const peor = Math.max(
+        posiciones.cliente.precisionM ?? 0, posiciones.conductor.precisionM ?? 0,
+      );
+      if (peor > maximaDecision) return;
+
       if (estado === 'EN_CAMINO') {
         const umbral = await leerParametroEntero(cliente, 'gps_umbral_recogida_m');
-        if (distancia <= umbral) {
+        // Con el margen SUMADO: solo se da por recogido si están cerca aunque
+        // las dos medidas fallen en su contra. Al revés marcaría como recogido
+        // a quien sigue esperando en la acera.
+        if (distancia + errorRecogida <= umbral) {
           // Taxi compartido: con varios pasajeros pendientes cerca del coche,
           // la proximidad no identifica a NINGUNO en concreto. Si hay
           // ambigüedad no se marca a nadie y decide el botón del conductor.
@@ -179,7 +227,9 @@ async function procesarViaje(
 
       // RECOGIDO: la separación tras la recogida cierra el servicio.
       const umbralSeparacion = await leerParametroEntero(cliente, 'gps_umbral_separacion_m');
-      if (distancia >= umbralSeparacion) {
+      // Con el margen RESTADO: solo se cierra el viaje si la separación es real
+      // más allá del error de las dos medidas. Es la mitad que faltaba.
+      if (distancia - errorCierre >= umbralSeparacion) {
         await transicionarSolicitud(
           cliente, activo.solicitud_id, 'COMPLETADO', 'sistema', 'separacion_gps',
         );

@@ -320,6 +320,18 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   dudosos. Los barrios cargados por el importador la tienen a NULL: no se
   sabe con qué precisión se tomaron, y fingir un número sería peor.
 
+- **[P47-01] En iPhone el recorrido solo se graba con la app abierta y la
+  pantalla encendida.** No es un fallo que se pueda arreglar aquí: iOS suspende
+  el JavaScript de una PWA en cuanto se bloquea la pantalla o se cambia de
+  aplicación, y no da geolocalización en segundo plano a nada que no sea una
+  app nativa. Sin latido no hay `rastro`. Consecuencias prácticas: el recorrido
+  de un taxista con iPhone saldrá troceado —un tramo por cada rato que tuvo la
+  app delante—, y las decisiones automáticas de recogida y cierre tampoco
+  reciben su posición mientras esté en segundo plano. En Android la PWA aguanta
+  bastante mejor, pero tampoco es eterna. La única solución de verdad es una
+  app nativa; mientras tanto conviene saberlo antes de sacar conclusiones de un
+  recorrido con agujeros.
+
 - **[P46-04] El mapa del pasajero se envía recortado y eso empeora el nombre
   del sitio.** `/api/mapa` tiene un tope de 800 referencias y el catálogo ya va
   por 2.249 tras la importación de OpenStreetMap: el servidor manda las 800 más

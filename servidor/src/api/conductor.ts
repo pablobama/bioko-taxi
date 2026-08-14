@@ -323,7 +323,9 @@ export function registrarRutasConductor(
 
   app.post('/api/conductor/heartbeat', async (req) => {
     const sesion = await sesionDesde(req);
-    const cuerpo = (req.body ?? {}) as { zonaId?: number; lat?: number; lng?: number };
+    const cuerpo = (req.body ?? {}) as {
+      zonaId?: number; lat?: number; lng?: number; precision?: number;
+    };
     await enTransaccion(pool, async (cliente) => {
       // El barrio sigue al coche: cada latido lo recalcula desde el GPS. Sin
       // esto, quien entraba en servicio en Semu y se iba al centro seguía
@@ -354,7 +356,11 @@ export function registrarRutasConductor(
           [sesion.conductorId],
         );
         for (const viaje of viajes.rows) {
-          await registrarPosicion(cliente, viaje.id, 'conductor', cuerpo.lat, cuerpo.lng);
+          await registrarPosicion(
+            cliente, viaje.id, 'conductor', cuerpo.lat, cuerpo.lng, new Date(),
+            typeof cuerpo.precision === 'number' && cuerpo.precision >= 0
+              ? cuerpo.precision : null,
+          );
         }
         // Y el recorrido del turno entero (migración 042), lleve viaje o no:
         // es lo que enseña dónde esperó y por dónde volvió de vacío. Se
