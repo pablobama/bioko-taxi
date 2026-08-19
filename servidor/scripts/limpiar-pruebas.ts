@@ -142,6 +142,14 @@ async function principal(): Promise<void> {
          ) RETURNING s.id`,
       );
 
+      // Taxistas de prueba que reciben de toda la isla (migración 048): si se
+      // quedan DISPONIBLE aparecen en la oleada 4 de cualquier solicitud, y
+      // desordenan el recuento de ofertas de otras pruebas.
+      await cliente.query(
+        `UPDATE conductor SET recibe_en_cualquier_zona = false
+         WHERE recibe_en_cualquier_zona AND nombre = 'Conductor Despacho'`,
+      );
+
       // Eventos sin entregar: ya no interesan.
       const eventos = await cliente.query(
         `UPDATE evento_salida SET entregado_en = now(), canal_entregado = 'descartado_limpieza'

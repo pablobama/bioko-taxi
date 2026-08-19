@@ -124,8 +124,12 @@ async function candidatos(
   zonaIds: number[],
   limite: number,
   ahora: Date,
+  // Oleada 4 (migración 048): ignora el barrio y busca solo entre quienes
+  // reciben de toda la isla. Va aparte y no como «zonaIds vacío» para que sea
+  // imposible convocar a media flota por un array vacío en otra llamada.
+  cualquierZona = false,
 ): Promise<number[]> {
-  if (zonaIds.length === 0 || limite <= 0) {
+  if ((zonaIds.length === 0 && !cualquierZona) || limite <= 0) {
     return [];
   }
   const ventanaSeg = await leerParametroEntero(cliente, 'ventana_heartbeat_seg');
@@ -144,7 +148,8 @@ async function candidatos(
      JOIN vehiculo v ON v.conductor_id = c.id
      CROSS JOIN destino_pedido dp
      WHERE p.estado = 'DISPONIBLE'
-       AND p.zona_id = ANY($2)
+       AND ($6 OR p.zona_id = ANY($2))
+       AND ($6 IS FALSE OR c.recibe_en_cualquier_zona)
        AND p.ultimo_heartbeat IS NOT NULL
        AND p.ultimo_heartbeat >= $3::timestamptz - make_interval(secs => $4)
        AND c.estado_verificacion = 'verificado'
@@ -172,7 +177,7 @@ async function candidatos(
                 0) ASC,
               c.id ASC
      LIMIT $5`,
-    [solicitudId, zonaIds, ahora, ventanaSeg, limite],
+    [solicitudId, zonaIds, ahora, ventanaSeg, limite, cualquierZona],
   );
   return res.rows.map((f) => f.conductor_id);
 }
@@ -374,6 +379,7 @@ export async function avanzarDespachos(
       const cuenta = new Map<number, number>(porOleada.rows.map((f) => [Number(f.oleada), f.n]));
       const enOrigen = (cuenta.get(1) ?? 0) + (cuenta.get(2) ?? 0);
       const enAdyacentes = cuenta.get(3) ?? 0;
+      const enCualquierZona = cuenta.get(4) ?? 0;
 
       const oleada2Seg = await leerParametroEntero(cliente, 'oleada_2_seg');
       const oleada3Seg = await leerParametroEntero(cliente, 'oleada_3_seg');
@@ -400,6 +406,20 @@ export async function avanzarDespachos(
           cliente, solicitud.id, adyacentes, maximoAdyacentes - enAdyacentes, ahora,
         );
         await ofertarA(cliente, emisor, solicitud, nuevos, 3, ahora);
+      }
+
+      // Oleada 4 (migración 048): los que reciben de toda la isla. Va la
+      // última a propósito — cuando ya han tenido su turno los que están en el
+      // barrio y en los vecinos— para no quitarle la carrera a nadie que esté
+      // de verdad al lado del pasajero. A cambio, una solicitud que iba a
+      // morir sin oferta todavía tiene una posibilidad.
+      const oleada4Seg = await leerParametroEntero(cliente, 'oleada_4_seg');
+      const maximoCualquierZona = await leerParametroEntero(cliente, 'oleada_4_max_conductores');
+      if (transcurrido >= oleada4Seg && enCualquierZona < maximoCualquierZona) {
+        const nuevos = await candidatos(
+          cliente, solicitud.id, [], maximoCualquierZona - enCualquierZona, ahora, true,
+        );
+        await ofertarA(cliente, emisor, solicitud, nuevos, 4, ahora);
       }
     });
   }

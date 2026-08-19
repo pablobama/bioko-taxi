@@ -262,6 +262,8 @@ export interface FichaConductorOperador {
   aire_acondicionado: boolean;
   seguro: boolean;
   es_agente: boolean;
+  // Migración 048: recibe solicitudes de toda la isla, en la última oleada.
+  recibe_en_cualquier_zona: boolean;
   presencia: string | null;
   saldo_xaf: number;
   reputacion: { media: number | null; valoraciones: number };
@@ -838,6 +840,22 @@ export const api = {
       '/api/operador/zonas',
       { method: 'POST', body: JSON.stringify({ nombre, lat, lng, precision, zonaPadreId }), reintentos: 1 },
     ),
+
+  // Migración 048: recibir carreras de toda la isla, en la última oleada.
+  recibirEnCualquierZona: (conductorId: number, activo: boolean) =>
+    pedirJson<{ id: number; nombre: string; recibe_en_cualquier_zona: boolean }>(
+      `/api/operador/conductores/${conductorId}/cualquier-zona`,
+      { method: 'POST', body: JSON.stringify({ activo }), reintentos: 1 },
+    ),
+
+  // Prepara el taxi del propio operador sobre el dispositivo que se pase, para
+  // poder cambiar a «Taxista» desde el conmutador sin pasar por el alta.
+  prepararMiTaxi: (uuid: string) =>
+    pedirJson<{ conductorId: number; telefono: string }>('/api/operador/mi-taxi', {
+      method: 'POST',
+      body: JSON.stringify({ uuid }),
+      reintentos: 1,
+    }),
 
   nombrarAgente: (conductorId: number, agente: boolean) =>
     pedirJson<{ id: number; nombre: string; es_agente: boolean }>(

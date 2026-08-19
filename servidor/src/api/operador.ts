@@ -228,7 +228,7 @@ export function registrarRutasOperador(
 
     const ficha = await pool.query(
       `SELECT c.id, c.nombre, c.telefono, c.correo, c.estado_verificacion,
-              c.suscrito_hasta, c.es_agente,
+              c.suscrito_hasta, c.es_agente, c.recibe_en_cualquier_zona,
               v.matricula, v.marca, v.color, v.carroceria, v.plazas,
               v.aire_acondicionado, v.seguro,
               p.estado AS presencia,
@@ -337,6 +337,107 @@ export function registrarRutasOperador(
     );
     if (res.rowCount === 0) throw errorHttp(404, 'Este conductor no tiene vehículo dado de alta.');
     return res.rows[0];
+  });
+
+  // Recibir carreras de toda la isla, no solo del barrio propio (migración
+  // 048). Lo pidió quien opera esto para poder probar el flujo del taxista sin
+  // mudarse al barrio de cada solicitud. Va en la última oleada, así que no le
+  // quita trabajo a nadie que esté cerca del pasajero.
+  app.post('/api/operador/conductores/:id/cualquier-zona', async (req) => {
+    exigirOperador(req);
+    const id = Number((req.params as { id: string }).id);
+    const { activo } = (req.body ?? {}) as { activo?: boolean };
+    if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
+    if (typeof activo !== 'boolean') throw errorHttp(400, 'Falta activo (true/false).');
+    const res = await pool.query(
+      `UPDATE conductor SET recibe_en_cualquier_zona = $2
+       WHERE id = $1 RETURNING id, nombre, recibe_en_cualquier_zona`,
+      [id, activo],
+    );
+    if (res.rowCount === 0) throw errorHttp(404, 'No existe ese conductor.');
+    return res.rows[0];
+  });
+
+  // El taxi del propio operador (migración 048).
+  //
+  // El conmutador de papeles ya cambia entre pasajero, taxista y operador,
+  // pero el papel de taxista estrenaba un dispositivo sin conductor detrás y
+  // caía en la pantalla de alta — que pide un teléfono ya dado de alta como
+  // conductor, cosa que el operador no tiene—. Esto lo prepara de una vez:
+  // conductor verificado, con vehículo, con cuota al día y con saldo, atado al
+  // dispositivo que se pase.
+  //
+  // Es idempotente: llamarlo dos veces no crea dos taxis ni resetea el saldo.
+  app.post('/api/operador/mi-taxi', async (req) => {
+    exigirOperador(req);
+    const { uuid, nombre, telefono, matricula } = (req.body ?? {}) as {
+      uuid?: string; nombre?: string; telefono?: string; matricula?: string;
+    };
+    if (!uuid || !PATRON_UUID.test(uuid)) {
+      throw errorHttp(400, 'Falta el uuid del dispositivo que va a ser el taxi.');
+    }
+    const telefonoTaxi = normalizarTelefono(telefono) ?? `+2406${String(
+      Math.abs(hashNumerico(uuid)) % 100_000_000,
+    ).padStart(8, '0')}`;
+
+    return enTransaccion(pool, async (cliente) => {
+      const existente = await cliente.query(
+        'SELECT id FROM conductor WHERE telefono = $1',
+        [telefonoTaxi],
+      );
+      let conductorId: number;
+      if (existente.rowCount !== 0) {
+        conductorId = Number(existente.rows[0].id);
+        await cliente.query(
+          `UPDATE conductor
+           SET estado_verificacion = 'verificado',
+               telefono_verificado_en = COALESCE(telefono_verificado_en, now()),
+               suscrito_hasta = GREATEST(COALESCE(suscrito_hasta, now()), now() + interval '365 days'),
+               recibe_en_cualquier_zona = true
+           WHERE id = $1`,
+          [conductorId],
+        );
+      } else {
+        const creado = await cliente.query(
+          `INSERT INTO conductor
+             (telefono, nombre, estado_verificacion, telefono_verificado_en,
+              suscrito_hasta, recibe_en_cualquier_zona)
+           VALUES ($1, $2, 'verificado', now(), now() + interval '365 days', true)
+           RETURNING id`,
+          [telefonoTaxi, nombre?.trim() || 'Taxi del operador'],
+        );
+        conductorId = Number(creado.rows[0].id);
+      }
+
+      // Sin vehículo el reparto ni lo mira: la matrícula es lo que identifica
+      // el coche para el pasajero (R4).
+      await cliente.query(
+        `INSERT INTO vehiculo (conductor_id, matricula, marca, color)
+         SELECT $1, $2, 'Taxi', 'ámbar'
+         WHERE NOT EXISTS (SELECT 1 FROM vehiculo WHERE conductor_id = $1)`,
+        [conductorId, matricula?.trim() || `GE-OP${conductorId}`],
+      );
+      await cliente.query(
+        'INSERT INTO monedero (conductor_id) SELECT $1 WHERE NOT EXISTS (SELECT 1 FROM monedero WHERE conductor_id = $1)',
+        [conductorId],
+      );
+      await cliente.query(
+        `INSERT INTO presencia (conductor_id, estado) VALUES ($1, 'DESCONECTADO')
+         ON CONFLICT (conductor_id) DO NOTHING`,
+        [conductorId],
+      );
+      // El dispositivo pasa a ser de conductor. Si ya era de otro conductor se
+      // le reengancha a este: es el mismo teléfono cambiando de papel, no un
+      // robo de identidad —solo el operador puede llamar aquí—.
+      await cliente.query(
+        `INSERT INTO dispositivo (uuid_persistente, tipo, conductor_id, ultimo_heartbeat)
+         VALUES ($1, 'conductor', $2, now())
+         ON CONFLICT (uuid_persistente) DO UPDATE
+           SET tipo = 'conductor', conductor_id = EXCLUDED.conductor_id`,
+        [uuid.toLowerCase(), conductorId],
+      );
+      return { conductorId, telefono: telefonoTaxi };
+    });
   });
 
   // Por dónde anduvo un taxi (migración 042). `exigirOperador`, no
@@ -1150,4 +1251,15 @@ export function registrarRutasOperador(
     if (res.rowCount === 0) throw errorHttp(404, `No existe el parámetro «${clave}».`);
     return res.rows[0];
   });
+}
+
+// Número estable a partir de un texto. Se usa para fabricar un teléfono de
+// pruebas a partir del uuid del dispositivo: así el mismo dispositivo siempre
+// recupera SU taxi en vez de crear uno nuevo cada vez.
+function hashNumerico(texto: string): number {
+  let h = 0;
+  for (let i = 0; i < texto.length; i += 1) {
+    h = Math.imul(31, h) + texto.charCodeAt(i) | 0;
+  }
+  return h;
 }

@@ -78,6 +78,16 @@ interface Escenario {
 
 // Zonas propias por prueba: aíslan de la semilla y de otras pruebas.
 async function montarEscenario(): Promise<Escenario> {
+  // Migración 048: un taxista de «toda la isla» que quede suelto en la base de
+  // desarrollo entra en la oleada 4 de CUALQUIER solicitud, incluidas las de
+  // las pruebas que cuentan ofertas exactas — y rompió una de ellas. Se le
+  // quita la marca, que no toca la máquina de estados: cambiarle la presencia
+  // a mano sí lo hacía, y dejaba conductores en estados que el dominio luego
+  // no sabía abandonar.
+  await pool.query(
+    `UPDATE conductor SET recibe_en_cualquier_zona = false
+     WHERE recibe_en_cualquier_zona AND nombre = 'Conductor Despacho'`,
+  );
   return enTransaccion(pool, async (c) => {
     const zonaA = (await crearZona(c, `Zona A ${randomUUID()}`, 3.75, 8.78)).zonaId;
     const zonaB = (await crearZona(c, `Zona B ${randomUUID()}`, 3.76, 8.79)).zonaId;
@@ -465,4 +475,96 @@ test('un lugar colgado de un barrio/calle se reparte por su distrito urbano padr
   assert.equal(inicio.ofertas, 1);
   const ofertas = await pool.query('SELECT conductor_id FROM oferta WHERE solicitud_id = $1', [solicitudId]);
   assert.equal(ofertas.rows[0].conductor_id, conductorEnDistrito);
+});
+
+// Un taxista de «toda la isla» es global por definición: le alcanza CUALQUIER
+// solicitud viva, incluidas las que otras pruebas dejaron a medias en esta
+// base compartida (P12-03). Si una de esas se lo lleva primero, queda OFERTADO
+// y la solicitud de la prueba ya no puede ofrecérsela. Se cierran antes.
+async function cerrarSolicitudesSueltas(): Promise<void> {
+  const abiertas = await pool.query(
+    `UPDATE solicitud SET estado = 'SIN_OFERTA'
+     WHERE estado IN ('SOLICITADO', 'EMITIDO') RETURNING id, estado`,
+  );
+  for (const fila of abiertas.rows) {
+    await pool.query(
+      `INSERT INTO transicion (ambito, solicitud_id, estado_anterior, estado_nuevo, actor, origen_evento)
+       VALUES ('solicitud', $1, $2, 'SIN_OFERTA', 'sistema', 'aislamiento_prueba')`,
+      [fila.id, fila.estado],
+    );
+  }
+  await pool.query(
+    `UPDATE oferta SET resultado = 'expirada', respondida_en = now()
+     WHERE resultado IS NULL`,
+  );
+}
+
+// Migración 048: el taxi que recibe de toda la isla.
+test('cualquier zona: le llega la carrera, pero DESPUÉS de los que están cerca', async () => {
+  await cerrarSolicitudesSueltas();
+  const escenario = await montarEscenario();
+  // Uno en el barrio del pasajero y otro en una zona que no toca ninguna de
+  // las del escenario: es el operador desde su oficina.
+  const cercano = await crearConductorEnZona(escenario.zonaA);
+  const lejano = await enTransaccion(pool, async (c) => {
+    const { zonaId } = await crearZona(c, `Zona LEJOS ${randomUUID()}`, 3.46, 8.55);
+    return { zonaId };
+  }).then(({ zonaId }) => crearConductorEnZona(zonaId));
+  await pool.query(
+    'UPDATE conductor SET recibe_en_cualquier_zona = true WHERE id = $1',
+    [lejano],
+  );
+
+  const solicitudId = await crearSolicitudEn(escenario);
+  const emisor = new EmisorRegistro();
+  const t0 = new Date();
+
+  // Oleada 1: solo el que está en el barrio. El de toda la isla NO entra aquí,
+  // que es lo que garantiza que no le quita la carrera a nadie de al lado.
+  await iniciarDespacho(pool, emisor, solicitudId, t0);
+  let ofertas = await ofertasDe(solicitudId);
+  assert.deepEqual(ofertas.map((o) => o.conductorId), [cercano]);
+
+  // t+21, oleada 2: sigue sin entrar. No está en el barrio del pasajero.
+  await avanzarDespachos(pool, emisor, despues(t0, 21));
+  ofertas = await ofertasDe(solicitudId);
+  assert.equal(
+    ofertas.some((o) => o.conductorId === lejano), false,
+    'mientras les toca a los de cerca, el de toda la isla espera',
+  );
+
+  // t+45 en adelante: la oleada 4, cuando los de cerca ya han tenido su turno.
+  await avanzarDespachos(pool, emisor, despues(t0, 46));
+  ofertas = await ofertasDe(solicitudId);
+  const suya = ofertas.find((o) => o.conductorId === lejano);
+  assert.ok(suya, 'el de toda la isla tiene que acabar recibiéndola');
+  assert.equal(suya!.oleada, 4, 'y en la última oleada, no antes');
+
+  // Se le quita la marca al terminar, por la misma razón que en
+  // `montarEscenario`: si se queda, aparece en la oleada 4 de todo lo que
+  // venga después.
+  await pool.query(
+    'UPDATE conductor SET recibe_en_cualquier_zona = false WHERE id = $1', [lejano],
+  );
+});
+
+test('cualquier zona: sin el interruptor, nadie recibe fuera de su barrio', async () => {
+  await cerrarSolicitudesSueltas();
+  const escenario = await montarEscenario();
+  const lejano = await enTransaccion(pool, async (c) => {
+    const { zonaId } = await crearZona(c, `Zona LEJOS ${randomUUID()}`, 3.46, 8.55);
+    return { zonaId };
+  }).then(({ zonaId }) => crearConductorEnZona(zonaId));
+
+  const solicitudId = await crearSolicitudEn(escenario);
+  const emisor = new EmisorRegistro();
+  const t0 = new Date();
+  await iniciarDespacho(pool, emisor, solicitudId, t0);
+  await avanzarDespachos(pool, emisor, despues(t0, 50));
+
+  const ofertas = await ofertasDe(solicitudId);
+  assert.equal(
+    ofertas.some((o) => o.conductorId === lejano), false,
+    'el reparto por barrio sigue siendo la regla para todos los demás',
+  );
 });

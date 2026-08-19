@@ -564,6 +564,19 @@ function FichaConductor({
         >
           {ficha.es_agente ? 'Quitar el papel de agente de campo' : 'Nombrar agente de campo'}
         </button>
+        {/* Migración 048: recibir carreras de toda la isla. Va en la ÚLTIMA
+            oleada, así que no le quita ninguna a quien está cerca del
+            pasajero: solo entra cuando nadie más la ha cogido. */}
+        <button
+          type="button" className="secundario" disabled={ocupado}
+          onClick={() => api.recibirEnCualquierZona(
+            ficha.id, !ficha.recibe_en_cualquier_zona,
+          ).then(cargar)}
+        >
+          {ficha.recibe_en_cualquier_zona
+            ? 'Recibir solo de su barrio'
+            : 'Recibir carreras de toda la isla'}
+        </button>
       </div>
       <RecorridoConductor id={ficha.id} />
       <p className="nota">Últimos viajes</p>

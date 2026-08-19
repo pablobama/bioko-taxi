@@ -71,7 +71,7 @@ function ConmutadorRol({ actual }: { actual: 'cliente' | 'conductor' | 'operador
   const uuidOperador = localStorage.getItem('uuidOperador');
   if (!uuidOperador) return null;
 
-  function cambiarA(rol: 'cliente' | 'conductor' | 'operador') {
+  async function cambiarA(rol: 'cliente' | 'conductor' | 'operador') {
     let uuid: string;
     if (rol === 'operador') {
       uuid = uuidOperador!;
@@ -83,6 +83,21 @@ function ConmutadorRol({ actual }: { actual: 'cliente' | 'conductor' | 'operador
         localStorage.setItem(almacen, guardado);
       }
       uuid = guardado;
+      // El papel de taxista estrenaba un dispositivo sin conductor detrás, así
+      // que caía en la pantalla de alta —que pide un teléfono ya dado de alta
+      // como conductor, cosa que el operador no tiene— y se quedaba fuera. El
+      // servidor le prepara aquí su taxi (migración 048).
+      //
+      // Se llama ANTES de cambiar el uuid guardado: la petición tiene que
+      // viajar con la identidad de operador, que es la única autorizada.
+      if (rol === 'conductor') {
+        try {
+          await api.prepararMiTaxi(uuid);
+        } catch {
+          // Sin red o sin permiso: se sigue igual y acabará en el alta, que es
+          // exactamente lo que pasaba antes. Nada empeora.
+        }
+      }
     }
     // La sesión cacheada y el viaje activo pertenecen al papel anterior.
     localStorage.removeItem('ultimaSesion');
@@ -100,7 +115,7 @@ function ConmutadorRol({ actual }: { actual: 'cliente' | 'conductor' | 'operador
           key={rol}
           type="button"
           className={rol === actual ? 'rol-activo' : undefined}
-          onClick={() => { if (rol !== actual) cambiarA(rol); }}
+          onClick={() => { if (rol !== actual) void cambiarA(rol); }}
         >
           {etiqueta}
         </button>
