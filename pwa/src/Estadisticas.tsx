@@ -16,6 +16,16 @@ function Dato({ valor, etiqueta }: { valor: number | string; etiqueta: string })
   );
 }
 
+// Segundos a «4 h 20 min». En horas y minutos y no en decimales: «4,3 h» hay
+// que traducirlo mentalmente, y esto se lee de un vistazo.
+function duracion(segundos: number): string {
+  if (segundos < 60) return '0 min';
+  const minutos = Math.round(segundos / 60);
+  const h = Math.floor(minutos / 60);
+  const m = minutos % 60;
+  return h === 0 ? `${m} min` : `${h} h ${m} min`;
+}
+
 function porcentaje(parte: number, total: number): string {
   if (total === 0) return '—';
   return `${Math.round((parte / total) * 100)} %`;
@@ -65,6 +75,32 @@ export default function Estadisticas({
           <Dato valor={v.cancelados} etiqueta={t('stats.drv.canceladosPorTi')} />
           <Dato valor={v.ausencias} etiqueta={t('stats.drv.pasajerosAusentes')} />
         </div>
+
+        {/* Kilómetros y horas (migración 042). Es lo que un taxista mira
+            primero para saber si le sale la cuenta del día, y hasta ahora los
+            números eran todos de viajes y ninguno de trabajo. */}
+        {datos.actividad && (
+          <>
+            <p className="nota"><strong>{t('stats.drv.tuTrabajo')}</strong></p>
+            {([['dia', 'stats.drv.hoy'], ['semana', 'stats.drv.semana'], ['mes', 'stats.drv.mes']] as const)
+              .map(([clave, etiqueta]) => (
+                <div key={clave}>
+                  <p className="nota">{t(etiqueta)}</p>
+                  <div className="rejilla">
+                    <Dato
+                      valor={`${((datos.actividad[clave]?.metros ?? 0) / 1000).toFixed(1)} km`}
+                      etiqueta={t('stats.drv.recorridos')}
+                    />
+                    <Dato
+                      valor={duracion(datos.actividad[clave]?.segundosEnServicio ?? 0)}
+                      etiqueta={t('stats.drv.enServicio')}
+                    />
+                  </div>
+                </div>
+              ))}
+            <p className="nota"><small>{t('stats.drv.desdeCuando')}</small></p>
+          </>
+        )}
 
         <p className="nota">
           {t('stats.drv.monedero', {

@@ -624,6 +624,7 @@ function RecorridoConductor({ id }: { id: number }) {
 
   const tramos = recorrido?.tramos ?? [];
   const km = ((recorrido?.metros ?? 0) / 1000).toFixed(1);
+  const horas = duracion(recorrido?.segundosEnServicio ?? 0);
 
   return (
     <>
@@ -640,6 +641,15 @@ function RecorridoConductor({ id }: { id: number }) {
           </button>
         ))}
       </div>
+      {/* Los dos números que se miran primero. Van arriba y en grande, no
+          escondidos en el pie del mapa: el recorrido dibujado dice por dónde,
+          y esto dice cuánto. */}
+      {!cargando && !error && (
+        <div className="rejilla">
+          <Dato valor={`${km} km`} etiqueta="Recorridos" />
+          <Dato valor={horas} etiqueta="En servicio" />
+        </div>
+      )}
       {error && <p className="aviso">{error}</p>}
       {cargando && <p className="nota">Cargando el recorrido…</p>}
       {!cargando && !error && tramos.length === 0 && (
@@ -654,7 +664,7 @@ function RecorridoConductor({ id }: { id: number }) {
             <Mapa puntos={[]} encuadre="recorrido" recorrido={tramos} />
           </div>
           <p className="nota">
-            {km} km · {tramos.length} tramo{tramos.length === 1 ? '' : 's'}
+            {tramos.length} tramo{tramos.length === 1 ? '' : 's'}
             {' · '}{recorrido?.puntos} puntos
             {' · '}<span style={{ color: '#7ee081' }}>●</span> empieza
             {' '}<span style={{ color: '#ff6b6b' }}>●</span> acaba
@@ -1877,4 +1887,14 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
       </section>
     </main>
   );
+}
+
+// Segundos a «4 h 20 min». En horas y minutos y no en decimales: «4,3 h» hay
+// que traducirlo mentalmente, y esto se lee de un vistazo.
+function duracion(segundos: number): string {
+  if (segundos < 60) return '0 min';
+  const minutos = Math.round(segundos / 60);
+  const h = Math.floor(minutos / 60);
+  const m = minutos % 60;
+  return h === 0 ? `${m} min` : `${h} h ${m} min`;
 }

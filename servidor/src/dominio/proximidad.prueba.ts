@@ -20,12 +20,14 @@ import { crearSolicitud, transicionarSolicitud } from './transiciones.js';
 // validación vieja dejaba pasar porque solo miraba la longitud del texto.
 // Arranca en un punto aleatorio y avanza de uno en uno: dentro de una
 // ejecución no puede repetirse, y entre ejecuciones el solape es improbable.
-// Con tres dígitos aleatorios sí chocaba —la base guarda los números de todas
-// las ejecuciones anteriores (P12-03)— y reventaba el UNIQUE del teléfono.
-let siguienteTelefono = Math.floor(Math.random() * 1_000_000);
+// OCHO dígitos, no seis. Con seis el espacio era de un millón y la base de
+// desarrollo ya guardaba dieciséis mil números de ejecuciones anteriores
+// (P12-03): la probabilidad de que una batería entera chocara pasó del 50 %, y
+// dejó de ser un fallo intermitente para ser uno de todos los días.
+let siguienteTelefono = Math.floor(Math.random() * 100_000_000);
 function telefonoUnico(): string {
-  siguienteTelefono = (siguienteTelefono + 1) % 1_000_000;
-  return `+240222${String(siguienteTelefono).padStart(6, '0')}`;
+  siguienteTelefono = (siguienteTelefono + 1) % 100_000_000;
+  return `+2406${String(siguienteTelefono).padStart(8, '0')}`;
 }
 
 let pool: pg.Pool;

@@ -14,10 +14,10 @@ import { ServicioVerificacionRegistro } from '../dominio/verificacion-telefono.j
 import { ConexionesSse } from '../eventos/adaptador-sse.js';
 import { crearServidor } from './servidor.js';
 
-let siguienteTelefono = Math.floor(Math.random() * 1_000_000);
+let siguienteTelefono = Math.floor(Math.random() * 100_000_000);
 function telefonoUnico(): string {
-  siguienteTelefono = (siguienteTelefono + 1) % 1_000_000;
-  return `+240222${String(siguienteTelefono).padStart(6, '0')}`;
+  siguienteTelefono = (siguienteTelefono + 1) % 100_000_000;
+  return `+2406${String(siguienteTelefono).padStart(8, '0')}`;
 }
 
 let pool: pg.Pool;

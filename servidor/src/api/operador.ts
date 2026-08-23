@@ -18,7 +18,8 @@ import {
   anadirAlias, editarReferencia, guardarReferencia, quitarAlias,
 } from '../dominio/gazetteer.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
-import { recorridoDe } from '../dominio/rastro.js';
+import { actividadDe, recorridoDe } from '../dominio/rastro.js';
+import { inicioDelDiaEnMalabo } from '../dominio/tiempo.js';
 import { confirmarRecarga, rechazarRecarga, recargasDe } from '../dominio/recargas.js';
 import { reputacionDe } from '../dominio/reputacion.js';
 import { normalizarTelefono } from '../dominio/telefono.js';
@@ -70,20 +71,6 @@ const RECUADRO_BIOKO = { sur: 3.18, oeste: 8.38, norte: 3.81, este: 8.99 };
 // llama «Hoy», y a las diez de la mañana una ventana de 24 h enseñaba también
 // el turno de ayer por la tarde. Se vio en producción y no cuadraba.
 const DIAS_POR_PERIODO: Record<string, number> = { dia: 1, semana: 7, mes: 30 };
-
-// Malabo va en UTC+1 todo el año (no hay cambio de hora). Se fija aquí y no se
-// lee del reloj del servidor a propósito: el servidor está en Fráncfort y
-// corre en UTC, así que su medianoche no es la de nadie que use esto.
-const HORAS_MALABO = 1;
-
-// Las 00:00 de Malabo de hace `dias - 1` días, en UTC.
-function inicioDelDiaEnMalabo(dias: number, ahora: Date): Date {
-  const local = new Date(ahora.getTime() + HORAS_MALABO * 3_600_000);
-  const medianocheLocal = Date.UTC(
-    local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate() - (dias - 1),
-  );
-  return new Date(medianocheLocal - HORAS_MALABO * 3_600_000);
-}
 
 function enBioko(lat: number, lng: number): boolean {
   return lat >= RECUADRO_BIOKO.sur && lat <= RECUADRO_BIOKO.norte
@@ -455,12 +442,16 @@ export function registrarRutasOperador(
     const hasta = new Date();
     const desde = inicioDelDiaEnMalabo(dias, hasta);
     const recorrido = await recorridoDe(pool, id, desde, hasta);
+    const actividad = await actividadDe(pool, id, desde, hasta);
     return {
       periodo: periodo ?? 'dia',
       desde: recorrido.desde.toISOString(),
       hasta: recorrido.hasta.toISOString(),
       puntos: recorrido.puntos,
       metros: recorrido.metros,
+      // Tiempo en servicio del periodo. Sale del registro de estados y no del
+      // rastro: el rastro tiene agujeros y le quitaría horas trabajadas.
+      segundosEnServicio: actividad.segundosEnServicio,
       // Sin las horas: al operador le importa el dibujo y cuánto anduvo, y
       // mandar la marca de tiempo de cada punto dobla el tamaño de la
       // respuesta para nada.

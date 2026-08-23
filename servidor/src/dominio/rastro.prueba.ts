@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import { crearPool, enTransaccion } from '../bd/conexion.js';
-import { purgarRastro, recorridoDe, registrarRastro } from './rastro.js';
+import { actividadDe, purgarRastro, recorridoDe, registrarRastro } from './rastro.js';
 
 let pool: pg.Pool;
 
@@ -188,4 +188,61 @@ test('el rastro de un taxi no es el de otro', async () => {
 
   const r = await recorridoDe(pool, otro, enSegundo(-100), enSegundo(1000));
   assert.equal(r.puntos, 0, `el conductor ${otro} no hereda el recorrido de ${uno} (${randomUUID().slice(0, 4)})`);
+});
+
+// --- Actividad: kilómetros y tiempo en servicio -----------------------------
+
+async function transicion(
+  conductorId: number, anterior: string | null, nuevo: string, cuando: Date,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO transicion (ambito, conductor_id, estado_anterior, estado_nuevo, actor, creado_en)
+     VALUES ('conductor', $1, $2, $3, 'conductor', $4)`,
+    [conductorId, anterior, nuevo, cuando],
+  );
+}
+
+test('actividad: el tiempo sale del registro de estados, no de los puntos del rastro', async () => {
+  const id = await crearConductor();
+  // Turno de dos horas. Dentro solo hay puntos de la primera media hora: se
+  // quedó sin cobertura, o es un iPhone que suspendió la app al bloquearse
+  // (P47-01). Contar solo lo que tiene puntos le quitaría hora y media
+  // trabajada.
+  await transicion(id, 'DESCONECTADO', 'DISPONIBLE', enSegundo(0));
+  await transicion(id, 'DISPONIBLE', 'DESCONECTADO', enSegundo(7200));
+  await guardar(id, 0, 0);
+  await guardar(id, 600, 60);
+
+  const a = await actividadDe(pool, id, enSegundo(-100), enSegundo(8000));
+  assert.equal(a.segundosEnServicio, 7200, 'las dos horas enteras');
+  assert.ok(Math.abs(a.metros - 600) < 15, `esperaba ~600 m y salieron ${a.metros}`);
+});
+
+test('actividad: un turno abierto se corta al final del periodo, no en «ahora»', async () => {
+  const id = await crearConductor();
+  // Entró y sigue dentro: no hay transición de salida.
+  await transicion(id, 'DESCONECTADO', 'DISPONIBLE', enSegundo(0));
+
+  const a = await actividadDe(pool, id, enSegundo(-100), enSegundo(3600));
+  assert.equal(a.segundosEnServicio, 3600, 'hasta el borde del periodo y ni un segundo más');
+});
+
+test('actividad: solo cuenta lo que cae dentro del periodo', async () => {
+  const id = await crearConductor();
+  // Turno de ayer, entero fuera de la ventana que se pide.
+  await transicion(id, 'DESCONECTADO', 'DISPONIBLE', enSegundo(-20_000));
+  await transicion(id, 'DISPONIBLE', 'DESCONECTADO', enSegundo(-10_000));
+  // Y otro que empieza antes de la ventana y termina dentro: solo el trozo.
+  await transicion(id, 'DESCONECTADO', 'DISPONIBLE', enSegundo(-600));
+  await transicion(id, 'DISPONIBLE', 'DESCONECTADO', enSegundo(600));
+
+  const a = await actividadDe(pool, id, enSegundo(0), enSegundo(5000));
+  assert.equal(a.segundosEnServicio, 600, 'del turno a caballo, solo lo de dentro');
+});
+
+test('actividad: quien no entró en servicio no acumula tiempo ni kilómetros', async () => {
+  const id = await crearConductor('DESCONECTADO');
+  const a = await actividadDe(pool, id, enSegundo(-1000), enSegundo(1000));
+  assert.equal(a.segundosEnServicio, 0);
+  assert.equal(a.metros, 0);
 });

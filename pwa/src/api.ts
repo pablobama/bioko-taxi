@@ -407,6 +407,9 @@ export interface RecorridoOperador {
   // Puntos que hay de verdad, antes de aligerar para dibujarlos.
   puntos: number;
   metros: number;
+  // Tiempo en servicio del periodo. Sale del registro de estados y no del
+  // rastro: el rastro tiene agujeros y le quitaría horas trabajadas.
+  segundosEnServicio: number;
   // Tramos, no puntos sueltos: entre dos tramos hay un hueco de verdad.
   tramos: Array<Array<{ lat: number; lng: number }>>;
 }

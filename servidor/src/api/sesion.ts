@@ -12,7 +12,9 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { enTransaccion } from '../bd/conexion.js';
 import { ocupacionDe } from '../dominio/ocupacion.js';
+import { actividadDe } from '../dominio/rastro.js';
 import { reputacionDe } from '../dominio/reputacion.js';
+import { inicioDelDiaEnMalabo } from '../dominio/tiempo.js';
 import { normalizarTelefono } from '../dominio/telefono.js';
 import { esOperador } from './operador.js';
 
@@ -309,6 +311,17 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
          GROUP BY z.nombre ORDER BY viajes DESC LIMIT 5`,
         [fila.conductor_id],
       );
+      // Cuánto ha rodado y cuánto tiempo ha estado en servicio (migración
+      // 042). En los mismos tres periodos que el mapa de recorridos del panel
+      // del operador, para que los dos números digan lo mismo mirados desde
+      // donde se miren.
+      const ahora = new Date();
+      const actividad: Record<string, { metros: number; segundosEnServicio: number }> = {};
+      for (const [clave, dias] of [['dia', 1], ['semana', 7], ['mes', 30]] as const) {
+        actividad[clave] = await actividadDe(
+          pool, fila.conductor_id, inicioDelDiaEnMalabo(dias, ahora), ahora,
+        );
+      }
       const ocupacion = await ocupacionDe(pool, fila.conductor_id);
       const reputacion = await reputacionDe(pool, fila.conductor_id);
       return {
@@ -317,6 +330,7 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
         ofertas: ofertas.rows[0],
         monedero: apuntes.rows[0],
         zonasFrecuentes: zonas.rows,
+        actividad,
         ocupacion,
         reputacion,
       };

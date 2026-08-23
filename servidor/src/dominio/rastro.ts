@@ -184,3 +184,52 @@ export async function purgarRastro(
   const res = await pool.query('DELETE FROM rastro WHERE creado_en < $1', [corte]);
   return res.rowCount ?? 0;
 }
+
+// --- Actividad: cuánto anduvo y cuánto tiempo estuvo (migración 042) --------
+
+export interface Actividad {
+  metros: number;
+  segundosEnServicio: number;
+}
+
+// El tiempo EN SERVICIO no se saca del rastro sino del registro de estados del
+// conductor, y la diferencia importa: el rastro tiene agujeros —el móvil se
+// queda sin cobertura, iOS suspende la aplicación al bloquear la pantalla
+// (P47-01)— y contar solo lo que tiene puntos le quitaría al taxista horas que
+// sí estuvo trabajando. El registro de transiciones no tiene ese problema:
+// dice cuándo entró y cuándo salió, y `caducarPresencias` cierra el turno del
+// que se quedó sin batería.
+//
+// Un tramo abierto (todavía en servicio) se corta en `hasta`, no en «ahora»:
+// pedir el mes pasado no puede sumar el turno de hoy.
+export async function actividadDe(
+  cliente: pg.ClientBase | pg.Pool,
+  conductorId: number,
+  desde: Date,
+  hasta: Date,
+): Promise<Actividad> {
+  const { metros } = await recorridoDe(cliente, conductorId, desde, hasta);
+
+  const res = await cliente.query(
+    `WITH tramos AS (
+       SELECT estado_nuevo,
+              creado_en AS inicio,
+              lead(creado_en) OVER (ORDER BY creado_en, id) AS fin
+       FROM transicion
+       WHERE ambito = 'conductor' AND conductor_id = $1
+     )
+     SELECT COALESCE(sum(EXTRACT(epoch FROM (
+              LEAST(COALESCE(fin, $3::timestamptz), $3::timestamptz)
+              - GREATEST(inicio, $2::timestamptz)
+            ))), 0)::bigint AS segundos
+     FROM tramos
+     WHERE estado_nuevo <> 'DESCONECTADO'
+       AND COALESCE(fin, $3::timestamptz) > $2::timestamptz
+       AND inicio < $3::timestamptz`,
+    [conductorId, desde, hasta],
+  );
+  return {
+    metros,
+    segundosEnServicio: Math.max(0, Number(res.rows[0].segundos)),
+  };
+}
