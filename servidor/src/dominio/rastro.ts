@@ -14,6 +14,10 @@ export interface PuntoRastro {
   lat: number;
   lng: number;
   en: Date;
+  // Cuántas veces pasó el taxi por la celda de este punto en el periodo. Es lo
+  // que pinta el mapa de calor: la ruta que repite todos los días sale roja y
+  // la que hizo una vez, azul.
+  pasadas?: number;
 }
 
 // Un recorrido no es una línea: es una línea con agujeros. El taxista sale de
@@ -28,6 +32,10 @@ export interface Recorrido {
   tramos: Tramo[];
   puntos: number;
   metros: number;
+  // La celda más repetida del periodo. Sirve para normalizar el color en el
+  // cliente: sin esto, «tres pasadas» no significa nada — puede ser mucho o
+  // casi nada según el taxista y el periodo.
+  maxPasadas: number;
 }
 
 // Un hueco de más de esto empieza tramo nuevo. Diez minutos es más que
@@ -130,13 +138,57 @@ export async function recorridoDe(
     }
   }
 
+  // La intensidad se calcula sobre TODOS los puntos y antes de aligerar: si se
+  // contara sobre los que se dibujan, la ruta más repetida cambiaría según
+  // cuántos puntos quepan en la respuesta.
+  const pasadas = pasadasPorCelda(tramosCompletos);
+  let maxPasadas = 0;
+  for (const tramo of tramosCompletos) {
+    for (const punto of tramo) {
+      punto.pasadas = pasadas.get(celdaDe(punto)) ?? 1;
+      if (punto.pasadas > maxPasadas) maxPasadas = punto.pasadas;
+    }
+  }
+
   return {
     desde,
     hasta,
     tramos: aligerar(tramosCompletos, maxPuntos),
     puntos: todos.length,
     metros: Math.round(metros),
+    maxPasadas,
   };
+}
+
+// Rejilla de ~33 m. Más fina y el ruido del GPS parte en dos celdas distintas
+// dos pasadas por la misma calle; más gruesa y dos calles paralelas cuentan
+// como una.
+const CELDA_GRADOS = 0.0003;
+
+const celdaDe = (p: { lat: number; lng: number }) =>
+  `${Math.round(p.lat / CELDA_GRADOS)}:${Math.round(p.lng / CELDA_GRADOS)}`;
+
+// Cuántas veces PASÓ por cada celda, que no es lo mismo que cuántos puntos
+// dejó en ella.
+//
+// La diferencia es la funcionalidad entera. Un taxi esperando una hora en la
+// parada del mercado deja doce puntos de anclaje en la misma celda; contando
+// puntos, esa parada sería lo más «recorrido» del mes por goleada y todo lo
+// demás saldría azul. Contando pasadas —cada racha seguida de puntos en la
+// misma celda vale uno— esperar no cuenta como recorrer, que es lo que
+// cualquiera entiende al mirar el mapa.
+function pasadasPorCelda(tramos: Tramo[]): Map<string, number> {
+  const cuenta = new Map<string, number>();
+  for (const tramo of tramos) {
+    let anterior = '';
+    for (const punto of tramo) {
+      const celda = celdaDe(punto);
+      if (celda === anterior) continue;
+      cuenta.set(celda, (cuenta.get(celda) ?? 0) + 1);
+      anterior = celda;
+    }
+  }
+  return cuenta;
 }
 
 function trocear(puntos: PuntoRastro[]): Tramo[] {

@@ -55,7 +55,11 @@ export interface PropiedadesMapa {
   // Por dónde anduvo un taxi (migración 042). Una lista de TRAMOS, no de
   // puntos: entre dos tramos hay un hueco —salió de servicio, se quedó sin
   // cobertura— y unirlos con una recta dibujaría un viaje que no existió.
-  recorrido?: Array<Array<{ lat: number; lng: number }>>;
+  //
+  // `n` en cada punto es cuántas veces pasó por ahí; con `maxPasadas` se
+  // convierte en color, de azul a rojo.
+  recorrido?: Array<Array<{ lat: number; lng: number; n?: number }>>;
+  maxPasadas?: number;
   // Hacia dónde va el coche, en grados desde el norte y en el sentido de las
   // agujas del reloj (lo que da `coords.heading` del GPS). Con valor, el plano
   // gira para poner eso arriba: lo que el conductor ve por el parabrisas es lo
@@ -96,7 +100,7 @@ const PRIORIDAD: Record<string, number> = {
 
 export default function Mapa({
   puntos, origen, destino, taxi, buscando, encuadre = 'persona', paradas, recorrido,
-  rumbo = null,
+  maxPasadas = 1, rumbo = null,
 }: PropiedadesMapa) {
   const contenedor = useRef<HTMLDivElement>(null);
   const [caja, setCaja] = useState({ ancho: 0, alto: 0 });
@@ -421,22 +425,33 @@ export default function Mapa({
               en un recorrido de un mes, media ciudad pintada de naranja no
               dice nada si no se ve dónde arrancó cada trozo. */}
           {encuadre === 'recorrido' && (recorrido ?? []).map((tramo, i) => {
-            const d = tramo
-              .map((p, j) => {
-                const xy = pantalla(p.lat, p.lng);
-                return `${j === 0 ? 'M' : 'L'}${xy[0].toFixed(1)} ${xy[1].toFixed(1)}`;
-              })
+            const xy = tramo.map((p) => pantalla(p.lat, p.lng));
+            const d = xy
+              .map((q, j) => `${j === 0 ? 'M' : 'L'}${q[0].toFixed(1)} ${q[1].toFixed(1)}`)
               .join('');
-            const inicio = pantalla(tramo[0].lat, tramo[0].lng);
-            const fin = pantalla(tramo[tramo.length - 1].lat, tramo[tramo.length - 1].lng);
             return (
               <g key={`rastro-${i}`}>
-                <path d={d} fill="none" stroke="#08080a" strokeWidth={7}
+                {/* La funda oscura va de una pieza, por debajo de todo: si se
+                    dibujara por segmentos, cada trozo taparía el borde del
+                    anterior y la línea saldría mordida. */}
+                <path d={d} fill="none" stroke="#08080a" strokeWidth={7.5}
                   strokeLinecap="round" strokeLinejoin="round" opacity={0.9} />
-                <path d={d} fill="none" stroke="#ffb020" strokeWidth={3}
-                  strokeLinecap="round" strokeLinejoin="round" opacity={0.85} />
-                <circle cx={inicio[0]} cy={inicio[1]} r={4} fill="#7ee081" stroke="#08080a" strokeWidth={1.5} />
-                <circle cx={fin[0]} cy={fin[1]} r={4} fill="#ff6b6b" stroke="#08080a" strokeWidth={1.5} />
+                {/* Y el color, segmento a segmento: cada trozo lleva el de las
+                    veces que pasó por ahí. */}
+                {xy.slice(1).map((q, j) => (
+                  <line
+                    key={j}
+                    x1={xy[j][0]} y1={xy[j][1]} x2={q[0]} y2={q[1]}
+                    stroke={colorDeCalor(
+                      Math.max(tramo[j].n ?? 1, tramo[j + 1].n ?? 1), maxPasadas,
+                    )}
+                    strokeWidth={3.4}
+                    strokeLinecap="round"
+                  />
+                ))}
+                <circle cx={xy[0][0]} cy={xy[0][1]} r={4} fill="#7ee081" stroke="#08080a" strokeWidth={1.5} />
+                <circle cx={xy[xy.length - 1][0]} cy={xy[xy.length - 1][1]} r={4}
+                  fill="#ff6b6b" stroke="#08080a" strokeWidth={1.5} />
               </g>
             );
           })}
@@ -552,4 +567,21 @@ export default function Mapa({
       <span className="mapa-atribucion">Calles © OpenStreetMap</span>
     </div>
   );
+}
+
+// Color de una parte del recorrido según cuántas veces pasó el taxi por ahí:
+// de azul lo que hizo una sola vez a rojo lo que más repite.
+//
+// Se recorre el tono de HSL de 220° a 0°, que pasa por cian, verde y amarillo.
+// Es la rampa de siempre de los mapas de calor y se lee sin leyenda; un
+// degradado directo de azul a rojo pasaría por morados que no ordenan —nadie
+// sabe si un violeta es más o menos que un magenta—.
+//
+// Y la escala arranca en la SEGUNDA pasada: `(n - 1) / (max - 1)`. Si arrancara
+// en la primera, un recorrido sin ninguna repetición saldría entero rojo,
+// diciendo «esta es su ruta de siempre» de un camino que hizo una vez.
+export function colorDeCalor(pasadas: number, maxPasadas: number): string {
+  if (maxPasadas <= 1) return 'hsl(220 90% 62%)';
+  const t = Math.min(1, Math.max(0, (pasadas - 1) / (maxPasadas - 1)));
+  return `hsl(${(220 * (1 - t)).toFixed(0)} 90% ${(62 - 6 * t).toFixed(0)}%)`;
 }

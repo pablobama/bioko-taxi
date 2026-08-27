@@ -411,7 +411,10 @@ export interface RecorridoOperador {
   // rastro: el rastro tiene agujeros y le quitaría horas trabajadas.
   segundosEnServicio: number;
   // Tramos, no puntos sueltos: entre dos tramos hay un hueco de verdad.
-  tramos: Array<Array<{ lat: number; lng: number }>>;
+  // `n` es cuántas veces pasó el taxi por ahí en el periodo: es lo que
+  // colorea el mapa de calor, de azul (una vez) a rojo (lo que más repite).
+  tramos: Array<Array<{ lat: number; lng: number; n: number }>>;
+  maxPasadas: number;
 }
 
 export interface ZonaOperador {

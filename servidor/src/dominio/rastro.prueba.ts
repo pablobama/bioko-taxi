@@ -246,3 +246,47 @@ test('actividad: quien no entró en servicio no acumula tiempo ni kilómetros', 
   assert.equal(a.segundosEnServicio, 0);
   assert.equal(a.metros, 0);
 });
+
+// --- Intensidad: la ruta que más se repite ---------------------------------
+
+test('intensidad: la calle que repite tres veces pesa más que la que hizo una', async () => {
+  const id = await crearConductor();
+  // Tres pasadas por el mismo tramo, cada una en su turno (separadas más de
+  // los diez minutos que parten los tramos), y una escapada a otro sitio.
+  for (const vuelta of [0, 1, 2]) {
+    const base = vuelta * 3600;
+    await guardar(id, 0, base);
+    await guardar(id, 300, base + 60);
+    await guardar(id, 600, base + 120);
+  }
+  const r = await recorridoDe(pool, id, enSegundo(-100), enSegundo(20_000));
+
+  assert.equal(r.maxPasadas, 3, 'tres vueltas por la misma calle son tres pasadas');
+  const alPrincipio = r.tramos[0][0];
+  assert.equal(alPrincipio.pasadas, 3, 'y cada punto de ahí lo sabe');
+});
+
+test('intensidad: esperar parado NO cuenta como recorrer', async () => {
+  const id = await crearConductor();
+  // Una hora quieto en el mismo sitio: el anclaje escribe un punto cada cinco
+  // minutos, así que son doce puntos en la misma celda. Si se contaran puntos
+  // en vez de pasadas, esa parada sería lo más «recorrido» del periodo por
+  // goleada y el resto del mapa saldría azul.
+  for (let i = 0; i < 12; i += 1) {
+    await pool.query(
+      `INSERT INTO rastro (conductor_id, lat, lng, creado_en) VALUES ($1, $2, $3, $4)`,
+      [id, aMetros(0).lat, aMetros(0).lng, enSegundo(i * 300)],
+    );
+  }
+  const r = await recorridoDe(pool, id, enSegundo(-100), enSegundo(20_000));
+  assert.equal(r.maxPasadas, 1, 'doce puntos parados siguen siendo una sola pasada');
+});
+
+test('intensidad: sin repetir nada, no hay nada rojo que enseñar', async () => {
+  const id = await crearConductor();
+  await guardar(id, 0, 0);
+  await guardar(id, 300, 60);
+  await guardar(id, 600, 120);
+  const r = await recorridoDe(pool, id, enSegundo(-100), enSegundo(5000));
+  assert.equal(r.maxPasadas, 1, 'un recorrido hecho una vez no es «su ruta de siempre»');
+});

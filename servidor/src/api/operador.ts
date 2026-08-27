@@ -455,7 +455,13 @@ export function registrarRutasOperador(
       // Sin las horas: al operador le importa el dibujo y cuánto anduvo, y
       // mandar la marca de tiempo de cada punto dobla el tamaño de la
       // respuesta para nada.
-      tramos: recorrido.tramos.map((t) => t.map((p) => ({ lat: p.lat, lng: p.lng }))),
+      // `n` es cuántas veces pasó por ahí: lo que colorea el mapa de calor.
+      // Nombre corto a propósito — va una vez por punto y son hasta mil
+      // quinientos, en una red que se paga por megabyte.
+      maxPasadas: recorrido.maxPasadas,
+      tramos: recorrido.tramos.map(
+        (t) => t.map((p) => ({ lat: p.lat, lng: p.lng, n: p.pasadas ?? 1 })),
+      ),
     };
   });
 

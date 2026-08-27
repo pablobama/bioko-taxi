@@ -16,7 +16,7 @@ import {
   type ViajeResumenOperador, type ZonaOperador,
 } from './api';
 import { ESTILO_CATEGORIA } from './categorias';
-import Mapa from './Mapa';
+import Mapa, { colorDeCalor } from './Mapa';
 
 // Las categorías que la base acepta (CHECK de la migración 021). Se sacan de
 // donde ya estaban —el mismo sitio que dibuja los pictogramas del mapa— para
@@ -661,7 +661,10 @@ function RecorridoConductor({ id }: { id: number }) {
       {tramos.length > 0 && (
         <>
           <div className="mapa-recorrido">
-            <Mapa puntos={[]} encuadre="recorrido" recorrido={tramos} />
+            <Mapa
+              puntos={[]} encuadre="recorrido" recorrido={tramos}
+              maxPasadas={recorrido?.maxPasadas ?? 1}
+            />
           </div>
           <p className="nota">
             {tramos.length} tramo{tramos.length === 1 ? '' : 's'}
@@ -669,6 +672,18 @@ function RecorridoConductor({ id }: { id: number }) {
             {' · '}<span style={{ color: '#7ee081' }}>●</span> empieza
             {' '}<span style={{ color: '#ff6b6b' }}>●</span> acaba
           </p>
+          {/* Sin esto el degradado es bonito y no dice nada: hay que saber
+              que el rojo son «más veces» y cuántas son. */}
+          {(recorrido?.maxPasadas ?? 1) > 1 && (
+            <p className="nota">
+              Cuántas veces pasó por cada sitio:{' '}
+              <span style={{ color: colorDeCalor(1, recorrido!.maxPasadas) }}>■ 1 vez</span>
+              {' → '}
+              <span style={{ color: colorDeCalor(recorrido!.maxPasadas, recorrido!.maxPasadas) }}>
+                ■ {recorrido!.maxPasadas} veces
+              </span>
+            </p>
+          )}
         </>
       )}
     </>
