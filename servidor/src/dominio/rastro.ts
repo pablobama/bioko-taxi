@@ -242,6 +242,11 @@ export async function purgarRastro(
 export interface Actividad {
   metros: number;
   segundosEnServicio: number;
+  // Kilómetros por hora de TURNO, no de conducción: incluye el rato parado en
+  // la parada esperando. Es lo que interesa —dice cuánto cunde una hora de
+  // trabajo, no lo rápido que conduce— y por eso la etiqueta dice «de media en
+  // servicio» y no «velocidad». null sin turno que medir.
+  velocidadMediaKmh: number | null;
 }
 
 // El tiempo EN SERVICIO no se saca del rastro sino del registro de estados del
@@ -280,8 +285,14 @@ export async function actividadDe(
        AND inicio < $3::timestamptz`,
     [conductorId, desde, hasta],
   );
+  const segundosEnServicio = Math.max(0, Number(res.rows[0].segundos));
   return {
     metros,
-    segundosEnServicio: Math.max(0, Number(res.rows[0].segundos)),
+    segundosEnServicio,
+    // Menos de un minuto de turno no da una media que signifique nada: un
+    // arranque de veinte segundos saldría a ochenta por hora.
+    velocidadMediaKmh: segundosEnServicio < 60
+      ? null
+      : Math.round((metros / 1000) / (segundosEnServicio / 3600) * 10) / 10,
   };
 }

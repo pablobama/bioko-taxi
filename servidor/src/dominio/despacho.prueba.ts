@@ -429,15 +429,41 @@ test('reclamar sin tener oferta: rechazo explícito', async () => {
   );
 });
 
-test('caducarPresencias: el DISPONIBLE con heartbeat vencido pasa a DESCONECTADO', async () => {
+test('el turno NO se cae por un latido viejo: dos minutos de túnel no son salir de servicio', async () => {
   const escenario = await montarEscenario();
-  const vencido = await crearConductorEnZona(escenario.zonaA, { desfaseHeartbeatSeg: 200 });
-  const vivo = await crearConductorEnZona(escenario.zonaA);
+  const conductorId = await crearConductorEnZona(escenario.zonaA);
+  // Latido de hace media hora: antes esto le sacaba de servicio.
+  await enTransaccion(pool, (c) => registrarHeartbeat(
+    c, conductorId, escenario.zonaA, new Date(Date.now() - 30 * 60_000),
+  ));
 
   const caducados = await enTransaccion(pool, (c) => caducarPresencias(c));
-  assert.ok(caducados >= 1);
-  assert.equal(await estadoConductor(vencido), 'DESCONECTADO');
-  assert.equal(await estadoConductor(vivo), 'DISPONIBLE');
+  assert.equal(await estadoConductor(conductorId), 'DISPONIBLE', 'sigue siendo su turno');
+  assert.ok(caducados >= 0);
+
+  // Y sin embargo el reparto no le ofrece nada: el filtro de latido fresco
+  // sigue en pie, que es lo que de verdad protege al pasajero.
+  const solicitudId = await crearSolicitudEn(escenario);
+  await iniciarDespacho(pool, new EmisorRegistro(), solicitudId, new Date());
+  const ofertas = await ofertasDe(solicitudId);
+  assert.equal(
+    ofertas.some((o) => o.conductorId === conductorId), false,
+    'a un móvil que no contesta no se le manda una carrera, esté o no en servicio',
+  );
+});
+
+test('a las doce horas sin dar señales se da el turno por abandonado', async () => {
+  const escenario = await montarEscenario();
+  const conductorId = await crearConductorEnZona(escenario.zonaA);
+  await enTransaccion(pool, (c) => registrarHeartbeat(
+    c, conductorId, escenario.zonaA, new Date(Date.now() - 13 * 3600_000),
+  ));
+
+  await enTransaccion(pool, (c) => caducarPresencias(c));
+  assert.equal(
+    await estadoConductor(conductorId), 'DESCONECTADO',
+    'ningún turno dura medio día: ese móvil no va a volver',
+  );
 });
 
 // Migración 031: un barrio/calle (zona con padre) no tiene adyacencia

@@ -29,6 +29,7 @@ export interface AccionesConductor {
   alDeclararAusente: (solicitudId: number) => void;
   alCompletar: (solicitudId: number) => void;
   alLlamar: (solicitudId: number) => void;
+  alDescartarAvisoTurno: () => void;
 }
 
 export interface PropiedadesVistaConductor {
@@ -38,6 +39,8 @@ export interface PropiedadesVistaConductor {
   // si no está en servicio: el dato se compra con la cuota semanal.
   demanda: { zonas: ZonaConDemanda[]; ventanaMin: number } | null;
   aviso?: string;
+  // Horas que lleva en servicio, cuando toca recordárselo. null casi siempre.
+  avisoTurno?: number | null;
   ocupado?: boolean;
   t: T;
   acciones: AccionesConductor;
@@ -198,7 +201,7 @@ function BloquePasajero({
 }
 
 export default function VistaConductor({
-  conductor, estado, demanda, aviso, ocupado = false, t, acciones,
+  conductor, estado, demanda, aviso, avisoTurno = null, ocupado = false, t, acciones,
 }: PropiedadesVistaConductor) {
   const enServicio = estado !== null && estado.estado !== 'DESCONECTADO';
   const suscripcionVigente = estado?.suscripcionVigente ?? conductor.suscripcionVigente;
@@ -210,6 +213,16 @@ export default function VistaConductor({
   return (
     <section className="hoja">
       {aviso && <p className="aviso">{aviso}</p>}
+      {/* Migración 049: el turno ya no se cae solo, así que puede quedarse
+          encendido toda la noche sin querer. Cada hora se le recuerda —con el
+          número de horas, que es lo que hace que reaccione— y el botón de
+          salir de servicio está justo debajo. Se quita al tocarlo. */}
+      {avisoTurno !== null && (
+        <button type="button" className="aviso-turno" onClick={acciones.alDescartarAvisoTurno}>
+          {t('turno.llevasHoras', { h: avisoTurno })}
+          <small>{t('turno.tocaParaQuitar')}</small>
+        </button>
+      )}
 
       <div className="cabecera">
         <div className="identidad">

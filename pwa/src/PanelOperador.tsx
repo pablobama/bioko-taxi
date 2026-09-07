@@ -627,66 +627,76 @@ function RecorridoConductor({ id }: { id: number }) {
   const horas = duracion(recorrido?.segundosEnServicio ?? 0);
 
   return (
-    <>
-      <p className="nota">Recorrido</p>
-      <div className="fila">
-        {PERIODOS.map(([clave, etiqueta]) => (
-          <button
-            key={clave}
-            type="button"
-            className={periodo === clave ? 'principal' : 'secundario'}
-            onClick={() => setPeriodo(clave)}
-          >
-            {etiqueta}
-          </button>
-        ))}
-      </div>
-      {/* Los dos números que se miran primero. Van arriba y en grande, no
-          escondidos en el pie del mapa: el recorrido dibujado dice por dónde,
-          y esto dice cuánto. */}
-      {!cargando && !error && (
-        <div className="rejilla">
-          <Dato valor={`${km} km`} etiqueta="Recorridos" />
-          <Dato valor={horas} etiqueta="En servicio" />
+    <section className="movimiento">
+      <header className="movimiento-cabecera">
+        <h2>Movimiento</h2>
+        {/* Pestañas, no botones de acción: elegir el periodo no «hace» nada,
+            solo cambia lo que se mira. Con dos botones grandes en ámbar
+            parecía que uno de ellos iba a ejecutar algo. */}
+        <div className="periodos" role="tablist">
+          {PERIODOS.map(([clave, etiqueta]) => (
+            <button
+              key={clave}
+              type="button"
+              role="tab"
+              aria-selected={periodo === clave}
+              className={periodo === clave ? 'periodo-activo' : undefined}
+              onClick={() => setPeriodo(clave)}
+            >
+              {etiqueta}
+            </button>
+          ))}
         </div>
-      )}
+      </header>
+
+      {/* Los tres números SIEMPRE ocupan su sitio, aunque estén cargando: si
+          aparecieran y desaparecieran, el mapa de abajo daría un salto en cada
+          cambio de periodo y habría que volver a buscarlo con la vista. */}
+      <div className="rejilla">
+        <Dato valor={cargando ? '—' : `${km} km`} etiqueta="Recorridos" />
+        <Dato valor={cargando ? '—' : horas} etiqueta="En servicio" />
+        <Dato
+          valor={cargando || recorrido?.velocidadMediaKmh == null
+            ? '—'
+            : `${recorrido.velocidadMediaKmh.toFixed(1)} km/h`}
+          etiqueta="De media en servicio"
+        />
+      </div>
+
       {error && <p className="aviso">{error}</p>}
-      {cargando && <p className="nota">Cargando el recorrido…</p>}
       {!cargando && !error && tramos.length === 0 && (
         <p className="nota">
-          Sin recorrido en este periodo. O no entró en servicio, o el registro
-          es anterior a que esto existiera: solo hay datos desde entonces.
+          Sin recorrido en este periodo. O no entró en servicio, o su móvil no
+          mandó posición — en iPhone solo la manda con la aplicación abierta.
         </p>
       )}
+
       {tramos.length > 0 && (
-        <>
-          <div className="mapa-recorrido">
-            <Mapa
-              puntos={[]} encuadre="recorrido" recorrido={tramos}
-              maxPasadas={recorrido?.maxPasadas ?? 1}
-            />
-          </div>
-          <p className="nota">
-            {tramos.length} tramo{tramos.length === 1 ? '' : 's'}
-            {' · '}{recorrido?.puntos} puntos
-            {' · '}<span style={{ color: '#7ee081' }}>●</span> empieza
-            {' '}<span style={{ color: '#ff6b6b' }}>●</span> acaba
-          </p>
-          {/* Sin esto el degradado es bonito y no dice nada: hay que saber
-              que el rojo son «más veces» y cuántas son. */}
-          {(recorrido?.maxPasadas ?? 1) > 1 && (
-            <p className="nota">
-              Cuántas veces pasó por cada sitio:{' '}
-              <span style={{ color: colorDeCalor(1, recorrido!.maxPasadas) }}>■ 1 vez</span>
-              {' → '}
-              <span style={{ color: colorDeCalor(recorrido!.maxPasadas, recorrido!.maxPasadas) }}>
-                ■ {recorrido!.maxPasadas} veces
+        <div className="mapa-recorrido">
+          <Mapa
+            puntos={[]} encuadre="recorrido" recorrido={tramos}
+            maxPasadas={recorrido?.maxPasadas ?? 1}
+          />
+          {/* La leyenda va ENCIMA del plano y en pequeño, no en tres párrafos
+              debajo: ahí competía con los números y empujaba el mapa fuera de
+              la pantalla en un móvil. */}
+          <div className="mapa-leyenda">
+            <span><i style={{ background: '#7ee081' }} />empieza</span>
+            <span><i style={{ background: '#ff6b6b' }} />acaba</span>
+            {(recorrido?.maxPasadas ?? 1) > 1 && (
+              <span className="leyenda-calor">
+                <i style={{ background: colorDeCalor(1, recorrido!.maxPasadas) }} />1
+                <i style={{ background: colorDeCalor(
+                  Math.ceil(recorrido!.maxPasadas / 2), recorrido!.maxPasadas,
+                ) }} />
+                <i style={{ background: colorDeCalor(recorrido!.maxPasadas, recorrido!.maxPasadas) }} />
+                {recorrido!.maxPasadas} veces por el mismo sitio
               </span>
-            </p>
-          )}
-        </>
+            )}
+          </div>
+        </div>
       )}
-    </>
+    </section>
   );
 }
 

@@ -282,6 +282,9 @@ const es: Diccionario = {
   'llamada.noSePudo': 'No se pudo conectar',
   'llamada.noSePudoNota': 'La red no dejó pasar la llamada. Inténtalo otra vez o espera a que llegue.',
   'llamada.privada': 'Sin dar tu número',
+  // Migración 049: el turno ya no se cae solo, así que hay que recordarlo.
+  'turno.llevasHoras': 'Llevas {h} h en servicio, compartiendo tu ubicación.',
+  'turno.tocaParaQuitar': 'Toca para quitar el aviso, o sal de servicio abajo.',
   // Migración 046: de dónde sale el punto de recogida.
   'recogida.aMetros': 'a {m} m',
   'recogida.aproximada': 'punto aproximado',
@@ -567,6 +570,8 @@ const fr: Diccionario = {
   'llamada.noSePudo': 'Connexion impossible',
   'llamada.noSePudoNota': 'Le réseau n’a pas laissé passer l’appel. Réessaie ou attends son arrivée.',
   'llamada.privada': 'Sans donner ton numéro',
+  'turno.llevasHoras': 'Tu es en service depuis {h} h, ta position est partagée.',
+  'turno.tocaParaQuitar': 'Touche pour masquer, ou termine ton service en bas.',
   'recogida.aMetros': 'à {m} m',
   'recogida.aproximada': 'point approximatif',
 
@@ -847,6 +852,8 @@ const en: Diccionario = {
   'llamada.noSePudo': 'Could not connect',
   'llamada.noSePudoNota': 'The network would not let the call through. Try again or wait for them.',
   'llamada.privada': 'Without giving your number',
+  'turno.llevasHoras': 'You have been on duty {h} h, sharing your location.',
+  'turno.tocaParaQuitar': 'Tap to dismiss, or go off duty below.',
   'recogida.aMetros': '{m} m away',
   'recogida.aproximada': 'approximate point',
 

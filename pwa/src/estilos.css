@@ -1706,3 +1706,147 @@ button.importe.elegido-importe {
   font-weight: 600;
   margin: 2px 0 6px;
 }
+
+/* Mover y acercar el plano con el dedo. Sin `touch-action: none` el navegador
+   se queda el gesto para desplazar la página y el mapa no se entera. */
+.mapa-lienzo {
+  touch-action: none;
+  cursor: grab;
+}
+
+.mapa-lienzo:active {
+  cursor: grabbing;
+}
+
+/* Vuelve al encuadre automático. Solo aparece si se movió el mapa a mano. */
+.mapa-recentrar {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 1;
+  padding: 7px 12px;
+  border: 1px solid var(--borde);
+  border-radius: 999px;
+  background: rgba(8, 8, 10, 0.78);
+  color: var(--hueso);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+/* ------------------------------------------------ movimiento del taxi --- */
+/* Resumen de por dónde ha andado un taxi, en la ficha del operador. */
+
+.movimiento {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.movimiento-cabecera {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.movimiento-cabecera h2 {
+  font-size: 1.05rem;
+  margin: 0;
+}
+
+/* Pestañas de periodo: un solo bloque con separadores, no tres botones
+   sueltos. Elegir qué mirar no es la misma clase de acto que pulsar
+   «Verificar», y no debe parecerlo. */
+.periodos {
+  display: inline-flex;
+  border: 1px solid var(--borde);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--tarjeta);
+}
+
+.periodos button {
+  border: none;
+  background: none;
+  color: var(--humo);
+  padding: 6px 14px;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.periodos button + button {
+  border-left: 1px solid var(--borde);
+}
+
+.periodos .periodo-activo {
+  background: var(--ambar);
+  color: var(--tinta);
+  font-weight: 600;
+}
+
+/* La leyenda, encima del plano y sin robarle sitio. */
+.mapa-leyenda {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: rgba(8, 8, 10, 0.72);
+  font-size: 0.72rem;
+  color: var(--hueso);
+  pointer-events: none;
+}
+
+.mapa-leyenda span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mapa-leyenda i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+/* Los tres cuadraditos del degradado van pegados: leídos juntos son una
+   escala, separados parecen tres cosas distintas. */
+.leyenda-calor i + i {
+  margin-left: -4px;
+}
+
+/* Con la leyenda dentro, el plano necesita algo más de alto para que no la
+   pise el recorrido. */
+.mapa-recorrido {
+  height: 340px;
+}
+
+/* Aviso de turno largo (migración 049). Va en azul de información, no en rojo:
+   no ha hecho nada mal, se le está recordando algo. Es un botón porque se
+   quita tocándolo, y se toca conduciendo: hueco de sobra para el dedo. */
+.aviso-turno {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid var(--info);
+  border-radius: 13px;
+  background: var(--tarjeta);
+  color: var(--info-texto);
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.aviso-turno small {
+  color: var(--humo);
+  font-size: 0.8rem;
+}

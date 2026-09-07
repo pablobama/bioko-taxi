@@ -410,6 +410,9 @@ export interface RecorridoOperador {
   // Tiempo en servicio del periodo. Sale del registro de estados y no del
   // rastro: el rastro tiene agujeros y le quitaría horas trabajadas.
   segundosEnServicio: number;
+  // Kilómetros por hora de TURNO, no de conducción: incluye el rato parado
+  // esperando. null si el turno es demasiado corto para que la media diga algo.
+  velocidadMediaKmh: number | null;
   // Tramos, no puntos sueltos: entre dos tramos hay un hueco de verdad.
   // `n` es cuántas veces pasó el taxi por ahí en el periodo: es lo que
   // colorea el mapa de calor, de azul (una vez) a rojo (lo que más repite).
@@ -599,10 +602,12 @@ export const api = {
     ),
 
   heartbeat: (coordenadas: Posicion | null) =>
-    pedirJson<{ estado: string; saldoXaf: number }>('/api/conductor/heartbeat', {
-      method: 'POST',
-      body: JSON.stringify(coordenadas ?? {}),
-    }),
+    // `avisoTurnoHoras`: horas que lleva en servicio, cuando toca recordárselo
+    // (migración 049). null la mayoría de los latidos.
+    pedirJson<{ estado: string; saldoXaf: number; avisoTurnoHoras: number | null }>(
+      '/api/conductor/heartbeat',
+      { method: 'POST', body: JSON.stringify(coordenadas ?? {}) },
+    ),
 
   recargas: () =>
     pedirJson<{

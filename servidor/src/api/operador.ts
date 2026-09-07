@@ -452,6 +452,7 @@ export function registrarRutasOperador(
       // Tiempo en servicio del periodo. Sale del registro de estados y no del
       // rastro: el rastro tiene agujeros y le quitaría horas trabajadas.
       segundosEnServicio: actividad.segundosEnServicio,
+      velocidadMediaKmh: actividad.velocidadMediaKmh,
       // Sin las horas: al operador le importa el dibujo y cuánto anduvo, y
       // mandar la marca de tiempo de cada punto dobla el tamaño de la
       // respuesta para nada.

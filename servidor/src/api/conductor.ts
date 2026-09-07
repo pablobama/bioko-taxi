@@ -25,7 +25,9 @@ import { registrarRastro } from '../dominio/rastro.js';
 import { puntoDeRecogida } from '../dominio/recogida.js';
 import { recargasDe, solicitarRecarga } from '../dominio/recargas.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
-import { entrarEnServicio, registrarHeartbeat, salirDeServicio } from '../dominio/presencia.js';
+import {
+  avisoDeTurnoLargo, entrarEnServicio, registrarHeartbeat, salirDeServicio,
+} from '../dominio/presencia.js';
 import { barrioMasCercano } from '../dominio/zonas.js';
 import { transicionarConductor, transicionarSolicitud } from '../dominio/transiciones.js';
 import type { ConexionesSse } from '../eventos/adaptador-sse.js';
@@ -369,6 +371,14 @@ export function registrarRutasConductor(
         await registrarRastro(cliente, sesion.conductorId, cuerpo.lat, cuerpo.lng);
       }
     });
+    // Migración 049: si lleva más de una hora en servicio se le recuerda, y
+    // se le vuelve a recordar cada hora. Va en la respuesta del latido y no
+    // por el bus de eventos porque no es un aviso que deba sonar ni
+    // despertarle el teléfono: es una línea en la pantalla que ya está
+    // mirando, y el latido pasa por ahí cada veinte segundos de todos modos.
+    const avisoTurnoHoras = await enTransaccion(pool, (cliente) =>
+      avisoDeTurnoLargo(cliente, sesion.conductorId));
+
     const presencia = await pool.query(
       'SELECT estado FROM presencia WHERE conductor_id = $1',
       [sesion.conductorId],
@@ -377,6 +387,7 @@ export function registrarRutasConductor(
       estado: presencia.rows[0].estado,
       saldoXaf: await saldoDe(sesion.conductorId),
       suscripcionVigente: await suscripcionVigente(pool, sesion.conductorId),
+      avisoTurnoHoras,
     };
   });
 

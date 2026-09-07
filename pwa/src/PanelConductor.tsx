@@ -52,6 +52,8 @@ export default function PanelConductor({
   // (20-30 s, más otros 60 de caché del GPS): conduciendo, eso es quedarse
   // quieto en otra calle.
   const [posicionCoche, setPosicionCoche] = useState<{ lat: number; lng: number } | null>(null);
+  // Horas que lleva en servicio, cuando toca recordárselo (migración 049).
+  const [avisoTurno, setAvisoTurno] = useState<number | null>(null);
   // Hacia dónde va el coche, para girar el plano y poner delante arriba. null
   // hasta que se sepa: el mapa se queda con el norte arriba mientras tanto.
   const [rumbo, setRumbo] = useState<number | null>(null);
@@ -206,7 +208,14 @@ export default function PanelConductor({
       anotarRumbo(coordenadas.current, null, null);
       if (enServicio) {
         try {
-          await api.heartbeat(coordenadas.current);
+          const respuesta = await api.heartbeat(coordenadas.current);
+          // Migración 049: el turno ya no se cae solo por un latido viejo, así
+          // que puede durar toda la noche si se olvida. Cada hora se le
+          // recuerda que sigue dentro y con la ubicación encendida — con el
+          // botón de salir justo debajo, que ya está en pantalla.
+          if (respuesta.avisoTurnoHoras !== null) {
+            setAvisoTurno(respuesta.avisoTurnoHoras);
+          }
         } catch {
           // Sin red: el siguiente latido reintenta.
         }
@@ -394,6 +403,7 @@ export default function PanelConductor({
         estado={estado}
         demanda={demanda}
         aviso={aviso}
+        avisoTurno={avisoTurno}
         ocupado={ocupado}
         t={t}
         acciones={{
@@ -411,6 +421,7 @@ export default function PanelConductor({
           alDeclararAusente: (id) => accion(id, 'cliente-ausente'),
           alCompletar: (id) => accion(id, 'completar'),
           alLlamar: (id) => llamada.llamar(id),
+          alDescartarAvisoTurno: () => setAvisoTurno(null),
         }}
       />
       )}

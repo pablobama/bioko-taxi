@@ -110,6 +110,13 @@ export default function Mapa({
   // Girar el plano ayuda conduciendo y estorba mirándolo parado, así que se
   // puede clavar el norte arriba tocando la rosa de los vientos.
   const [norteFijo, setNorteFijo] = useState(false);
+  // Encuadre a mano (arrastrar y pellizcar). null = manda el automático.
+  //
+  // Mientras hay uno, el mapa deja de reencuadrarse solo: si siguiera
+  // haciéndolo, cada latido del taxi devolvería la cámara a su sitio y sería
+  // imposible mirar dos calles más allá. Se vuelve al automático con el botón,
+  // que solo aparece cuando hay algo que deshacer.
+  const [camaraManual, setCamaraManual] = useState<Camara | null>(null);
   const [rumboAplicado, setRumboAplicado] = useState<number | null>(null);
 
   // El rumbo del GPS baila unos grados en cada lectura aunque el coche vaya
@@ -197,7 +204,7 @@ export default function Mapa({
   const { ancho, alto } = caja;
 
   // --- Cámara -------------------------------------------------------------
-  const camara: Camara | null = useMemo(() => {
+  const camaraAuto: Camara | null = useMemo(() => {
     if (!listo || ancho === 0 || alto === 0) return null;
     const { aMundo } = listo.proy;
     const enfoque: Punto2D[] = [];
@@ -248,6 +255,87 @@ export default function Mapa({
     };
   }, [listo, ancho, alto, origen, destino, taxi, encuadre, rutaTaxi, rutaViaje, paradas,
     recorrido, rumboMapa]);
+
+  const camara = camaraManual ?? camaraAuto;
+
+  // --- Mover y acercar el plano con el dedo -------------------------------
+  //
+  // No hay librería de mapas, así que los gestos son estos veinte renglones:
+  // arrastrar mueve el centro y pellizcar (o la rueda) cambia la escala. Es
+  // todo lo que hace falta, porque la cámara ya era un par de números.
+  //
+  // Lo delicado es el giro: cuando el plano va orientado al rumbo del coche,
+  // un dedo que se mueve hacia la derecha de la PANTALLA no se mueve hacia el
+  // este del MUNDO. Hay que deshacer la rotación antes de aplicar el
+  // desplazamiento, o el mapa se va en diagonal.
+  const dedos = useRef(new Map<number, { x: number; y: number }>());
+  const pellizcoPrevio = useRef<number | null>(null);
+
+  const mundoDesdePantalla = (dx: number, dy: number, c: Camara) => {
+    const r = c.rumbo ?? 0;
+    const cos = Math.cos(r);
+    const sen = Math.sin(r);
+    return [
+      (dx * cos - dy * sen) / c.escala,
+      (dx * sen + dy * cos) / c.escala,
+    ] as const;
+  };
+
+  const mover = (dxPantalla: number, dyPantalla: number) => {
+    setCamaraManual((previa) => {
+      const base = previa ?? camaraAuto;
+      if (!base) return previa;
+      const [dx, dy] = mundoDesdePantalla(dxPantalla, dyPantalla, base);
+      return { ...base, cx: base.cx - dx, cy: base.cy - dy };
+    });
+  };
+
+  const acercar = (factor: number) => {
+    setCamaraManual((previa) => {
+      const base = previa ?? camaraAuto;
+      if (!base || !listo) return previa;
+      // Topes: por debajo no se distingue una calle de otra y por encima se ve
+      // el mar. Se calculan en metros de ancho de pantalla, que es lo que
+      // significa algo, y no en «niveles de zoom».
+      const porMetro = listo.proy.unidadesPorMetro;
+      const maxEscala = ancho / (120 * porMetro);
+      const minEscala = ancho / (40_000 * porMetro);
+      const escala = Math.min(maxEscala, Math.max(minEscala, base.escala * factor));
+      return { ...base, escala };
+    });
+  };
+
+  const alBajarDedo = (e: React.PointerEvent) => {
+    dedos.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+  };
+
+  const alMoverDedo = (e: React.PointerEvent) => {
+    const previo = dedos.current.get(e.pointerId);
+    if (!previo) return;
+    dedos.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (dedos.current.size === 1) {
+      mover(e.clientX - previo.x, e.clientY - previo.y);
+      return;
+    }
+    // Dos dedos: la distancia entre ellos es la escala. El desplazamiento se
+    // deja al gesto de un dedo — mezclar los dos hace que el mapa patine al
+    // levantar uno.
+    if (dedos.current.size === 2) {
+      const [a, b] = [...dedos.current.values()];
+      const separacion = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pellizcoPrevio.current !== null && pellizcoPrevio.current > 0) {
+        acercar(separacion / pellizcoPrevio.current);
+      }
+      pellizcoPrevio.current = separacion;
+    }
+  };
+
+  const alLevantarDedo = (e: React.PointerEvent) => {
+    dedos.current.delete(e.pointerId);
+    if (dedos.current.size < 2) pellizcoPrevio.current = null;
+  };
 
   const pantalla = (lat: number, lng: number): Punto2D =>
     aPantalla(listo!.proy.aMundo(lat, lng), camara!, ancho, alto);
@@ -306,11 +394,15 @@ export default function Mapa({
     const ancho2 = discontinua ? grosor * 0.6 : grosor;
     return (
       <g key={clave}>
+        {/* Funda ancha y opaca. Es lo que hace que la ruta se lea de un
+            vistazo cruzando una avenida clara o una manzana vacía, y lo que
+            distingue una trayectoria activa del resto del plano: se ve desde
+            el otro lado de la pantalla, sin enfocar. */}
         <path
           d={d}
           fill="none"
           stroke="#08080a"
-          strokeWidth={ancho2 + 6}
+          strokeWidth={ancho2 + 8}
           strokeLinecap="round"
           strokeLinejoin="round"
           opacity={0.95}
@@ -363,6 +455,12 @@ export default function Mapa({
           height={alto}
           role="img"
           aria-label="Plano de Malabo"
+          className="mapa-lienzo"
+          onPointerDown={alBajarDedo}
+          onPointerMove={alMoverDedo}
+          onPointerUp={alLevantarDedo}
+          onPointerCancel={alLevantarDedo}
+          onWheel={(e) => acercar(e.deltaY < 0 ? 1.15 : 1 / 1.15)}
         >
           {/* El plano, en coordenadas de mundo: un solo `transform` lo mueve
               todo. `vector-effect` mantiene el grosor de las calles al hacer
@@ -458,15 +556,20 @@ export default function Mapa({
 
           {/* Rutas. En cada fase importa una sola: la del coche viniendo, o la
               del viaje. Dibujar las dos a la vez sería ruido. */}
+          {/* Las trayectorias ACTIVAS —el coche viniendo, o el viaje en
+              curso— van gruesas de verdad. Es lo que se mira conduciendo, de
+              reojo y con sol: un trazo fino se pierde entre las calles. La
+              del plano de fondo, cuando todavía no hay viaje, sigue siendo
+              fina y clara: es una referencia, no una instrucción. */}
           {encuadre === 'recogida' && taxi && origen
-            && trazoRuta('recogida', rutaTaxi, [taxi, origen], '#ffb020', 5)}
+            && trazoRuta('recogida', rutaTaxi, [taxi, origen], '#ffb020', 8)}
           {encuadre !== 'recogida' && origen && destino
             && trazoRuta(
               'viaje',
               rutaViaje,
               [origen, destino],
               encuadre === 'viaje' ? '#ffb020' : '#f7f5f2',
-              encuadre === 'viaje' ? 5 : 3.5,
+              encuadre === 'viaje' ? 8 : 3.5,
             )}
 
           {/* Paradas del taxi compartido: numeradas, la propia en ámbar. */}
@@ -522,16 +625,40 @@ export default function Mapa({
           {taxi && (() => {
             const xy = pantalla(taxi.lat, taxi.lng);
             return (
-              <g transform={`translate(${xy[0].toFixed(1)},${xy[1].toFixed(1)}) rotate(${rumboTaxi().toFixed(1)})`}>
-                <rect x={-15} y={-10} width={30} height={20} rx={7} fill="#08080a" />
-                <rect x={-12} y={-8} width={24} height={16} rx={5.5} fill="#ffb020" />
-                <rect x={1.5} y={-4.5} width={7} height={9} rx={2} fill="#1a1206" opacity={0.55} />
+              <g transform={`translate(${xy[0].toFixed(1)},${xy[1].toFixed(1)})`}>
+                {/* Un disco fijo debajo y una punta que gira encima. Antes era
+                    un rectángulo pequeño que giraba entero, y a la escala de
+                    un móvil no se distinguía hacia dónde apuntaba: se veía una
+                    mancha ámbar. El disco da presencia y la punta da rumbo,
+                    que son dos trabajos distintos. */}
+                <circle r={13} fill="#08080a" opacity={0.55} />
+                <g transform={`rotate(${rumboTaxi().toFixed(1)})`}>
+                  <path
+                    d="M13 0 L-7 -9 L-3.5 0 L-7 9 Z"
+                    fill="#ffb020"
+                    stroke="#08080a"
+                    strokeWidth={2}
+                    strokeLinejoin="round"
+                  />
+                </g>
+                <circle r={3.2} fill="#08080a" opacity={0.75} />
               </g>
             );
           })()}
         </svg>
       ) : (
         <p className="mapa-cargando">Cargando el plano de Malabo…</p>
+      )}
+      {/* Solo cuando hay algo que deshacer: un botón permanente para «centrar»
+          en un mapa que ya está centrado es ruido. */}
+      {camaraManual !== null && (
+        <button
+          type="button"
+          className="mapa-recentrar"
+          onClick={() => setCamaraManual(null)}
+        >
+          Volver al encuadre
+        </button>
       )}
       {/* Rosa de los vientos. Aparece solo cuando hay rumbo que seguir, que es
           conduciendo: un mapa que gira sin decir dónde está el norte
