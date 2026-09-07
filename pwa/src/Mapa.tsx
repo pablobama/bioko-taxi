@@ -626,22 +626,33 @@ export default function Mapa({
             const xy = pantalla(taxi.lat, taxi.lng);
             return (
               <g transform={`translate(${xy[0].toFixed(1)},${xy[1].toFixed(1)})`}>
-                {/* Un disco fijo debajo y una punta que gira encima. Antes era
-                    un rectángulo pequeño que giraba entero, y a la escala de
-                    un móvil no se distinguía hacia dónde apuntaba: se veía una
-                    mancha ámbar. El disco da presencia y la punta da rumbo,
-                    que son dos trabajos distintos. */}
-                <circle r={13} fill="#08080a" opacity={0.55} />
+                {/* La silueta del coche vista desde arriba, con el morro
+                    hacia donde va. Se dibuja apuntando al este (+X) porque el
+                    rumbo en pantalla se mide igual, así que el `rotate` es
+                    directo y no hay que acordarse de sumar noventa grados.
+                    Un disco oscuro debajo lo despega del plano: sin él, sobre
+                    una avenida clara el coche se pierde. */}
+                <circle r={14} fill="#08080a" opacity={0.5} />
                 <g transform={`rotate(${rumboTaxi().toFixed(1)})`}>
+                  {/* Carrocería: morro redondeado delante, cola más cuadrada
+                      detrás. Es lo poco que hace falta para que se lea como un
+                      coche y no como una flecha. */}
                   <path
-                    d="M13 0 L-7 -9 L-3.5 0 L-7 9 Z"
+                    d="M-9.5 -5.4 L4 -5.4 Q10.5 -5.4 11.5 0 Q10.5 5.4 4 5.4
+                       L-9.5 5.4 Q-11.5 5.4 -11.5 3.4 L-11.5 -3.4
+                       Q-11.5 -5.4 -9.5 -5.4 Z"
                     fill="#ffb020"
                     stroke="#08080a"
-                    strokeWidth={2}
+                    strokeWidth={1.8}
                     strokeLinejoin="round"
                   />
+                  {/* Parabrisas y luneta: son las dos manchas que hacen que el
+                      ojo sepa al instante cuál es el morro. */}
+                  <path d="M2.5 -3.6 L6.8 -2.2 Q8.4 0 6.8 2.2 L2.5 3.6 Z"
+                    fill="#1a1206" opacity={0.7} />
+                  <rect x={-8.6} y={-3.6} width={3.2} height={7.2} rx={1}
+                    fill="#1a1206" opacity={0.45} />
                 </g>
-                <circle r={3.2} fill="#08080a" opacity={0.75} />
               </g>
             );
           })()}

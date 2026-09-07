@@ -1850,3 +1850,37 @@ button.importe.elegido-importe {
   color: var(--humo);
   font-size: 0.8rem;
 }
+
+/* Velocímetro en vivo, sobre el plano del taxista. Abajo a la izquierda como
+   en cualquier navegador: es donde la vista ya va a buscarlo, y no tapa la
+   ruta, que va por el centro. Redondo y opaco para que se lea con el sol de
+   frente y de reojo, que es como se mira conduciendo. */
+.velocimetro {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 1;
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  background: rgba(8, 8, 10, 0.82);
+  border: 1px solid var(--borde);
+  pointer-events: none;
+}
+
+.velocimetro strong {
+  font-size: 1.5rem;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.velocimetro span {
+  font-size: 0.62rem;
+  color: var(--humo);
+  letter-spacing: 0.04em;
+}

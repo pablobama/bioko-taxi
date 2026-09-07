@@ -1004,6 +1004,11 @@ export function coordenadasOportunistas(
 
     let mejor: GeolocationPosition | null = null;
     let terminado = false;
+    // Los dos identificadores, declarados antes de usarlos: `acabar` los
+    // limpia, y `acabar` puede ejecutarse dentro de la propia llamada que los
+    // crea (ver la nota de abajo).
+    let vigilancia = 0;
+    let reloj: ReturnType<typeof setTimeout> | undefined;
     const acabar = () => {
       if (terminado) return;
       terminado = true;
@@ -1020,7 +1025,12 @@ export function coordenadasOportunistas(
     // suele ser la posición gruesa de la red, y la del GPS llega unos segundos
     // después. Con getCurrentPosition se cogía la primera y se descartaba la
     // buena sin llegar a verla.
-    const vigilancia = navigator.geolocation.watchPosition(
+    // `let` declarado ANTES, no `const` en la misma línea de la llamada: si el
+    // navegador entrega la primera posición de forma síncrona —tiene una
+    // fijación cacheada y contesta antes de devolver el identificador—, el
+    // callback se ejecuta con la variable todavía sin inicializar y todo
+    // revienta con «Cannot access before initialization». Pasó en pruebas.
+    vigilancia = navigator.geolocation.watchPosition(
       (p) => {
         if (mejor === null || p.coords.accuracy < mejor.coords.accuracy) mejor = p;
         if (mejor.coords.accuracy <= objetivoM) acabar();
@@ -1028,7 +1038,7 @@ export function coordenadasOportunistas(
       () => acabar(),
       { enableHighAccuracy: true, maximumAge: 0, timeout: esperaMs },
     );
-    const reloj = setTimeout(acabar, esperaMs);
+    reloj = setTimeout(acabar, esperaMs);
   });
 }
 

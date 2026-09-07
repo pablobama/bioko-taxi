@@ -134,8 +134,15 @@ function capturarGps(
   alAvisar('Buscando el GPS…');
   let mejor: GeolocationPosition | null = null;
   let terminado = false;
+  let vigilancia = 0;
+  let reloj: ReturnType<typeof setTimeout> | undefined;
 
-  const vigilancia = navigator.geolocation.watchPosition(
+  // `let` declarado ANTES, no `const` en la misma línea de la llamada: si el
+  // navegador entrega la primera posición de forma síncrona —tiene una
+  // fijación cacheada y contesta antes de devolver el identificador—, el
+  // callback se ejecuta con la variable todavía sin inicializar y todo
+  // revienta con «Cannot access before initialization». Pasó en pruebas.
+  vigilancia = navigator.geolocation.watchPosition(
     (pos) => {
       if (terminado) return;
       if (!mejor || pos.coords.accuracy < mejor.coords.accuracy) mejor = pos;
@@ -163,7 +170,7 @@ function capturarGps(
   // Si tras la espera sigue sin fijar, NO se devuelve una posición mala: se
   // dice lo que hay y se deja repetir. Guardar algo mal situado es peor que
   // no guardarlo, porque nadie va a volver a mirarlo.
-  const reloj = setTimeout(() => {
+  reloj = setTimeout(() => {
     if (terminado) return;
     terminado = true;
     navigator.geolocation.clearWatch(vigilancia);

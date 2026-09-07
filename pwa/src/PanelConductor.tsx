@@ -12,7 +12,7 @@ import {
   type Zona, type ZonaConDemanda,
 } from './api';
 import { mensajeDeError } from './conexion';
-import { metrosEntre, porCercaniaA, rumboEntre } from './geo';
+import { metrosEntre, porCercaniaA, rumboEntre, velocidadKmhEntre } from './geo';
 import { crearT, localeVoz, type Idioma } from './i18n';
 import { useLlamada, type SenalRecibida } from './llamada';
 import Mapa from './Mapa';
@@ -86,6 +86,36 @@ export default function PanelConductor({
   const VELOCIDAD_MINIMA_MS = 2;
   const DISTANCIA_MINIMA_M = 25;
   const ultimaParaRumbo = useRef<{ lat: number; lng: number } | null>(null);
+  // Velocidad en tiempo real, para el marcador del panel.
+  const [velocidadKmh, setVelocidadKmh] = useState<number | null>(null);
+  const ultimaParaVelocidad = useRef<{ lat: number; lng: number; en: number } | null>(null);
+  // Velocidad de la lectura, en km/h. `coords.speed` cuando lo hay —lo calcula
+  // el chip del GPS por Doppler y es lo fiable—, y si no, la distancia entre
+  // dos lecturas: ver `velocidadKmhEntre`, donde están las guardas y el porqué.
+  const anotarVelocidad = useCallback((
+    donde: { lat: number; lng: number },
+    delGps: number | null,
+    ahora: number,
+  ) => {
+    if (delGps !== null && Number.isFinite(delGps) && delGps >= 0) {
+      ultimaParaVelocidad.current = { ...donde, en: ahora };
+      setVelocidadKmh(Math.round(delGps * 3.6));
+      return;
+    }
+    const previa = ultimaParaVelocidad.current;
+    if (previa === null) {
+      ultimaParaVelocidad.current = { ...donde, en: ahora };
+      return;
+    }
+    const kmh = velocidadKmhEntre(previa, { ...donde, en: ahora });
+    // Con `null` se CONSERVA la lectura anterior como referencia: si se pisara
+    // con una demasiado seguida, nunca se acumularía hueco para medir y el
+    // velocímetro no marcaría nunca en un teléfono sin `coords.speed`.
+    if (kmh === null) return;
+    ultimaParaVelocidad.current = { ...donde, en: ahora };
+    setVelocidadKmh(kmh);
+  }, []);
+
   const anotarRumbo = useCallback((
     donde: { lat: number; lng: number } | null,
     delGps: number | null,
@@ -252,12 +282,13 @@ export default function PanelConductor({
         coordenadas.current = nueva;
         moverCoche(nueva);
         anotarRumbo(nueva, p.coords.heading, p.coords.speed);
+        anotarVelocidad(nueva, p.coords.speed, p.timestamp);
       },
       () => undefined,
       { enableHighAccuracy: true, maximumAge: 5000 },
     );
     return () => navigator.geolocation.clearWatch(vigilante);
-  }, [moverCoche, anotarRumbo]);
+  }, [moverCoche, anotarRumbo, anotarVelocidad]);
 
   // Dónde hay trabajo. Va en su propia petición y no pegada al latido para
   // poder pedirla una vez por minuto en vez de tres: el latido va cada 20 s y
@@ -384,6 +415,17 @@ export default function PanelConductor({
           encuadre={siguienteParada ? 'recogida' : 'persona'}
           rumbo={rumbo}
         />
+        {/* Velocidad en vivo, abajo a la izquierda como en cualquier
+            navegador. Solo en servicio: fuera del turno ni se mide ni se
+            enseña, por lo mismo que no se guarda el recorrido.
+            `aria-live="off"`: un número que cambia cada segundo leído en voz
+            alta por el lector de pantalla sería insoportable. */}
+        {enServicio && velocidadKmh !== null && (
+          <div className="velocimetro" aria-live="off">
+            <strong>{velocidadKmh}</strong>
+            <span>km/h</span>
+          </div>
+        )}
       </div>
 
 

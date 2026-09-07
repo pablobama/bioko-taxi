@@ -9,7 +9,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { metrosEntre, porCercaniaA, rumboEntre } from './geo.js';
+import { metrosEntre, porCercaniaA, rumboEntre, velocidadKmhEntre } from './geo.js';
 
 // Barrios reales de Malabo, con los centroides del gazetteer.
 const BARRIO_CHINO = { id: 1, nombre: 'Barrio Chino', lat: 3.74966, lng: 8.77969 };
@@ -103,4 +103,34 @@ test('el rumbo nunca sale negativo: 0 a 360, como el del GPS', () => {
 test('un caso de verdad: del Barrio Chino a Ela Nguema se va hacia el nordeste', () => {
   const rumbo = rumboEntre(BARRIO_CHINO, ELA_NGUEMA);
   assert.ok(rumbo > 45 && rumbo < 90, `esperaba nordeste y salió ${rumbo.toFixed(0)}°`);
+});
+
+// --- Velocidad entre dos lecturas del GPS ----------------------------------
+
+test('velocidad: 100 m en 10 s son 36 km/h', () => {
+  const desde = { lat: 3.75, lng: 8.78, en: 0 };
+  // 100 m al norte: un grado de latitud son 111.320 m.
+  const hasta = { lat: 3.75 + 100 / 111_320, lng: 8.78, en: 10_000 };
+  assert.equal(velocidadKmhEntre(desde, hasta), 36);
+});
+
+test('velocidad: dos lecturas demasiado seguidas no dan velocidad, dan ruido', () => {
+  // Diez metros de temblor del GPS con el coche PARADO en un semáforo. En un
+  // segundo eso son 36 km/h, y el velocímetro los marcaría.
+  const desde = { lat: 3.75, lng: 8.78, en: 0 };
+  const hasta = { lat: 3.75 + 10 / 111_320, lng: 8.78, en: 1000 };
+  assert.equal(velocidadKmhEntre(desde, hasta), null);
+});
+
+test('velocidad: un salto del GPS se descarta en vez de enseñar un absurdo', () => {
+  // Un rebote entre edificios: dos kilómetros en cinco segundos son 1.440 km/h.
+  const desde = { lat: 3.75, lng: 8.78, en: 0 };
+  const hasta = { lat: 3.75 + 2000 / 111_320, lng: 8.78, en: 5000 };
+  assert.equal(velocidadKmhEntre(desde, hasta), null);
+});
+
+test('velocidad: parado de verdad marca cero, no null', () => {
+  const desde = { lat: 3.75, lng: 8.78, en: 0 };
+  const hasta = { lat: 3.75, lng: 8.78, en: 10_000 };
+  assert.equal(velocidadKmhEntre(desde, hasta), 0);
 });

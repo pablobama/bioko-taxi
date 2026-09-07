@@ -43,3 +43,30 @@ export function rumboEntre(desde: Coordenada, hasta: Coordenada): number {
 export function porCercaniaA<T extends Coordenada>(punto: Coordenada, lista: T[]): T[] {
   return [...lista].sort((a, b) => metrosEntre(punto, a) - metrosEntre(punto, b));
 }
+
+// Velocidad entre dos lecturas de GPS, en km/h. null cuando el número no
+// significaría nada.
+//
+// Es el respaldo de `coords.speed`, que es lo bueno cuando lo hay —el chip del
+// GPS la calcula por Doppler, sin comparar posiciones— pero que muchos Android
+// baratos devuelven siempre null.
+//
+// Las dos guardas son el motivo de que esto sea una función y no dos líneas:
+//
+//   - Hueco mínimo. Entre dos fijaciones separadas un segundo, el temblor del
+//     GPS con el coche PARADO son diez metros, y diez metros en un segundo son
+//     treinta y seis por hora. El velocímetro marcaría eso en un semáforo.
+//   - Tope. Un salto del GPS —un rebote entre edificios— da cientos de
+//     kilómetros por hora. En Malabo no se pasa de sesenta ni bajando de
+//     Basilé, así que por encima del tope la lectura se descarta en vez de
+//     enseñar un número absurdo.
+export function velocidadKmhEntre(
+  desde: Coordenada & { en: number },
+  hasta: Coordenada & { en: number },
+  { huecoMinimoMs = 3000, topeKmh = 200 } = {},
+): number | null {
+  const ms = hasta.en - desde.en;
+  if (ms < huecoMinimoMs) return null;
+  const kmh = (metrosEntre(desde, hasta) / (ms / 1000)) * 3.6;
+  return kmh > topeKmh ? null : Math.round(kmh);
+}
