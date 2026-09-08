@@ -68,6 +68,13 @@ export interface PropiedadesMapa {
   //
   // null o sin valor: norte arriba, como siempre.
   rumbo?: number | null;
+  // Hacia dónde apunta el COCHE, que no siempre es hacia dónde gira el plano.
+  //
+  // Parado, el plano se queda quieto —mirar un plano que gira en la mano marea
+  // y no ayuda— pero el coche sí gira, porque es lo que dice hacia dónde está
+  // encarado. En marcha las dos cosas coinciden. Sin valor, se deduce como
+  // siempre del siguiente punto de la ruta.
+  rumboCoche?: number | null;
   // Dónde está QUIEN MIRA el mapa. Solo lo usa el pasajero mientras va dentro
   // del taxi: hasta ahora, al subirse, se le quitaba el coche de la pantalla
   // —su posición no es asunto suyo— y con él se iba lo único que se movía. Le
@@ -106,7 +113,7 @@ const PRIORIDAD: Record<string, number> = {
 
 export default function Mapa({
   puntos, origen, destino, taxi, buscando, encuadre = 'persona', paradas, recorrido,
-  maxPasadas = 1, rumbo = null, yo = null,
+  maxPasadas = 1, rumbo = null, rumboCoche = null, yo = null,
 }: PropiedadesMapa) {
   const contenedor = useRef<HTMLDivElement>(null);
   const [caja, setCaja] = useState({ ancho: 0, alto: 0 });
@@ -501,8 +508,9 @@ export default function Mapa({
     // rumbo del GPS se mide desde el norte; y se le resta el giro del plano,
     // porque cuando el plano ya va orientado al rumbo, el coche tiene que
     // quedarse mirando hacia arriba y no girar dos veces.
-    if (rumbo !== null && Number.isFinite(rumbo)) {
-      ultimoRumbo.current = rumbo - 90 - (rumboMapa * 180) / Math.PI;
+    const suyo = rumboCoche ?? rumbo;
+    if (suyo !== null && Number.isFinite(suyo)) {
+      ultimoRumbo.current = suyo - 90 - (rumboMapa * 180) / Math.PI;
       return ultimoRumbo.current;
     }
     if (!taxi) return ultimoRumbo.current;

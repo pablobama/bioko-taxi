@@ -10,6 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { metrosEntre, porCercaniaA, rumboEntre, velocidadKmhEntre } from './geo.js';
+import { rumboDeBrujula } from './brujula.js';
 
 // Barrios reales de Malabo, con los centroides del gazetteer.
 const BARRIO_CHINO = { id: 1, nombre: 'Barrio Chino', lat: 3.74966, lng: 8.77969 };
@@ -133,4 +134,36 @@ test('velocidad: parado de verdad marca cero, no null', () => {
   const desde = { lat: 3.75, lng: 8.78, en: 0 };
   const hasta = { lat: 3.75, lng: 8.78, en: 10_000 };
   assert.equal(velocidadKmhEntre(desde, hasta), 0);
+});
+
+// --- Brújula ---------------------------------------------------------------
+
+test('brújula iOS: webkitCompassHeading ya viene en grados desde el norte', () => {
+  assert.equal(rumboDeBrujula({ webkitCompassHeading: 90 }), 90);
+  assert.equal(rumboDeBrujula({ webkitCompassHeading: 0 }), 0);
+});
+
+test('brújula Android: alpha cuenta al revés, hay que restarlo de 360', () => {
+  // Mirando al este, un evento absoluto de Chrome trae alpha = 270.
+  assert.equal(rumboDeBrujula({ alpha: 270, absolute: true }), 90);
+  assert.equal(rumboDeBrujula({ alpha: 0, absolute: true }), 0);
+});
+
+test('brújula: un alpha NO absoluto se descarta, aunque venga un número', () => {
+  // Sin `absolute` el alpha es relativo a donde estaba el móvil al empezar a
+  // escuchar: no es un rumbo, es un número que lo parece. Usarlo pondría el
+  // coche mirando a cualquier parte según cómo se hubiera dejado el teléfono.
+  assert.equal(rumboDeBrujula({ alpha: 120 }), null);
+  assert.equal(rumboDeBrujula({ alpha: 120, absolute: false }), null);
+});
+
+test('brújula: el giro de la pantalla se suma, o el coche apunta 90° a un lado', () => {
+  // Con el móvil tumbado, el «arriba» de la pantalla no es el del aparato.
+  assert.equal(rumboDeBrujula({ webkitCompassHeading: 10 }, 90), 100);
+  assert.equal(rumboDeBrujula({ alpha: 0, absolute: true }, 270), 270);
+});
+
+test('brújula: siempre entre 0 y 360, sin negativos ni vueltas de más', () => {
+  assert.equal(rumboDeBrujula({ webkitCompassHeading: 350 }, 90), 80);
+  assert.equal(rumboDeBrujula({ alpha: 350, absolute: true }, 0), 10);
 });

@@ -12,6 +12,7 @@ import {
   type Zona, type ZonaConDemanda,
 } from './api';
 import { mensajeDeError } from './conexion';
+import { escucharBrujula, pedirPermisoBrujula } from './brujula';
 import { metrosEntre, porCercaniaA, rumboEntre, velocidadKmhEntre } from './geo';
 import { crearT, localeVoz, type Idioma } from './i18n';
 import { useLlamada, type SenalRecibida } from './llamada';
@@ -88,6 +89,15 @@ export default function PanelConductor({
   const ultimaParaRumbo = useRef<{ lat: number; lng: number } | null>(null);
   // Velocidad en tiempo real, para el marcador del panel.
   const [velocidadKmh, setVelocidadKmh] = useState<number | null>(null);
+  // Última velocidad conocida en m/s, para decidir quién manda en el rumbo: la
+  // brújula parado o el GPS en marcha. En una referencia y no en el estado
+  // porque la lee el escuchador de la brújula, que se monta una sola vez.
+  const velocidadMs = useRef(0);
+  // Hacia dónde apunta el coche. Se separa del rumbo del PLANO a propósito:
+  // parado, girar el móvil gira el coche pero deja el plano quieto —un plano
+  // que gira en la mano marea y no orienta a nadie—, y en marcha las dos cosas
+  // son lo mismo.
+  const [rumboCoche, setRumboCoche] = useState<number | null>(null);
   const ultimaParaVelocidad = useRef<{ lat: number; lng: number; en: number } | null>(null);
   // Velocidad de la lectura, en km/h. `coords.speed` cuando lo hay —lo calcula
   // el chip del GPS por Doppler y es lo fiable—, y si no, la distancia entre
@@ -99,6 +109,7 @@ export default function PanelConductor({
   ) => {
     if (delGps !== null && Number.isFinite(delGps) && delGps >= 0) {
       ultimaParaVelocidad.current = { ...donde, en: ahora };
+      velocidadMs.current = delGps;
       setVelocidadKmh(Math.round(delGps * 3.6));
       return;
     }
@@ -113,6 +124,7 @@ export default function PanelConductor({
     // velocímetro no marcaría nunca en un teléfono sin `coords.speed`.
     if (kmh === null) return;
     ultimaParaVelocidad.current = { ...donde, en: ahora };
+    velocidadMs.current = kmh / 3.6;
     setVelocidadKmh(kmh);
   }, []);
 
@@ -124,7 +136,9 @@ export default function PanelConductor({
     if (!donde) return;
     const enMarcha = velocidad === null || velocidad >= VELOCIDAD_MINIMA_MS;
     if (delGps !== null && Number.isFinite(delGps) && enMarcha) {
-      setRumbo(((delGps % 360) + 360) % 360);
+      const grados = ((delGps % 360) + 360) % 360;
+      setRumbo(grados);
+      setRumboCoche(grados);
       ultimaParaRumbo.current = donde;
       return;
     }
@@ -134,8 +148,47 @@ export default function PanelConductor({
       return;
     }
     if (metrosEntre(previa, donde) < DISTANCIA_MINIMA_M) return;
-    setRumbo(rumboEntre(previa, donde));
+    const entrePosiciones = rumboEntre(previa, donde);
+    setRumbo(entrePosiciones);
+    setRumboCoche(entrePosiciones);
     ultimaParaRumbo.current = donde;
+  }, []);
+
+  // La brújula, para cuando el coche está PARADO.
+  //
+  // El GPS solo sabe hacia dónde va algo que se mueve; girar el móvil en la
+  // mano no cambia nada suyo, y por eso el coche del mapa se quedaba clavado.
+  // La brújula sí sabe dónde está el norte estando quieto.
+  //
+  // Y solo parado: dentro de un coche en marcha la brújula miente —carrocería,
+  // altavoces y el soporte del móvil son hierro e imanes—, mientras que el
+  // rumbo de marcha del GPS ahí es exacto. Cada una manda donde acierta. El
+  // umbral es el mismo con el que ya se decidía si una lectura de rumbo del GPS
+  // era fiable.
+  // En iOS el permiso de la brújula solo se puede pedir desde un gesto de la
+  // persona: pedido al arrancar, el navegador lo niega en silencio y ya no
+  // vuelve a funcionar en toda la sesión. Así que se engancha al primer toque,
+  // sea el que sea — no hace falta un botón que explique nada.
+  useEffect(() => {
+    let parar: (() => void) | null = null;
+    let vivo = true;
+    const arrancar = () => {
+      window.removeEventListener('pointerdown', arrancar);
+      void pedirPermisoBrujula().then((concedido) => {
+        if (!concedido || !vivo || parar) return;
+        parar = escucharBrujula((grados) => {
+          // En marcha manda el GPS: dentro de un coche la brújula miente.
+          if (velocidadMs.current >= VELOCIDAD_MINIMA_MS) return;
+          setRumboCoche(grados);
+        });
+      });
+    };
+    window.addEventListener('pointerdown', arrancar);
+    return () => {
+      vivo = false;
+      window.removeEventListener('pointerdown', arrancar);
+      if (parar) parar();
+    };
   }, []);
 
   const llamada = useLlamada({ vivo: true, locale: localeVoz(idioma) });
@@ -442,6 +495,7 @@ export default function PanelConductor({
             : null}
           encuadre={siguienteParada ? 'recogida' : 'persona'}
           rumbo={rumbo}
+          rumboCoche={rumboCoche}
         />
         {/* Velocidad en vivo, abajo a la izquierda como en cualquier
             navegador. Solo en servicio: fuera del turno ni se mide ni se
