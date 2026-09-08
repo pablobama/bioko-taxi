@@ -14,7 +14,18 @@
 import { writeFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 
-const RECUADRO = { sur: 3.695, oeste: 8.705, norte: 3.815, este: 8.845 };
+// Bioko entera, no solo Malabo ciudad.
+//
+// El recuadro era el de la ciudad (3,695–3,815 N / 8,705–8,845 E) de cuando la
+// aplicación no salía de ahí. Pero el catálogo llega a Luba, Riaba, Moka,
+// Batoicopo y los Basacato desde la importación de OpenStreetMap, y el reparto
+// también: un taxista bajando a Luba veía su coche sobre un plano en blanco,
+// porque la carretera por la que iba no existía en el fichero.
+//
+// Es el mismo recuadro que valida los puntos en el panel del operador
+// (RECUADRO_BIOKO, migración 038), y por el mismo motivo: la isla es pequeña y
+// está aislada, así que cabe entera y no hay razón para cortarla.
+const RECUADRO = { sur: 3.18, oeste: 8.38, norte: 3.81, este: 8.99 };
 
 // Clases de vía que se conservan, agrupadas por importancia visual. Se dejan
 // fuera las sendas, pistas y caminos peatonales: no aportan a orientarse en
