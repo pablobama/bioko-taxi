@@ -1712,6 +1712,15 @@ button.importe.elegido-importe {
 .mapa-lienzo {
   touch-action: none;
   cursor: grab;
+  /* La inclinación de conducción entra y sale con una transición: aparecer y
+     desaparecer de golpe al fijar el norte o al tocar el plano da un tirón que
+     desorienta justo cuando se está mirando por dónde ir. */
+  transition: transform 260ms ease-out;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mapa-lienzo { transition: none; }
 }
 
 .mapa-lienzo:active {

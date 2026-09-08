@@ -337,6 +337,36 @@ export default function Mapa({
     if (dedos.current.size < 2) pellizcoPrevio.current = null;
   };
 
+  // --- Plano inclinado, como un navegador --------------------------------
+  //
+  // Solo conduciendo: cuando el plano ya va girado al rumbo del coche y nadie
+  // ha clavado el norte. Ahí la inclinación gana de verdad —lo que queda
+  // delante del capó ocupa más pantalla que lo que ya se ha dejado atrás, que
+  // es justo lo que interesa mirar— y en las demás pantallas solo estorbaría:
+  // el pasajero esperando y el operador mirando un recorrido quieren el plano
+  // de frente, sin nada escorzado.
+  //
+  // Se hace con una transformación 3D de CSS sobre el propio `<svg>`, no
+  // rehaciendo la proyección: el plano son 3.700 caminos ya construidos en
+  // coordenadas planas, y volver a proyectarlos punto a punto en cada
+  // fotograma es exactamente lo que este mapa evita para poder ir en un
+  // Android de gama baja. La tarjeta gráfica hace el escorzo gratis.
+  // Y se endereza en cuanto se toca el plano a mano: arrastrar sobre una
+  // superficie escorzada no responde donde uno espera —el dedo recorre más
+  // mundo arriba que abajo— así que mirar de cerca se hace en plano, y volver
+  // al encuadre devuelve la inclinación.
+  const inclinado = rumboAplicado !== null && !norteFijo && camaraManual === null;
+  const GRADOS_INCLINACION = 52;
+  // El origen abajo del todo: al inclinar sobre el borde inferior, el coche
+  // —que va en el centro— baja al tercio de abajo y el resto de la pantalla se
+  // llena de calle por venir. Es la composición de la foto.
+  const estiloInclinacion = inclinado
+    ? {
+      transform: `perspective(${(alto * 1.15).toFixed(0)}px) rotateX(${GRADOS_INCLINACION}deg) scale(1.35)`,
+      transformOrigin: '50% 100%',
+    }
+    : undefined;
+
   const pantalla = (lat: number, lng: number): Punto2D =>
     aPantalla(listo!.proy.aMundo(lat, lng), camara!, ancho, alto);
 
@@ -349,6 +379,11 @@ export default function Mapa({
       .map((p) => ({ punto: p, xy: aPantalla(listo.proy.aMundo(p.lat, p.lng), camara, ancho, alto) }))
       .filter(({ xy }) => xy[0] > 20 && xy[0] < ancho - 20 && xy[1] > 26 && xy[1] < alto - 20)
       .sort((a, b) => (PRIORIDAD[a.punto.categoria] ?? 6) - (PRIORIDAD[b.punto.categoria] ?? 6));
+
+    // Con el plano inclinado no van pines: saldrían escorzados y, sobre todo,
+    // conduciendo no hacen falta —ningún navegador los enseña en marcha—. Lo
+    // que importa ahí es la calle que viene y el coche.
+    if (inclinado) return [];
 
     const puestos: Punto2D[] = [];
     const tope = encuadre === 'persona' ? 9 : 5;
@@ -363,7 +398,7 @@ export default function Mapa({
       elegidos.push(candidato);
     }
     return elegidos;
-  }, [listo, camara, puntos, ancho, alto, encuadre]);
+  }, [listo, camara, puntos, ancho, alto, encuadre, inclinado]);
 
   // --- Rutas dibujadas ----------------------------------------------------
   // Con FUNDA: un trazo oscuro más ancho por debajo del de color. Es lo que
@@ -446,6 +481,7 @@ export default function Mapa({
 
   const hayPlano = listo !== null && camara !== null && ancho > 0 && alto > 0;
 
+
   return (
     <div ref={contenedor} className="mapa-svg" data-vias={listo?.plano.vias.length ?? 0}>
       {hayPlano ? (
@@ -456,6 +492,7 @@ export default function Mapa({
           role="img"
           aria-label="Plano de Malabo"
           className="mapa-lienzo"
+          style={estiloInclinacion}
           onPointerDown={alBajarDedo}
           onPointerMove={alMoverDedo}
           onPointerUp={alLevantarDedo}
@@ -602,6 +639,59 @@ export default function Mapa({
               <g transform={`translate(${xy[0].toFixed(1)},${xy[1].toFixed(1)})`}>
                 <rect x={-9} y={-9} width={18} height={18} rx={3} fill="#0a0a0b" />
                 <rect x={-6} y={-6} width={12} height={12} rx={2} fill="#f7f5f2" />
+              </g>
+            );
+          })()}
+
+          {/* Origen: punto ámbar con anillo. Mientras se busca taxi, late. */}
+          {origen && (() => {
+            const xy = pantalla(origen.lat, origen.lng);
+            return (
+              <g transform={`translate(${xy[0].toFixed(1)},${xy[1].toFixed(1)})`}>
+                {buscando && <circle r={26} fill="#ffb020" className="pulso-origen" />}
+                <circle r={9} fill="#0a0a0b" />
+                <circle r={6.5} fill="#ffb020" />
+                <circle r={12} fill="none" stroke="#ffb020" strokeWidth={1.5} opacity={0.5} />
+              </g>
+            );
+          })()}
+
+          {/* El coche, orientado según su rumbo. Desaparece en cuanto el
+              pasajero sube: a partir de ahí su posición no es asunto de nadie
+              (por eso quien usa el mapa deja de pasar `taxi`). */}
+          {taxi && (() => {
+            const xy = pantalla(taxi.lat, taxi.lng);
+            return (
+              <g transform={`translate(${xy[0].toFixed(1)},${xy[1].toFixed(1)})`}>
+                {/* El coche, recreado del navegador de la foto: carrocería
+                    blanca, parabrisas azul claro delante y dos pilotos rojos
+                    detrás. Esos tres colores son los que hacen que se sepa de
+                    un golpe de vista hacia dónde mira, sin tener que seguir la
+                    punta de una flecha — y con el plano inclinado se lee como
+                    un coche puesto sobre la calle, que es el efecto entero.
+
+                    Apunta al este (+X) porque el rumbo en pantalla se mide
+                    igual: el `rotate` es directo y nadie tiene que acordarse
+                    de sumar noventa grados el día que lo toque. */}
+                <ellipse rx={15} ry={11} fill="#08080a" opacity={0.42} />
+                <g transform={`rotate(${rumboTaxi().toFixed(1)})`}>
+                  {/* Sombra pegada al suelo, desplazada hacia atrás: es lo que
+                      despega el coche del plano sin taparlo. */}
+                  <rect x={-11} y={-5.6} width={22} height={11.2} rx={4.4}
+                    fill="#08080a" opacity={0.5} transform="translate(-1.2,1.6)" />
+                  {/* Carrocería. */}
+                  <rect x={-11} y={-5.6} width={22} height={11.2} rx={4.4}
+                    fill="#f2f2f0" stroke="#08080a" strokeWidth={1.4} />
+                  {/* Parabrisas: la mancha azul del morro. */}
+                  <path d="M4.2 -4 L9 -2.6 Q10.2 0 9 2.6 L4.2 4 Z"
+                    fill="#7fb2e8" />
+                  {/* Techo y ventanillas. */}
+                  <rect x={-4.2} y={-4.2} width={7.6} height={8.4} rx={1.8}
+                    fill="#2b3a4a" opacity={0.85} />
+                  {/* Pilotos traseros. */}
+                  <rect x={-10.4} y={-4.4} width={2} height={2.6} rx={0.8} fill="#e5484d" />
+                  <rect x={-10.4} y={1.8} width={2} height={2.6} rx={0.8} fill="#e5484d" />
+                </g>
               </g>
             );
           })()}

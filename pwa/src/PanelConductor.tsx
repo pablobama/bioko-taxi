@@ -270,7 +270,35 @@ export default function PanelConductor({
   useEffect(() => {
     // Con ?gps= forzado en localhost manda la posición fingida: el GPS real
     // del ordenador (o su ausencia) no debe pisarla.
-    if (enPruebasLocales() && new URLSearchParams(window.location.search).has('gps')) return;
+    //
+    // Y se simula un coche en marcha: avanza desde ese punto al rumbo y a la
+    // velocidad que digan `?rumbo=` y `?kmh=`. Existe porque el plano
+    // inclinado, la brújula y el velocímetro SOLO aparecen circulando, y un
+    // ordenador no circula: sin esto no hay forma de mirar esas tres cosas
+    // antes de que las vea un taxista en la calle. Está detrás de
+    // `enPruebasLocales`, así que en producción no existe.
+    const parametros = new URLSearchParams(window.location.search);
+    if (enPruebasLocales() && parametros.has('gps')) {
+      const inicio = coordenadas.current;
+      const rumboFingido = Number(parametros.get('rumbo') ?? '0');
+      const kmh = Number(parametros.get('kmh') ?? '0');
+      if (inicio === null || kmh <= 0) return;
+      const rad = (rumboFingido * Math.PI) / 180;
+      let metros = 0;
+      const reloj = setInterval(() => {
+        metros += (kmh / 3.6) * 1.5;
+        const donde = {
+          lat: inicio.lat + (metros * Math.cos(rad)) / 111_320,
+          lng: inicio.lng + (metros * Math.sin(rad)) / (111_320 * Math.cos(inicio.lat * Math.PI / 180)),
+          precision: 8,
+        };
+        coordenadas.current = donde;
+        moverCoche(donde);
+        anotarRumbo(donde, rumboFingido, kmh / 3.6);
+        anotarVelocidad(donde, kmh / 3.6, Date.now());
+      }, 1500);
+      return () => clearInterval(reloj);
+    }
     if (!('geolocation' in navigator)) return;
     const vigilante = navigator.geolocation.watchPosition(
       (p) => {
