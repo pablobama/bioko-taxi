@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  abrirEventos, api, coordenadasOportunistas,
+  abrirEventos, api, coordenadasOportunistas, enPruebasLocales,
   type DestinoSugerido, type DetalleSolicitud, type EventoSse, type Perfil, type PuntoMapa,
   type ReferenciaSugerida, type TaxisCerca,
 } from './api';
@@ -454,6 +454,30 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
     return () => clearInterval(temporizador);
   }, [detalle?.estado]);
 
+  // Mientras va DENTRO del coche, su punto en el mapa se mueve solo.
+  //
+  // El envío al servidor sigue siendo cada 25 s —es lo que alimenta el cierre
+  // automático y a quien le esté siguiendo, y no hace falta más—, pero para
+  // DIBUJAR eso son saltos de casi trescientos metros a velocidad de ciudad:
+  // el punto pegaría brincos en vez de avanzar. Esto solo pinta: no manda nada
+  // y no cuesta datos.
+  //
+  // Solo a bordo. El resto del tiempo la posición se lee cuando hace falta, y
+  // tener el GPS abierto sin necesidad es batería de alguien que quizá lleva
+  // toda la tarde fuera de casa.
+  useEffect(() => {
+    if (detalle?.estado !== 'RECOGIDO') return;
+    if (enPruebasLocales() && new URLSearchParams(window.location.search).has('gps')) return;
+    if (!('geolocation' in navigator)) return;
+    let vigilancia = 0;
+    vigilancia = navigator.geolocation.watchPosition(
+      (p) => setCoordenadas({ lat: p.coords.latitude, lng: p.coords.longitude }),
+      () => undefined,
+      { enableHighAccuracy: true, maximumAge: 5000 },
+    );
+    return () => navigator.geolocation.clearWatch(vigilancia);
+  }, [detalle?.estado]);
+
   // Refresco del estado mientras el taxi viene: mueve el coche y el ETA.
   useEffect(() => {
     if (fase !== 'asignado' && fase !== 'esperando') return;
@@ -581,6 +605,7 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
           buscando={fase === 'esperando'}
           encuadre={encuadre}
           paradas={paradasCompartidas}
+          yo={aBordo ? coordenadas : null}
         />
       </div>
 

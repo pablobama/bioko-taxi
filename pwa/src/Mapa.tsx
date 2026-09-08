@@ -68,6 +68,12 @@ export interface PropiedadesMapa {
   //
   // null o sin valor: norte arriba, como siempre.
   rumbo?: number | null;
+  // Dónde está QUIEN MIRA el mapa. Solo lo usa el pasajero mientras va dentro
+  // del taxi: hasta ahora, al subirse, se le quitaba el coche de la pantalla
+  // —su posición no es asunto suyo— y con él se iba lo único que se movía. Le
+  // quedaba un plano congelado durante todo el trayecto. Esto es lo que sí es
+  // suyo: su propia posición, que además ya venía enviando.
+  yo?: { lat: number; lng: number } | null;
 }
 
 // El plano se prepara una sola vez para toda la vida de la aplicación: son
@@ -100,7 +106,7 @@ const PRIORIDAD: Record<string, number> = {
 
 export default function Mapa({
   puntos, origen, destino, taxi, buscando, encuadre = 'persona', paradas, recorrido,
-  maxPasadas = 1, rumbo = null,
+  maxPasadas = 1, rumbo = null, yo = null,
 }: PropiedadesMapa) {
   const contenedor = useRef<HTMLDivElement>(null);
   const [caja, setCaja] = useState({ ancho: 0, alto: 0 });
@@ -187,19 +193,35 @@ export default function Mapa({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taxi?.lat, taxi?.lng, origen?.lat, origen?.lng]);
 
-  // El trayecto pedido: origen → destino. Solo cambia al cambiar el viaje.
+  // El trayecto pedido. Arranca en donde va la persona cuando ya está dentro
+  // del coche —lo que le queda por delante, que es lo que quiere ver— y en el
+  // punto de recogida mientras todavía espera.
+  //
+  // Con el mismo freno que la ruta del taxi: se recalcula solo al moverse lo
+  // bastante. Sin él, cada lectura del GPS rehace el camino entero sin que
+  // cambie un píxel en pantalla.
+  const desdeViaje = yo ?? origen ?? null;
+  const ultimoCalculoViaje = useRef<{ lat: number; lng: number } | null>(null);
   useEffect(() => {
-    if (!origen || !destino) {
+    if (!desdeViaje || !destino) {
       setRutaViaje(null);
+      ultimoCalculoViaje.current = null;
       return;
     }
+    const previo = ultimoCalculoViaje.current;
+    const movido = previo === null
+      || Math.abs(previo.lat - desdeViaje.lat) > 0.0002
+      || Math.abs(previo.lng - desdeViaje.lng) > 0.0002;
+    if (!movido) return;
+    ultimoCalculoViaje.current = { lat: desdeViaje.lat, lng: desdeViaje.lng };
+
     let vivo = true;
-    void calcularRuta(origen, destino).then((ruta) => {
+    void calcularRuta(desdeViaje, destino).then((ruta) => {
       if (vivo) setRutaViaje(ruta ? ruta.puntos : null);
     });
     return () => { vivo = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [origen?.lat, origen?.lng, destino?.lat, destino?.lng]);
+  }, [desdeViaje?.lat, desdeViaje?.lng, destino?.lat, destino?.lng]);
 
   const { ancho, alto } = caja;
 
@@ -220,6 +242,7 @@ export default function Mapa({
       // curva que da el coche para llegar.
       for (const p of rutaTaxi ?? []) enfoque.push(aMundo(p.lat, p.lng));
     } else if (encuadre === 'viaje') {
+      if (yo) enfoque.push(aMundo(yo.lat, yo.lng));
       if (destino) enfoque.push(aMundo(destino.lat, destino.lng));
       for (const p of rutaViaje ?? []) enfoque.push(aMundo(p.lat, p.lng));
       for (const p of paradas ?? []) enfoque.push(aMundo(p.lat, p.lng));
@@ -253,7 +276,7 @@ export default function Mapa({
       escala: ancho / (5_000 * listo.proy.unidadesPorMetro),
       rumbo: rumboMapa,
     };
-  }, [listo, ancho, alto, origen, destino, taxi, encuadre, rutaTaxi, rutaViaje, paradas,
+  }, [listo, ancho, alto, origen, destino, taxi, yo, encuadre, rutaTaxi, rutaViaje, paradas,
     recorrido, rumboMapa]);
 
   const camara = camaraManual ?? camaraAuto;
@@ -604,7 +627,7 @@ export default function Mapa({
             && trazoRuta(
               'viaje',
               rutaViaje,
-              [origen, destino],
+              [desdeViaje ?? origen, destino],
               encuadre === 'viaje' ? '#ffb020' : '#f7f5f2',
               encuadre === 'viaje' ? 8 : 3.5,
             )}
@@ -639,6 +662,22 @@ export default function Mapa({
               <g transform={`translate(${xy[0].toFixed(1)},${xy[1].toFixed(1)})`}>
                 <rect x={-9} y={-9} width={18} height={18} rx={3} fill="#0a0a0b" />
                 <rect x={-6} y={-6} width={12} height={12} rx={2} fill="#f7f5f2" />
+              </g>
+            );
+          })()}
+
+          {/* Dónde va quien mira, mientras va dentro del taxi. Azul y redondo,
+              deliberadamente distinto del coche ámbar: en ningún momento puede
+              leerse como «ahí está el taxista», que es justo lo que se dejó de
+              enseñar al subir. Va por encima de la ruta y por debajo del
+              destino. */}
+          {yo && (() => {
+            const xy = pantalla(yo.lat, yo.lng);
+            return (
+              <g transform={`translate(${xy[0].toFixed(1)},${xy[1].toFixed(1)})`}>
+                <circle r={11} fill="#4a9eff" opacity={0.22} />
+                <circle r={7} fill="#08080a" opacity={0.6} />
+                <circle r={5.5} fill="#4a9eff" stroke="#f7f5f2" strokeWidth={2} />
               </g>
             );
           })()}
