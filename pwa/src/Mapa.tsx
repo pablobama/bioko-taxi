@@ -490,6 +490,21 @@ export default function Mapa({
   const UMBRAL_RUMBO_PX = 5;
   const ultimoRumbo = useRef(0);
   const rumboTaxi = (): number => {
+    // Si viene el rumbo del GPS —el mapa del propio taxista— manda ese: es
+    // hacia dónde apunta el coche de verdad, no hacia dónde va la carretera.
+    // Antes se deducía siempre del siguiente punto de la ruta, y sin ruta
+    // —parado, en servicio y esperando— no había nada que deducir: el coche se
+    // quedaba mirando al este, que es lo que se ve en la pantalla del taxista
+    // nada más entrar.
+    //
+    // Se le restan 90° porque el coche se dibuja apuntando al este (+X) y el
+    // rumbo del GPS se mide desde el norte; y se le resta el giro del plano,
+    // porque cuando el plano ya va orientado al rumbo, el coche tiene que
+    // quedarse mirando hacia arriba y no girar dos veces.
+    if (rumbo !== null && Number.isFinite(rumbo)) {
+      ultimoRumbo.current = rumbo - 90 - (rumboMapa * 180) / Math.PI;
+      return ultimoRumbo.current;
+    }
     if (!taxi) return ultimoRumbo.current;
     const siguiente = rutaTaxi && rutaTaxi.length > 1 ? rutaTaxi[1] : origen;
     if (!siguiente) return ultimoRumbo.current;
@@ -705,51 +720,57 @@ export default function Mapa({
                 {/* El coche del navegador de la foto: carrocería blanca,
                     parabrisas azul delante, luneta oscura y dos pilotos rojos
                     detrás. Esos colores son los que dicen hacia dónde mira sin
-                    tener que seguir la punta de una flecha.
+                    tener que seguir la punta de una flecha. Se dibuja apuntando
+                    al este (+X) porque el rumbo en pantalla se mide igual.
 
-                    La escala en Y deshace el escorzo. El plano inclinado
-                    comprime la pantalla al coseno de 52°, o sea al 62 %: un
-                    coche dibujado a lo ancho salía como una raya aplastada, que
-                    es justo lo que no se parecía a la foto. Va FUERA del giro
-                    del rumbo —y por tanto en coordenadas de pantalla— porque lo
-                    que aplasta es la pantalla, no el mundo; metida dentro del
-                    giro deformaría el coche de otra manera en cada rumbo.
-
-                    Y apunta al este (+X) porque el rumbo en pantalla se mide
-                    igual: el `rotate` es directo y nadie tiene que acordarse de
-                    sumar noventa grados el día que lo toque. */}
+                    Tres capas, y el orden importa:
+                    1. Fuera, el estirón en Y que deshace el escorzo del plano
+                       inclinado. Va en coordenadas de PANTALLA, porque lo que
+                       aplasta es la pantalla.
+                    2. Dentro, el giro del rumbo.
+                    3. Y dentro del giro, el tamaño, UNIFORME.
+                    Si el tamaño fuera no uniforme por fuera del giro, el coche
+                    se deformaría distinto en cada rumbo: alargado yendo al
+                    norte y aplastado yendo al este. */}
                 <g transform={inclinado
                   ? `scale(1,${(1 / Math.cos((GRADOS_INCLINACION * Math.PI) / 180)).toFixed(3)})`
                   : undefined}
                 >
-                  <ellipse rx={20} ry={13} fill="#08080a" opacity={0.38} />
                   <g transform={`rotate(${rumboTaxi().toFixed(1)})`}>
-                    {/* Sombra bajo el coche, corrida hacia atrás. */}
-                    <rect x={-15} y={-7.6} width={30} height={15.2} rx={5.6}
-                      fill="#08080a" opacity={0.45} transform="translate(-1.6,2.2)" />
-                    {/* Carrocería: morro más estrecho que la cola, como un
-                        coche visto de verdad desde arriba. */}
-                    <path
-                      d="M-14 -6.4 L6 -7.4 Q13 -6.6 15 0 Q13 6.6 6 7.4 L-14 6.4
-                         Q-15.4 6.4 -15.4 4.6 L-15.4 -4.6 Q-15.4 -6.4 -14 -6.4 Z"
-                      fill="#f4f4f2" stroke="#0d0d10" strokeWidth={1.5}
-                      strokeLinejoin="round"
-                    />
-                    {/* Parabrisas: la mancha azul del morro. */}
-                    <path d="M4.6 -5.2 L11 -3.4 Q12.6 0 11 3.4 L4.6 5.2 Z"
-                      fill="#8fbdea" />
-                    {/* Techo. */}
-                    <rect x={-6.4} y={-5.4} width={10.4} height={10.8} rx={2.4}
-                      fill="#e6e6e3" stroke="#0d0d10" strokeWidth={0.9} />
-                    {/* Luneta trasera. */}
-                    <path d="M-6.6 -4.6 L-10.4 -3.2 L-10.4 3.2 L-6.6 4.6 Z"
-                      fill="#39485a" opacity={0.9} />
-                    {/* Pilotos. */}
-                    <rect x={-14.6} y={-5.8} width={2.6} height={3.2} rx={1} fill="#e5484d" />
-                    <rect x={-14.6} y={2.6} width={2.6} height={3.2} rx={1} fill="#e5484d" />
-                    {/* Retrovisores: dos puntos que rematan la silueta. */}
-                    <rect x={2.4} y={-8.4} width={2.6} height={2} rx={0.8} fill="#d8d8d5" />
-                    <rect x={2.4} y={6.4} width={2.6} height={2} rx={0.8} fill="#d8d8d5" />
+                    {/* Casi el doble de grande que antes. En un móvil de verdad
+                        salía como una pastilla de treinta píxeles que no se
+                        distinguía de un pin cualquiera; un navegador lo dibuja
+                        del tamaño de un pulgar porque es lo único que se busca
+                        con la vista sin apartarla de la carretera. */}
+                    <g transform="scale(1.9)">
+                      <ellipse rx={19} ry={12} fill="#08080a" opacity={0.34} />
+                      {/* Sombra bajo el coche, corrida hacia atrás. */}
+                      <rect x={-15} y={-7.6} width={30} height={15.2} rx={5.6}
+                        fill="#08080a" opacity={0.45} transform="translate(-1.6,2.2)" />
+                      {/* Carrocería: morro más estrecho que la cola, como un
+                          coche visto de verdad desde arriba. */}
+                      <path
+                        d="M-14 -6.4 L6 -7.4 Q13 -6.6 15 0 Q13 6.6 6 7.4 L-14 6.4
+                           Q-15.4 6.4 -15.4 4.6 L-15.4 -4.6 Q-15.4 -6.4 -14 -6.4 Z"
+                        fill="#f4f4f2" stroke="#0d0d10" strokeWidth={1.5}
+                        strokeLinejoin="round"
+                      />
+                      {/* Parabrisas: la mancha azul del morro. */}
+                      <path d="M4.6 -5.2 L11 -3.4 Q12.6 0 11 3.4 L4.6 5.2 Z"
+                        fill="#8fbdea" />
+                      {/* Techo. */}
+                      <rect x={-6.4} y={-5.4} width={10.4} height={10.8} rx={2.4}
+                        fill="#e6e6e3" stroke="#0d0d10" strokeWidth={0.9} />
+                      {/* Luneta trasera. */}
+                      <path d="M-6.6 -4.6 L-10.4 -3.2 L-10.4 3.2 L-6.6 4.6 Z"
+                        fill="#39485a" opacity={0.9} />
+                      {/* Pilotos. */}
+                      <rect x={-14.6} y={-5.8} width={2.6} height={3.2} rx={1} fill="#e5484d" />
+                      <rect x={-14.6} y={2.6} width={2.6} height={3.2} rx={1} fill="#e5484d" />
+                      {/* Retrovisores: dos puntos que rematan la silueta. */}
+                      <rect x={2.4} y={-8.4} width={2.6} height={2} rx={0.8} fill="#d8d8d5" />
+                      <rect x={2.4} y={6.4} width={2.6} height={2} rx={0.8} fill="#d8d8d5" />
+                    </g>
                   </g>
                 </g>
               </g>
