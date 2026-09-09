@@ -225,11 +225,65 @@ async function procesarViaje(
         return;
       }
 
-      // RECOGIDO: la separación tras la recogida cierra el servicio.
+      // RECOGIDO: la separación tras la recogida cierra el servicio, pero
+      // solo si la separación es DE VERDAD. Dos condiciones más, y las dos
+      // vienen de viajes que se cerraron solos con el pasajero dentro
+      // (migración 050):
+      //
+      //   - No se cierra en los primeros minutos tras subir. Es cuando el chip
+      //     está peor asentado —acaba de cambiar de sitio y de cielo— y es
+      //     también cuando un cierre en falso más se nota, porque el viaje ni
+      //     ha empezado.
+      //   - Y la separación tiene que AGUANTAR. El pasajero va dentro del
+      //     coche: bajarse es una situación que se queda; una fijación
+      //     disparada dura una lectura y a la siguiente vuelve. El margen de
+      //     error de la 047 ensancha el punto, pero no distingue un punto
+      //     ensanchado de un punto mentiroso. El tiempo sí.
+      const marcas = await cliente.query(
+        `SELECT v.separado_desde,
+                COALESCE(v.validado_en, t.recogido_en) AS recogido_en
+         FROM viaje v
+         LEFT JOIN LATERAL (
+           SELECT max(creado_en) AS recogido_en FROM transicion
+           WHERE solicitud_id = $2 AND ambito = 'solicitud' AND estado_nuevo = 'RECOGIDO'
+         ) t ON true
+         WHERE v.id = $1`,
+        [activo.viaje_id, activo.solicitud_id],
+      );
+      const separadoDesde: Date | null = marcas.rows[0]?.separado_desde ?? null;
+      const recogidoEn: Date | null = marcas.rows[0]?.recogido_en ?? null;
+
       const umbralSeparacion = await leerParametroEntero(cliente, 'gps_umbral_separacion_m');
-      // Con el margen RESTADO: solo se cierra el viaje si la separación es real
-      // más allá del error de las dos medidas. Es la mitad que faltaba.
-      if (distancia - errorCierre >= umbralSeparacion) {
+      // Con el margen RESTADO: solo cuenta como separación si lo es más allá
+      // del error de las dos medidas. Es la mitad que faltaba.
+      const separadosAhora = distancia - errorCierre >= umbralSeparacion;
+
+      if (!separadosAhora) {
+        // Vuelven a verse juntos: la cuenta se borra. Una racha de separación
+        // solo vale si es seguida.
+        if (separadoDesde !== null) {
+          await cliente.query('UPDATE viaje SET separado_desde = NULL WHERE id = $1', [activo.viaje_id]);
+        }
+        return;
+      }
+
+      const minimoViajeSeg = await leerParametroEntero(cliente, 'gps_cierre_minimo_viaje_seg');
+      if (recogidoEn !== null
+        && ahora.getTime() - recogidoEn.getTime() < minimoViajeSeg * 1000) {
+        return;
+      }
+
+      if (separadoDesde === null) {
+        // Primera vez que se les ve lejos: se apunta la hora y se espera. Si
+        // era una lectura mala, el siguiente tique borrará esta marca.
+        await cliente.query(
+          'UPDATE viaje SET separado_desde = $2 WHERE id = $1', [activo.viaje_id, ahora],
+        );
+        return;
+      }
+
+      const sostenidaSeg = await leerParametroEntero(cliente, 'gps_separacion_sostenida_seg');
+      if (ahora.getTime() - separadoDesde.getTime() >= sostenidaSeg * 1000) {
         await transicionarSolicitud(
           cliente, activo.solicitud_id, 'COMPLETADO', 'sistema', 'separacion_gps',
         );

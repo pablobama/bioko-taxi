@@ -101,10 +101,14 @@ body {
    hermano flexible, no un bloque de altura fija. Así la cámara del mapa sabe
    de cuánto sitio dispone de verdad y lo que encuadra no acaba tapado, crezca
    la hoja lo que crezca. */
+/* El plano ocupa la PANTALLA ENTERA y todo lo demás flota encima.
+   Antes era un hermano de la hoja y se repartían la altura: la hoja se
+   quedaba con hasta el 62 % de abajo siempre, y el plano con lo que sobraba.
+   Conduciendo eso es media ciudad que no se ve. Ahora el plano va detrás, de
+   borde a borde, y la hoja se puede recoger del todo con el botón flotante. */
 .capa-mapa {
-  position: relative;
-  flex: 1;
-  min-height: 0;
+  position: absolute;
+  inset: 0;
   background: var(--tinta);
   /* Contexto de apilado propio: la hoja se dibuja siempre por encima. */
   z-index: 0;
@@ -204,15 +208,18 @@ body {
 
 /* --------------------------------------------------------------- hoja --- */
 
+/* La hoja ya no parte la pantalla: es una tarjeta que flota sobre el plano,
+   despegada de los bordes para que se vea calle alrededor. */
 .hoja {
   position: relative;
   /* Por encima del contexto del mapa (z-index 0): la hoja siempre recibe sus
      clics, aunque se solape con el plano. */
   z-index: 10;
-  background: var(--carbon);
-  border-top: 1px solid var(--borde);
-  border-radius: 24px 24px 0 0;
-  padding: 22px 18px calc(22px + env(safe-area-inset-bottom));
+  margin: 0 10px calc(10px + env(safe-area-inset-bottom));
+  background: rgba(22, 22, 26, 0.94);
+  border: 1px solid var(--borde);
+  border-radius: 22px;
+  padding: 18px 16px;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -220,8 +227,44 @@ body {
   /* Tope con desplazamiento interno: con cuatro pasajeros a bordo la hoja
      crecería hasta comerse el plano entero, y el taxista dejaría de ver por
      dónde va. Antes que eso, la hoja se desplaza por dentro. */
-  max-height: 62dvh;
+  max-height: 58dvh;
   overflow-y: auto;
+  transition: max-height 0.18s ease, opacity 0.18s ease;
+}
+
+/* Recogida del todo: el plano se ve entero. No es `display: none` porque eso
+   cortaría la transición en seco y perdería el desplazamiento interno por el
+   que iba la hoja; y `aria-hidden` en el propio elemento ya la saca del
+   lector de pantalla mientras está guardada. */
+.hoja-plegada {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Los mandos que flotan sobre el plano: columna a la IZQUIERDA. Arriba a la
+   derecha ya viven la rosa de los vientos y el conmutador de papeles, y dos
+   columnas en el mismo borde se pisarían. */
+.mandos-flotantes {
+  position: fixed;
+  left: 8px;
+  top: calc(8px + env(safe-area-inset-top));
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Sobre el plano hacen falta más contraste y más sombra que dentro de la
+   hoja: debajo puede haber una avenida clara o el mar. */
+.mando-flotante {
+  background: rgba(22, 22, 26, 0.9);
+  color: var(--nieve, #f7f5f2);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
 }
 
 /* --------------------------------------------- cobertura agregada --- */
@@ -290,8 +333,10 @@ body {
 .hoja-completa {
   max-height: none;
   min-height: 100dvh;
+  margin: 0;
   border-radius: 0;
-  border-top: none;
+  border: none;
+  background: var(--carbon);
   /* Hueco para el conmutador de papeles, que va flotando arriba a la derecha
      (position: fixed) y por tanto no empuja nada. Sin este hueco se sentaba
      encima del título: en 375 px el conmutador ocupa de x≈157 a 367 y

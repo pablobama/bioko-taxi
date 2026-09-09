@@ -138,11 +138,20 @@ test('recogida automática por proximidad y cierre automático por separación',
   await procesarProximidad(pool, emisor, t1);
   assert.equal(await estadoDe(viaje.solicitudId), 'RECOGIDO');
 
-  // Se separan más de 250 m: servicio realizado, cierre automático.
-  const t2 = new Date(t0.getTime() + 120_000);
+  // Se separan más de 250 m. La primera lectura NO cierra: solo apunta la
+  // hora (migración 050). Una fijación disparada se ve igual que esto.
+  const t2 = new Date(t0.getTime() + 180_000);
   await ponerPosicion(viaje.viajeId, 'conductor', 3.7600, 8.7900, t2);
   await ponerPosicion(viaje.viajeId, 'cliente', 3.7630, 8.7900, t2);
   await procesarProximidad(pool, emisor, t2);
+  assert.equal(await estadoDe(viaje.solicitudId), 'RECOGIDO');
+
+  // Siguen separados pasado gps_separacion_sostenida_seg: ahora sí, servicio
+  // realizado y cierre automático.
+  const t3 = new Date(t2.getTime() + 100_000);
+  await ponerPosicion(viaje.viajeId, 'conductor', 3.7605, 8.7905, t3);
+  await ponerPosicion(viaje.viajeId, 'cliente', 3.7630, 8.7900, t3);
+  await procesarProximidad(pool, emisor, t3);
   assert.equal(await estadoDe(viaje.solicitudId), 'COMPLETADO');
 
   const cerrado = await pool.query('SELECT completado_en FROM viaje WHERE id = $1', [viaje.viajeId]);
@@ -230,11 +239,18 @@ test('una lectura mala del GPS no cierra el viaje: se compara con su margen de e
     'con ±140 m de error, 330 m de separación no prueban que se haya bajado',
   );
 
-  // Bajarse de verdad y alejarse, con lecturas buenas, sí cierra.
-  const t2 = new Date(t0.getTime() + 120_000);
+  // Bajarse de verdad y alejarse, con lecturas buenas, sí cierra: pero hace
+  // falta que la separación aguante (migración 050), así que son dos lecturas.
+  const t2 = new Date(t0.getTime() + 180_000);
   await ponerPosicion(viaje.viajeId, 'conductor', 3.7500, 8.7800, t2, 12);
   await ponerPosicion(viaje.viajeId, 'cliente', 3.7560, 8.7800, t2, 12);
   await procesarProximidad(pool, emisor, t2);
+  assert.equal(await estadoDe(viaje.solicitudId), 'RECOGIDO');
+
+  const t3 = new Date(t2.getTime() + 100_000);
+  await ponerPosicion(viaje.viajeId, 'conductor', 3.7500, 8.7800, t3, 12);
+  await ponerPosicion(viaje.viajeId, 'cliente', 3.7565, 8.7800, t3, 12);
+  await procesarProximidad(pool, emisor, t3);
   assert.equal(await estadoDe(viaje.solicitudId), 'COMPLETADO');
 });
 
@@ -250,4 +266,68 @@ test('una lectura malísima no decide nada, ni para recoger ni para cerrar', asy
   await ponerPosicion(viaje.viajeId, 'cliente', 3.7500, 8.7800, t0, 900);
   await procesarProximidad(pool, emisor, t0);
   assert.equal(await estadoDe(viaje.solicitudId), 'EN_CAMINO');
+});
+
+// El fallo de producción, en una prueba: el pasajero va dentro del coche y el
+// GPS de su móvil suelta UNA fijación disparada a medio kilómetro. Antes de la
+// migración 050 eso terminaba el viaje con él sentado dentro.
+test('una fijación disparada suelta no cierra el viaje: la separación tiene que aguantar', async () => {
+  const viaje = await montarViajeEnCamino();
+  const emisor = new EmisorRegistro();
+  const t0 = new Date();
+
+  await ponerPosicion(viaje.viajeId, 'conductor', 3.7500, 8.7800, t0);
+  await ponerPosicion(viaje.viajeId, 'cliente', 3.7501, 8.7801, t0);
+  await procesarProximidad(pool, emisor, t0);
+  assert.equal(await estadoDe(viaje.solicitudId), 'RECOGIDO');
+
+  // Minuto tres del viaje: el móvil del pasajero dice que está a 600 m, y lo
+  // dice con una precisión buenísima. El chip no sabe que se ha equivocado.
+  const t1 = new Date(t0.getTime() + 180_000);
+  await ponerPosicion(viaje.viajeId, 'conductor', 3.7540, 8.7840, t1);
+  await ponerPosicion(viaje.viajeId, 'cliente', 3.7595, 8.7840, t1);
+  await procesarProximidad(pool, emisor, t1);
+  assert.equal(await estadoDe(viaje.solicitudId), 'RECOGIDO');
+
+  // Medio minuto después vuelve a su sitio, que es lo que hace una fijación
+  // mala y no hace alguien que se ha bajado.
+  const t2 = new Date(t1.getTime() + 30_000);
+  await ponerPosicion(viaje.viajeId, 'conductor', 3.7545, 8.7845, t2);
+  await ponerPosicion(viaje.viajeId, 'cliente', 3.7546, 8.7846, t2);
+  await procesarProximidad(pool, emisor, t2);
+  assert.equal(await estadoDe(viaje.solicitudId), 'RECOGIDO');
+
+  const marca = await pool.query('SELECT separado_desde FROM viaje WHERE id = $1', [viaje.viajeId]);
+  assert.equal(marca.rows[0].separado_desde, null, 'la racha se borra al volver a verse juntos');
+
+  // Y mucho después, con la racha ya borrada, una sola lectura lejana tampoco
+  // cierra: hay que empezar a contar otra vez.
+  const t3 = new Date(t2.getTime() + 300_000);
+  await ponerPosicion(viaje.viajeId, 'conductor', 3.7600, 8.7900, t3);
+  await ponerPosicion(viaje.viajeId, 'cliente', 3.7660, 8.7900, t3);
+  await procesarProximidad(pool, emisor, t3);
+  assert.equal(await estadoDe(viaje.solicitudId), 'RECOGIDO');
+});
+
+// Justo después de subir es cuando el chip está peor asentado —acaba de
+// cambiar de sitio y de cielo— y cuando un cierre en falso más se nota.
+test('el cierre automático no actúa en los primeros minutos tras la recogida', async () => {
+  const viaje = await montarViajeEnCamino();
+  const emisor = new EmisorRegistro();
+  const t0 = new Date();
+
+  await ponerPosicion(viaje.viajeId, 'conductor', 3.7500, 8.7800, t0);
+  await ponerPosicion(viaje.viajeId, 'cliente', 3.7501, 8.7801, t0);
+  await procesarProximidad(pool, emisor, t0);
+  assert.equal(await estadoDe(viaje.solicitudId), 'RECOGIDO');
+
+  // Separados de sobra, y sostenido: dos lecturas separadas por más de
+  // gps_separacion_sostenida_seg. Da igual: no ha pasado el mínimo.
+  for (const desfase of [20_000, 110_000]) {
+    const t = new Date(t0.getTime() + desfase);
+    await ponerPosicion(viaje.viajeId, 'conductor', 3.7500, 8.7800, t);
+    await ponerPosicion(viaje.viajeId, 'cliente', 3.7560, 8.7800, t);
+    await procesarProximidad(pool, emisor, t);
+    assert.equal(await estadoDe(viaje.solicitudId), 'RECOGIDO');
+  }
 });

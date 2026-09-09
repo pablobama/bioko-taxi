@@ -19,6 +19,7 @@ import { useLlamada, type SenalRecibida } from './llamada';
 import Mapa from './Mapa';
 import PanelLlamada from './PanelLlamada';
 import Recarga from './Recarga';
+import MandosFlotantes from './MandosFlotantes';
 import VistaConductor from './VistaConductor';
 import { prepararSonido, sonarCarreraCancelada, sonarNuevaCarrera } from './sonidos';
 
@@ -43,6 +44,8 @@ export default function PanelConductor({
   const [aviso, setAviso] = useState('');
   const [ocupado, setOcupado] = useState(false);
   const [enRecarga, setEnRecarga] = useState(false);
+  // Panel recogido: conduciendo, lo que hace falta es el plano entero.
+  const [panelPlegado, setPanelPlegado] = useState(false);
   const [demanda, setDemanda] = useState<{ zonas: ZonaConDemanda[]; ventanaMin: number } | null>(null);
   // Con `precision`: desde la migración 047 el servidor la necesita para no
   // cerrar un viaje por una lectura mala del GPS.
@@ -523,6 +526,7 @@ export default function PanelConductor({
         </section>
       ) : (
       <VistaConductor
+        plegada={panelPlegado}
         conductor={conductor}
         estado={estado}
         demanda={demanda}
@@ -548,6 +552,24 @@ export default function PanelConductor({
           alDescartarAvisoTurno: () => setAvisoTurno(null),
         }}
       />
+      )}
+
+      {!enRecarga && (
+        <MandosFlotantes
+          plegada={panelPlegado}
+          alAlternar={() => setPanelPlegado((p) => !p)}
+          etiquetaPlegar={t('cabecera.ocultarPanel')}
+          etiquetaDesplegar={t('cabecera.mostrarPanel')}
+          mandos={[
+            // Agente de campo (migración 025): mismo panel de taxi, más las
+            // herramientas del mapa. Solo aparece para quien lo es.
+            ...(conductor.agente && alAbrirCampo
+              ? [{ icono: '🗺', etiqueta: t('campo.abrir'), alPulsar: alAbrirCampo }]
+              : []),
+            { icono: '▤', etiqueta: t('cabecera.tusNumeros'), alPulsar: alAbrirEstadisticas },
+            { icono: '⚙', etiqueta: t('cabecera.tusDatos'), alPulsar: alAbrirAjustes },
+          ]}
+        />
       )}
 
       <PanelLlamada

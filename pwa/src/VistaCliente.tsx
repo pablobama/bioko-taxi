@@ -52,6 +52,8 @@ export interface PropiedadesVistaCliente {
   // estado de escritura y sus llamadas al gazetteer.
   buscadorDestino: React.ReactNode;
   buscadorOrigen: React.ReactNode;
+  // Hoja recogida: el plano se ve entero. Lo manda el botón flotante.
+  plegada?: boolean;
 }
 
 function Estrellas({ media, valoraciones, t }: { media: number | null; valoraciones: number; t: T }) {
@@ -70,22 +72,16 @@ function Estrellas({ media, valoraciones, t }: { media: number | null; valoracio
 export default function VistaCliente({
   fase, detalle, origen, destino, gpsResuelto, hayCoordenadas, taxisCerca,
   valorada, aviso, t, sugeridos, escribiendo, puedeDeshacer, segundosGracia,
-  buscadorDestino, buscadorOrigen, acciones,
+  buscadorDestino, buscadorOrigen, plegada = false, acciones,
 }: PropiedadesVistaCliente & { acciones: AccionesCliente }) {
   return (
-    <section className="hoja">
+    <section className={plegada ? 'hoja hoja-plegada' : 'hoja'} aria-hidden={plegada}>
       {aviso && <p className="aviso">{aviso}</p>}
 
       {fase === 'destino' && (
         <>
           <div className="cabecera">
             <h1>{t('destino.titulo')}</h1>
-            <div className="acciones-cabecera">
-              <button type="button" className="ajustes" aria-label={t('cabecera.tusNumeros')}
-                onClick={acciones.alAbrirEstadisticas}>▤</button>
-              <button type="button" className="ajustes" aria-label={t('cabecera.tusDatos')}
-                onClick={acciones.alAbrirAjustes}>⚙</button>
-            </div>
           </div>
 
           {/* Escribir es la barrera más alta de la aplicación. Con destino ya

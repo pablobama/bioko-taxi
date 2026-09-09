@@ -293,22 +293,30 @@ test('GPS: cada pasajero se cierra por su cuenta al bajarse, sin tocar a los dem
     [[primero, segundo]],
   );
 
-  // El coche circula: la posición del conductor se registra en AMBOS viajes,
-  // como hace el heartbeat de la app.
-  for (const viaje of viajes.rows) {
-    await enTransaccion(pool, (c) =>
-      registrarPosicion(c, viaje.id, 'conductor', 3.7600, 8.7900, t0));
-  }
-  // El primero se baja (lejos del coche); el segundo sigue dentro.
   // solicitud_id llega como cadena (bigint de PostgreSQL): comparar por texto.
   const viajePrimero = viajes.rows.find((v) => String(v.solicitud_id) === String(primero))!;
   const viajeSegundo = viajes.rows.find((v) => String(v.solicitud_id) === String(segundo))!;
-  await enTransaccion(pool, (c) =>
-    registrarPosicion(c, viajePrimero.id, 'cliente', 3.7650, 8.7900, t0));
-  await enTransaccion(pool, (c) =>
-    registrarPosicion(c, viajeSegundo.id, 'cliente', 3.76005, 8.79005, t0));
 
-  await procesarProximidad(pool, emisor, t0);
+  // Dos rondas de posiciones, separadas en el tiempo: desde la migración 050
+  // el cierre automático necesita que la separación AGUANTE, y no actúa en los
+  // primeros minutos del viaje. Lo que aquí se comprueba no es eso, sino que
+  // el cierre de uno no arrastra al otro.
+  for (const desfase of [200_000, 300_000]) {
+    const t = new Date(t0.getTime() + desfase);
+    // El coche circula: la posición del conductor se registra en AMBOS viajes,
+    // como hace el heartbeat de la app.
+    for (const viaje of viajes.rows) {
+      await enTransaccion(pool, (c) =>
+        registrarPosicion(c, viaje.id, 'conductor', 3.7600, 8.7900, t));
+    }
+    // El primero se baja (lejos del coche); el segundo sigue dentro.
+    await enTransaccion(pool, (c) =>
+      registrarPosicion(c, viajePrimero.id, 'cliente', 3.7650, 8.7900, t));
+    await enTransaccion(pool, (c) =>
+      registrarPosicion(c, viajeSegundo.id, 'cliente', 3.76005, 8.79005, t));
+    await procesarProximidad(pool, emisor, t);
+  }
+
   assert.equal(await estadoSolicitud(primero), 'COMPLETADO', 'el que se bajó se cierra solo');
   assert.equal(await estadoSolicitud(segundo), 'RECOGIDO', 'el que sigue dentro no se toca');
 });

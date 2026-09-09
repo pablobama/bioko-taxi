@@ -4,6 +4,22 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
 
 ## Abiertos
 
+- **[P50-01] El cierre automático tarda ahora hasta minuto y medio más.** La
+  migración 050 exige que la separación aguante `gps_separacion_sostenida_seg`
+  (90 s) antes de dar el viaje por terminado. Es el precio de no volver a
+  cerrar un viaje con el pasajero dentro, y se paga a gusto, pero conviene
+  mirar en producción cuántos cierres se retrasan y cuántos acaban
+  cerrándolos el taxista a mano antes de que salte el automático. Si resulta
+  que el botón siempre gana, el automático sobra y hay que decirlo.
+
+- **[P50-02] La pantalla nueva sin probar en un teléfono de verdad.** El plano
+  pasa a ocupar la pantalla entera, la hoja flota encima y los mandos van en
+  una columna a la izquierda. Está visto en la galería y en el navegador del
+  escritorio, no en un móvil en la calle: falta comprobar que la columna no
+  se pisa con el conmutador de papeles en pantallas estrechas, que el botón
+  de recoger la hoja se alcanza con el pulgar conduciendo, y que la hoja
+  recogida no deja al pasajero sin saber dónde estaba el botón de pedir.
+
 - **[P1-02] Polígonos de zona reales.** `zona.poligono` (GeoJSON) queda a NULL:
   el despacho del paso 5 solo necesita zona y adyacencia. Los polígonos son
   trabajo de campo y se cargarán con la herramienta de administración (paso 4).

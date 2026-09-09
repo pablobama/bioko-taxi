@@ -42,6 +42,8 @@ export interface PropiedadesVistaConductor {
   // Horas que lleva en servicio, cuando toca recordárselo. null casi siempre.
   avisoTurno?: number | null;
   ocupado?: boolean;
+  // Hoja recogida: el plano se ve entero. Lo manda el botón flotante.
+  plegada?: boolean;
   t: T;
   acciones: AccionesConductor;
 }
@@ -201,7 +203,8 @@ function BloquePasajero({
 }
 
 export default function VistaConductor({
-  conductor, estado, demanda, aviso, avisoTurno = null, ocupado = false, t, acciones,
+  conductor, estado, demanda, aviso, avisoTurno = null, ocupado = false,
+  plegada = false, t, acciones,
 }: PropiedadesVistaConductor) {
   const enServicio = estado !== null && estado.estado !== 'DESCONECTADO';
   const suscripcionVigente = estado?.suscripcionVigente ?? conductor.suscripcionVigente;
@@ -211,7 +214,7 @@ export default function VistaConductor({
   const puedeTrabajar = conductor.verificado && suscripcionVigente;
 
   return (
-    <section className="hoja">
+    <section className={plegada ? 'hoja hoja-plegada' : 'hoja'} aria-hidden={plegada}>
       {aviso && <p className="aviso">{aviso}</p>}
       {/* Migración 049: el turno ya no se cae solo, así que puede quedarse
           encendido toda la noche sin querer. Cada hora se le recuerda —con el
@@ -232,18 +235,6 @@ export default function VistaConductor({
             {conductor.marca ? ` · ${conductor.marca}` : ''}
             {conductor.carroceria === '4x4' ? ' · 4x4' : ''}
           </span>
-        </div>
-        <div className="acciones-cabecera">
-          {/* Agente de campo (migración 025): mismo panel de taxi, más las
-              herramientas del mapa. Solo aparece para quien lo es. */}
-          {conductor.agente && acciones.alAbrirCampo && (
-            <button type="button" className="ajustes" aria-label={t('campo.abrir')}
-              onClick={acciones.alAbrirCampo}>🗺</button>
-          )}
-          <button type="button" className="ajustes" aria-label={t('cabecera.tusNumeros')}
-            onClick={acciones.alAbrirEstadisticas}>▤</button>
-          <button type="button" className="ajustes" aria-label={t('cabecera.tusDatos')}
-            onClick={acciones.alAbrirAjustes}>⚙</button>
         </div>
       </div>
 

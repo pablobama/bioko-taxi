@@ -21,6 +21,7 @@ import { mensajeDeError } from './conexion';
 import IconoCategoria from './IconoCategoria';
 import { crearT, localeVoz, type Idioma } from './i18n';
 import { useLlamada, type SenalRecibida } from './llamada';
+import MandosFlotantes from './MandosFlotantes';
 import Mapa from './Mapa';
 import PanelLlamada from './PanelLlamada';
 import VistaCliente from './VistaCliente';
@@ -215,6 +216,8 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
   const [detalle, setDetalle] = useState<DetalleSolicitud | null>(null);
   const [aviso, setAviso] = useState('');
   const [coordenadas, setCoordenadas] = useState<{ lat: number; lng: number } | null>(null);
+  // Hoja recogida: el plano se ve entero. Lo manda el botón flotante.
+  const [panelPlegado, setPanelPlegado] = useState(false);
   const [gpsResuelto, setGpsResuelto] = useState(false);
   const [valorada, setValorada] = useState(false);
   // Destinos de un toque y si la persona ha pedido escribir en su lugar.
@@ -645,7 +648,21 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
       )}
 
       {fase !== 'estadisticas' && fase !== 'ajustes' && (
+        <MandosFlotantes
+          plegada={panelPlegado}
+          alAlternar={() => setPanelPlegado((p) => !p)}
+          etiquetaPlegar={t('cabecera.ocultarPanel')}
+          etiquetaDesplegar={t('cabecera.mostrarPanel')}
+          mandos={[
+            { icono: '▤', etiqueta: t('cabecera.tusNumeros'), alPulsar: () => setFase('estadisticas') },
+            { icono: '⚙', etiqueta: t('cabecera.tusDatos'), alPulsar: () => setFase('ajustes') },
+          ]}
+        />
+      )}
+
+      {fase !== 'estadisticas' && fase !== 'ajustes' && (
         <VistaCliente
+          plegada={panelPlegado}
           fase={fase}
           detalle={detalle}
           origen={origen}

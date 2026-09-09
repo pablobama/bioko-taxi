@@ -261,6 +261,8 @@ const es: Diccionario = {
   // Cabecera común
   'cabecera.tusNumeros': 'Tus números',
   'cabecera.tusDatos': 'Tus datos',
+  'cabecera.ocultarPanel': 'Ocultar el panel y ver el plano entero',
+  'cabecera.mostrarPanel': 'Mostrar el panel',
 
   // General
   'app.cargando': 'Cargando…',
@@ -551,6 +553,8 @@ const fr: Diccionario = {
 
   'cabecera.tusNumeros': 'Tes chiffres',
   'cabecera.tusDatos': 'Tes données',
+  'cabecera.ocultarPanel': 'Masquer le panneau et voir tout le plan',
+  'cabecera.mostrarPanel': 'Afficher le panneau',
 
   'app.cargando': 'Chargement…',
   'app.sinServidor': 'Impossible de contacter le serveur.',
@@ -833,6 +837,8 @@ const en: Diccionario = {
 
   'cabecera.tusNumeros': 'Your numbers',
   'cabecera.tusDatos': 'Your details',
+  'cabecera.ocultarPanel': 'Hide the panel and see the whole map',
+  'cabecera.mostrarPanel': 'Show the panel',
 
   'app.cargando': 'Loading…',
   'app.sinServidor': 'Could not reach the server.',
