@@ -1,6 +1,7 @@
 package gq.taxi.conductor
 
 import android.content.Context
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.net.HttpURLConnection
@@ -67,6 +68,15 @@ object Api {
         if (zonaId > 0) cuerpo.put("zonaId", zonaId)
         if (lat != null && lng != null) cuerpo.put("lat", lat).put("lng", lng)
         return peticion(contexto, "POST", "/api/conductor/heartbeat", cuerpo)
+    }
+
+    // El recorrido que se apuntó sin cobertura (migración 051). Va aparte del
+    // latido a propósito: el latido tiene que ser barato y salir cada treinta
+    // segundos, y esto es un lote que solo aparece cuando vuelve la red.
+    fun subirRastro(contexto: Context, puntos: List<JSONObject>): JSONObject {
+        val lista = JSONArray()
+        for (punto in puntos) lista.put(punto)
+        return peticion(contexto, "POST", "/api/conductor/rastro", JSONObject().put("puntos", lista))
     }
 
     fun estado(contexto: Context): JSONObject =

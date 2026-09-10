@@ -126,6 +126,17 @@ class ActividadPrincipal : Activity() {
             avisar("Elige tu zona antes de entrar en servicio.")
             return
         }
+        // Sin permiso de ubicación no hay reparto ni recorrido, y callarse eso
+        // sería lo peor: el taxista se pasaría el turno esperando carreras que
+        // no le pueden llegar. Se vuelve a pedir, y si dijo que no de verdad se
+        // le dice en una línea qué es lo que no va a funcionar.
+        if (!enServicio && checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
+            != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION), 1)
+            avisar("Sin la ubicación no se te pueden mandar carreras ni guardar tu recorrido.")
+            return
+        }
         val zonaId = if (zonas.isEmpty()) -1L else zonas[posicion.coerceIn(zonas.indices)].first
         val objetivo = !enServicio
         ejecutor.execute {

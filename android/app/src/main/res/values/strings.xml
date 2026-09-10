@@ -18,5 +18,11 @@
     <string name="ocupacion">Pasajeros: %1$d de %2$d plazas</string>
     <string name="canal_ofertas">Ofertas de carrera</string>
     <string name="canal_servicio">En servicio</string>
-    <string name="notificacion_en_servicio">En servicio — esperando carreras</string>
+    <!-- La notificación dice que se está grabando el recorrido. No es un
+         adorno: el taxista lleva el GPS encendido y su recorrido se guarda, y
+         tiene derecho a verlo escrito mientras pasa y no a enterarse después
+         (P42-01). Además es lo que exige Android para conceder ubicación con
+         la pantalla bloqueada: una notificación permanente que lo diga. -->
+    <string name="notificacion_en_servicio">En servicio — grabando tu recorrido</string>
+    <string name="notificacion_en_servicio_detalle">Se guarda mientras estés en servicio, también sin cobertura. Al salir de servicio se para.</string>
 </resources>

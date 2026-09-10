@@ -4,6 +4,33 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
 
 ## Abiertos
 
+- **[P52-01] La app nativa y la PWA son dos aplicaciones distintas del mismo
+  taxista.** La app Android tiene su propia pantalla en Kotlin —botones planos,
+  sin mapa, sin velocímetro, sin brújula— mientras que todo el trabajo reciente
+  de interfaz está en la PWA. El taxista que instale el APK para que se le
+  grabe el recorrido con el móvil en el bolsillo PIERDE el plano, la ruta y la
+  velocidad; el que use la PWA los tiene pero solo graba con la pantalla
+  encendida. Hay que elegir, y la salida buena es que la app sea un WebView de
+  la PWA con el servicio en primer plano nativo por debajo: una sola interfaz,
+  que además se actualiza al desplegar sin pasar por ninguna tienda. Lo que
+  hay que resolver antes es la identidad, que hoy es un UUID en el
+  almacenamiento del navegador y en el WebView sería otro distinto — el
+  registro por teléfono de la app ya da el camino, pero hay que unirlo.
+
+- **[P52-02] La app nativa no está probada en un teléfono.** Compila y el
+  razonamiento está escrito, pero nada de esto —el GPS con la pantalla
+  bloqueada, la cola en disco, la subida por lotes— se ha visto funcionar en un
+  Android de verdad. Es exactamente lo que hay que hacer antes de repartir
+  ningún APK: entrar en servicio, bloquear la pantalla, dar una vuelta a la
+  manzana con el móvil en el bolsillo y mirar el recorrido en el panel del
+  operador. Y repetirlo en modo avión para ver que sube al volver.
+
+- **[P52-03] iPhone sigue sin solución.** Todo esto es Android. En iOS solo una
+  app nativa firmada y repartida por la App Store puede pedir ubicación en
+  segundo plano, y eso son cuenta de desarrollador, un Mac para compilar y
+  revisión de Apple. Mientras tanto, un taxista con iPhone graba su recorrido
+  solo con la aplicación delante (P47-01).
+
 - **[P51-01] «Al volante» mide lo que se ve, no lo que pasó.** El tiempo en
   movimiento se calcula sobre los puntos del rastro, y el rastro tiene un
   punto cada 45 s como mucho. Un semáforo de 40 s cae dentro de un salto que

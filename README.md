@@ -16,20 +16,43 @@ servidor/    Backend Node.js + TypeScript (Fastify) y base de datos
   src/api/       API HTTP del cliente y arranque del servidor
   scripts/       BD de desarrollo, datos de prueba, gazetteer, simulador
 pwa/         PWA del pasajero (React + Vite + Leaflet, ~105 KB gzip)
-android/     App Android del conductor (Kotlin, sin AppCompat, solo FCM)
+android/     App Android del conductor (Kotlin, sin AppCompat): FCM y el
+             recorrido con la pantalla bloqueada, que es lo que la PWA no puede
 ```
 
 ## App del conductor (Android)
 
-Requisitos: JDK 17+, SDK de Android (platform 34) y Gradle 8.9. Para FCM hace
-falta un proyecto Firebase: consola de Firebase → añadir app Android con el
-paquete `gq.taxi.conductor` → descargar `google-services.json` a
-`android/app/`. Sin ese fichero el APK compila, pero FCM no funciona.
+Existe porque hay UNA cosa que una PWA no puede hacer y esta app sí: **grabar
+el recorrido con la pantalla bloqueada**. Al bloquear el teléfono, el navegador
+congela el JavaScript de la página y no queda nada que lea el GPS; ni siquiera
+el *service worker* tiene acceso a la ubicación, en ningún navegador. Aquí el
+servicio en primer plano mantiene el proceso vivo y Android le concede el GPS
+mientras dure la notificación permanente.
+
+Lo que hace mientras el taxista está en servicio:
+
+- Pide posiciones de verdad al sistema (no `getLastKnownLocation`, que no
+  enciende el chip y se queda congelada con la pantalla apagada).
+- Apunta el recorrido en el propio móvil, haya red o no, con la misma regla de
+  aclarado que el servidor (`ColaRastro`).
+- Lo sube en lotes cuando vuelve la cobertura (`POST /api/conductor/rastro`,
+  migración 051). Reenviar un lote no duplica nada.
+- Renueva la presencia con un latido cada 30 s.
+- Recibe las ofertas por FCM de prioridad alta.
+
+Al salir de servicio suelta el GPS: fuera del turno no se registra por dónde
+anda. La notificación lo dice mientras pasa, que es cuando hay que decirlo.
+
+Requisitos: JDK 17+ y el SDK de Android (platform 34). Gradle viene con el
+wrapper, no hace falta instalarlo. Para FCM hace falta un proyecto Firebase:
+consola de Firebase → añadir app Android con el paquete `gq.taxi.conductor` →
+descargar `google-services.json` a `android/app/`. Sin ese fichero el APK
+compila, pero FCM no funciona.
 
 ```
 cd android
-gradle assembleDebug          # APK de desarrollo en app/build/outputs/apk/debug
-gradle assembleRelease        # APK de reparto (requiere firma)
+./gradlew assembleDebug       # APK de desarrollo en app/build/outputs/apk/debug
+./gradlew assembleRelease     # APK de reparto (requiere firma)
 ```
 
 Firma para el reparto (APK directo ahora, Play Store después): genera un
