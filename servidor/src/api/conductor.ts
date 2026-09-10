@@ -21,7 +21,7 @@ import {
 } from '../dominio/monedero.js';
 import { estadoPorOcupacion, ocupacionDe, rutaDe } from '../dominio/ocupacion.js';
 import { registrarPosicion } from '../dominio/proximidad.js';
-import { registrarRastro } from '../dominio/rastro.js';
+import { registrarRastro, registrarRastroDiferido } from '../dominio/rastro.js';
 import { puntoDeRecogida } from '../dominio/recogida.js';
 import { recargasDe, solicitarRecarga } from '../dominio/recargas.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
@@ -321,6 +321,41 @@ export function registrarRutasConductor(
       }
       throw error;
     }
+  });
+
+  // El recorrido que el móvil apuntó por su cuenta mientras no había red
+  // (migración 051). Va aparte del latido a propósito: el latido tiene que ser
+  // barato y salir cada veinte segundos, y esto es un lote que solo aparece
+  // cuando vuelve la cobertura.
+  app.post('/api/conductor/rastro', async (req) => {
+    const sesion = await sesionDesde(req);
+    const cuerpo = (req.body ?? {}) as {
+      puntos?: Array<{ lat?: unknown; lng?: unknown; en?: unknown }>;
+    };
+    const crudos = Array.isArray(cuerpo.puntos) ? cuerpo.puntos : [];
+    const maximo = await leerParametroEntero(pool, 'rastro_lote_maximo');
+    if (crudos.length > maximo) {
+      throw errorHttp(413, `Como mucho ${maximo} puntos por envío.`);
+    }
+    const puntos = crudos
+      .map((p) => ({
+        lat: Number(p.lat),
+        lng: Number(p.lng),
+        en: new Date(String(p.en)),
+      }))
+      // Una fecha ilegible es `Invalid Date`, y su `getTime()` es NaN: sin
+      // esta comprobación se colaría hasta el INSERT y reventaría el lote
+      // entero por un punto malo.
+      .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng)
+        && !Number.isNaN(p.en.getTime()));
+
+    const resultado = await enTransaccion(pool, (cliente) =>
+      registrarRastroDiferido(cliente, sesion.conductorId, puntos));
+    // El móvil borra su cola con esto: se le confirma haber recibido TODOS los
+    // que mandó, guardados o descartados. Descartar no es fallar —un punto
+    // repetido o demasiado pegado al anterior está bien descartado— y dejarlos
+    // en la cola los haría reenviarse para siempre.
+    return { recibidos: puntos.length, ...resultado };
   });
 
   app.post('/api/conductor/heartbeat', async (req) => {

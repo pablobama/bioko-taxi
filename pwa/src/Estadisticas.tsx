@@ -95,6 +95,14 @@ export default function Estadisticas({
                       valor={duracion(datos.actividad[clave]?.segundosEnServicio ?? 0)}
                       etiqueta={t('stats.drv.enServicio')}
                     />
+                    {/* Y de ese turno, cuánto conduciendo (migración 051). Es
+                        la cifra que le dice si el día fue de trabajo o de
+                        esperar en la parada, que no es lo mismo aunque las
+                        horas de turno sean las mismas. */}
+                    <Dato
+                      valor={duracion(datos.actividad[clave]?.segundosEnMovimiento ?? 0)}
+                      etiqueta={t('stats.drv.alVolante')}
+                    />
                   </div>
                 </div>
               ))}

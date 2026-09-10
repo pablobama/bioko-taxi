@@ -4,6 +4,24 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
 
 ## Abiertos
 
+- **[P51-01] «Al volante» mide lo que se ve, no lo que pasó.** El tiempo en
+  movimiento se calcula sobre los puntos del rastro, y el rastro tiene un
+  punto cada 45 s como mucho. Un semáforo de 40 s cae dentro de un salto que
+  cuenta entero como conducción, y un tramo perdido por batería no cuenta
+  nada. Es una estimación buena para comparar días y turnos, que es para lo
+  que se puso, pero no vale para liquidar nada a nadie. Si algún día hiciera
+  falta esa precisión, el sitio es la velocidad del propio GPS
+  (`coords.speed`), que el móvil ya lee para el velocímetro y hoy se tira.
+
+- **[P51-02] Cambiar la hora del móvil corre el recorrido de sitio.** El envío
+  diferido acepta la hora que dice el teléfono, y solo comprueba dos cosas:
+  que caiga dentro de un turno que existió de verdad y que no sea del futuro
+  ni más vieja que la retención. Alguien que atrase su reloj puede colocar sus
+  puntos en otro momento DE SU PROPIO TURNO. No permite inventarse turnos ni
+  tocar los de otro, así que el daño posible es pequeño; arreglarlo del todo
+  pide que el móvil mande también su reloj y el desfase con el servidor, y no
+  parece que compense todavía.
+
 - **[P50-01] El cierre automático tarda ahora hasta minuto y medio más.** La
   migración 050 exige que la separación aguante `gps_separacion_sostenida_seg`
   (90 s) antes de dar el viaje por terminado. Es el precio de no volver a
@@ -347,6 +365,11 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   bastante mejor, pero tampoco es eterna. La única solución de verdad es una
   app nativa; mientras tanto conviene saberlo antes de sacar conclusiones de un
   recorrido con agujeros.
+  La migración 051 arregla la MITAD del problema: el móvil apunta el recorrido
+  por su cuenta y lo sube al volver la red, así que un agujero de cobertura ya
+  no es un agujero en el recorrido. Lo que sigue sin arreglo es el otro medio,
+  que es este: con la pantalla bloqueada no se ejecuta nada, así que no hay ni
+  siquiera lectura que apuntar.
 
 - **[P46-04] El mapa del pasajero se envía recortado y eso empeora el nombre
   del sitio.** `/api/mapa` tiene un tope de 800 referencias y el catálogo ya va

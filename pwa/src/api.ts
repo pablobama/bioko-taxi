@@ -410,6 +410,9 @@ export interface RecorridoOperador {
   // Tiempo en servicio del periodo. Sale del registro de estados y no del
   // rastro: el rastro tiene agujeros y le quitaría horas trabajadas.
   segundosEnServicio: number;
+  // De ese turno, cuánto con el coche andando (migración 051). Las dos cifras
+  // juntas son las que dicen si el turno fue de trabajo o de espera.
+  segundosEnMovimiento: number;
   // Kilómetros por hora de TURNO, no de conducción: incluye el rato parado
   // esperando. null si el turno es demasiado corto para que la media diga algo.
   velocidadMediaKmh: number | null;
@@ -607,6 +610,15 @@ export const api = {
     pedirJson<{ estado: string; saldoXaf: number; avisoTurnoHoras: number | null }>(
       '/api/conductor/heartbeat',
       { method: 'POST', body: JSON.stringify(coordenadas ?? {}) },
+    ),
+
+  // El recorrido apuntado sin cobertura (migración 051). Va aparte del latido:
+  // el latido tiene que ser barato y salir cada veinte segundos, y esto es un
+  // lote que solo aparece cuando vuelve la red.
+  subirRastro: (puntos: Array<{ lat: number; lng: number; en: string }>) =>
+    pedirJson<{ recibidos: number; guardados: number; descartados: number }>(
+      '/api/conductor/rastro',
+      { method: 'POST', body: JSON.stringify({ puntos }) },
     ),
 
   recargas: () =>

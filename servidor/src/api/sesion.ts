@@ -316,7 +316,9 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
       // del operador, para que los dos números digan lo mismo mirados desde
       // donde se miren.
       const ahora = new Date();
-      const actividad: Record<string, { metros: number; segundosEnServicio: number }> = {};
+      const actividad: Record<string, {
+        metros: number; segundosEnServicio: number; segundosEnMovimiento: number;
+      }> = {};
       for (const [clave, dias] of [['dia', 1], ['semana', 7], ['mes', 30]] as const) {
         actividad[clave] = await actividadDe(
           pool, fila.conductor_id, inicioDelDiaEnMalabo(dias, ahora), ahora,

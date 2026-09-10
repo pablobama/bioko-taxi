@@ -61,12 +61,18 @@ export async function registrarTransicion(
   estadoNuevo: string,
   actor: Actor,
   origenEvento: string | null,
+  // Cuándo pasó de verdad, si no es ahora (migración 051). Solo lo usa el
+  // turno que se da por abandonado doce horas después de la última señal: el
+  // turno terminó en la señal, y las estadísticas tienen que verlo así.
+  ocurrioEn: Date | null = null,
 ): Promise<void> {
   await cliente.query(
     `INSERT INTO transicion
-       (ambito, solicitud_id, conductor_id, estado_anterior, estado_nuevo, actor, origen_evento)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [ambito, solicitudId, conductorId, estadoAnterior, estadoNuevo, actor, origenEvento],
+       (ambito, solicitud_id, conductor_id, estado_anterior, estado_nuevo, actor,
+        origen_evento, ocurrio_en)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [ambito, solicitudId, conductorId, estadoAnterior, estadoNuevo, actor,
+     origenEvento, ocurrioEn],
   );
 }
 
@@ -177,6 +183,7 @@ export async function transicionarConductor(
   estadoDestino: string,
   actor: Actor,
   origenEvento?: string,
+  ocurrioEn: Date | null = null,
 ): Promise<ResultadoTransicion> {
   const fila = await cliente.query(
     'SELECT estado FROM presencia WHERE conductor_id = $1 FOR UPDATE',
@@ -194,7 +201,7 @@ export async function transicionarConductor(
   );
   await registrarTransicion(
     cliente, 'conductor', null, conductorId, estadoAnterior, estadoDestino,
-    actor, origenEvento ?? null,
+    actor, origenEvento ?? null, ocurrioEn,
   );
   return { estadoAnterior, estadoNuevo: estadoDestino };
 }

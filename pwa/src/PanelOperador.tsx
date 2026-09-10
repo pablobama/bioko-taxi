@@ -632,6 +632,7 @@ function RecorridoConductor({ id }: { id: number }) {
   const tramos = recorrido?.tramos ?? [];
   const km = ((recorrido?.metros ?? 0) / 1000).toFixed(1);
   const horas = duracion(recorrido?.segundosEnServicio ?? 0);
+  const alVolante = duracion(recorrido?.segundosEnMovimiento ?? 0);
 
   return (
     <section className="movimiento">
@@ -656,12 +657,17 @@ function RecorridoConductor({ id }: { id: number }) {
         </div>
       </header>
 
-      {/* Los tres números SIEMPRE ocupan su sitio, aunque estén cargando: si
+      {/* Los números SIEMPRE ocupan su sitio, aunque estén cargando: si
           aparecieran y desaparecieran, el mapa de abajo daría un salto en cada
           cambio de periodo y habría que volver a buscarlo con la vista. */}
       <div className="rejilla">
         <Dato valor={cargando ? '—' : `${km} km`} etiqueta="Recorridos" />
         <Dato valor={cargando ? '—' : horas} etiqueta="En servicio" />
+        {/* «En servicio» y «al volante» son cosas distintas y hacen falta las
+            dos: ocho horas de turno con una de volante es un día de espera, y
+            ocho con seis es un día de trabajo. Con una sola cifra no se
+            distinguen. */}
+        <Dato valor={cargando ? '—' : alVolante} etiqueta="Al volante" />
         <Dato
           valor={cargando || recorrido?.velocidadMediaKmh == null
             ? '—'

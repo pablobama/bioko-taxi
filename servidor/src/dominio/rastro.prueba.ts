@@ -7,7 +7,10 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import { crearPool, enTransaccion } from '../bd/conexion.js';
-import { actividadDe, purgarRastro, recorridoDe, registrarRastro } from './rastro.js';
+import {
+  actividadDe, purgarRastro, recorridoDe, registrarRastro, registrarRastroDiferido,
+} from './rastro.js';
+import { caducarPresencias } from './presencia.js';
 
 let pool: pg.Pool;
 
@@ -289,4 +292,134 @@ test('intensidad: sin repetir nada, no hay nada rojo que enseñar', async () => 
   await guardar(id, 600, 120);
   const r = await recorridoDe(pool, id, enSegundo(-100), enSegundo(5000));
   assert.equal(r.maxPasadas, 1, 'un recorrido hecho una vez no es «su ruta de siempre»');
+});
+
+
+// --- Kilómetros de verdad y tiempo de verdad (migración 051) ---------------
+
+test('el coche parado no suma kilómetros: entre dos anclajes solo hay temblor', async () => {
+  const id = await crearConductor();
+  // Ocho anclajes de un taxi esperando en la parada. Cada uno cae a quince
+  // metros del anterior, que es el temblor del chip, no un desplazamiento.
+  // Antes esto sumaba más de cien metros por hora de espera.
+  for (let i = 0; i < 8; i += 1) {
+    await guardar(id, i % 2 === 0 ? 0 : 15, i * 300);
+  }
+  const r = await recorridoDe(pool, id, enSegundo(-100), enSegundo(3000));
+  assert.ok(r.tramos.length > 0, 'los puntos están guardados, que es lo suyo');
+  assert.equal(r.metros, 0, 'y ni un metro de recorrido');
+  assert.equal(r.segundosEnMovimiento, 0, 'ni un segundo al volante');
+});
+
+test('un atasco sí cuenta: los avances pequeños se acumulan contra el ancla', async () => {
+  const id = await crearConductor();
+  // Avanza de veinte en veinte metros. Ninguno de esos saltos llega por sí
+  // solo al mínimo, pero el coche recorre 160 m de verdad y tienen que contar:
+  // un filtro que mirara solo el salto anterior le dejaría el atasco a cero.
+  for (let i = 0; i <= 8; i += 1) await guardar(id, i * 20, i * 60);
+
+  const r = await recorridoDe(pool, id, enSegundo(-100), enSegundo(3000));
+  assert.ok(r.metros >= 120 && r.metros <= 165, `esperaba ~160 m y salieron ${r.metros}`);
+});
+
+test('una fijación disparada no mete kilómetros de la nada', async () => {
+  const id = await crearConductor();
+  await guardar(id, 0, 0);
+  // Diez kilómetros en un minuto: 600 km/h. No hay coche que lo haga.
+  await guardar(id, 10_000, 60);
+  await guardar(id, 300, 120);
+
+  const r = await recorridoDe(pool, id, enSegundo(-100), enSegundo(3000));
+  assert.ok(r.metros < 1000, `la fijación no puede contar; salieron ${r.metros} m`);
+});
+
+test('el turno abandonado no regala las doce horas que tarda en cerrarse', async () => {
+  const id = await crearConductor();
+  await transicion(id, 'DESCONECTADO', 'DISPONIBLE', enSegundo(0));
+  // Última señal a las dos horas: ahí dejó de trabajar de verdad.
+  const ultimaSenal = enSegundo(7200);
+  await pool.query(
+    'UPDATE presencia SET ultimo_heartbeat = $2 WHERE conductor_id = $1',
+    [id, ultimaSenal],
+  );
+  // Y el sistema lo cierra doce horas más tarde, que es cuando se entera.
+  await enTransaccion(pool, (c) => caducarPresencias(c, enSegundo(7200 + 13 * 3600)));
+
+  const a = await actividadDe(pool, id, enSegundo(-100), enSegundo(7200 + 20 * 3600));
+  assert.equal(a.segundosEnServicio, 7200, 'las dos horas que trabajó, no las catorce');
+});
+
+// --- El recorrido que sube después, sin haber tenido red -------------------
+
+test('el recorrido sin cobertura se sube después y queda con SU hora', async () => {
+  const id = await crearConductor();
+  await transicion(id, 'DESCONECTADO', 'DISPONIBLE', enSegundo(0));
+  await transicion(id, 'DISPONIBLE', 'DESCONECTADO', enSegundo(3600));
+
+  // Lo que el móvil apuntó sin red durante el turno, subido al día siguiente.
+  const puntos = [0, 60, 120, 180].map((seg) => ({
+    ...aMetros(seg * 5), en: enSegundo(seg),
+  }));
+  const r = await enTransaccion(pool, (c) =>
+    registrarRastroDiferido(c, id, puntos, enSegundo(90_000)));
+  assert.equal(r.guardados, 4, 'los cuatro, aunque ya no esté en servicio');
+
+  const rec = await recorridoDe(pool, id, enSegundo(-100), enSegundo(3600));
+  assert.equal(rec.puntos, 4, 'y con la hora del móvil, dentro del turno de ayer');
+  assert.ok(rec.metros > 800, `esperaba ~900 m y salieron ${rec.metros}`);
+});
+
+test('subir el mismo lote dos veces no duplica el recorrido', async () => {
+  const id = await crearConductor();
+  await transicion(id, 'DESCONECTADO', 'DISPONIBLE', enSegundo(0));
+  const puntos = [0, 60, 120].map((seg) => ({ ...aMetros(seg * 5), en: enSegundo(seg) }));
+
+  const primera = await enTransaccion(pool, (c) =>
+    registrarRastroDiferido(c, id, puntos, enSegundo(9000)));
+  const segunda = await enTransaccion(pool, (c) =>
+    registrarRastroDiferido(c, id, puntos, enSegundo(9000)));
+
+  assert.equal(primera.guardados, 3);
+  assert.equal(segunda.guardados, 0, 'el reenvío no añade nada');
+  const rec = await recorridoDe(pool, id, enSegundo(-100), enSegundo(3600));
+  assert.equal(rec.puntos, 3);
+});
+
+test('lo que se apuntó fuera del turno no se sube: el móvil no decide eso', async () => {
+  const id = await crearConductor();
+  // Turno de la primera media hora y nada más.
+  await transicion(id, 'DESCONECTADO', 'DISPONIBLE', enSegundo(0));
+  await transicion(id, 'DISPONIBLE', 'DESCONECTADO', enSegundo(1800));
+
+  const r = await enTransaccion(pool, (c) => registrarRastroDiferido(c, id, [
+    { ...aMetros(0), en: enSegundo(60) },       // dentro
+    { ...aMetros(500), en: enSegundo(5000) },   // fuera: ya había salido
+    { ...aMetros(900), en: enSegundo(-5000) },  // fuera: antes de entrar
+  ], enSegundo(9000)));
+
+  assert.equal(r.guardados, 1, 'solo el del turno');
+});
+
+test('un lote demasiado apretado se aclara al recibirlo', async () => {
+  const id = await crearConductor();
+  await transicion(id, 'DESCONECTADO', 'DISPONIBLE', enSegundo(0));
+  // Un punto por segundo durante un minuto: un cliente modificado podría
+  // mandar esto y llenar la tabla que más crece de la base.
+  const puntos = Array.from({ length: 60 }, (_, i) => ({
+    ...aMetros(i * 50), en: enSegundo(i),
+  }));
+
+  const r = await enTransaccion(pool, (c) =>
+    registrarRastroDiferido(c, id, puntos, enSegundo(9000)));
+  assert.ok(r.guardados <= 3, `con 45 s de intervalo caben dos o tres, no ${r.guardados}`);
+});
+
+test('una hora del futuro no se guarda: el reloj del móvil no es la verdad', async () => {
+  const id = await crearConductor();
+  await transicion(id, 'DESCONECTADO', 'DISPONIBLE', enSegundo(0));
+
+  const r = await enTransaccion(pool, (c) => registrarRastroDiferido(c, id, [
+    { ...aMetros(0), en: enSegundo(100_000) },
+  ], enSegundo(1000)));
+  assert.equal(r.guardados, 0);
 });

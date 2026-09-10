@@ -20,6 +20,7 @@ import Mapa from './Mapa';
 import PanelLlamada from './PanelLlamada';
 import Recarga from './Recarga';
 import MandosFlotantes from './MandosFlotantes';
+import { anotarRastro, olvidarRastro, pendientesRastro } from './rastroLocal';
 import VistaConductor from './VistaConductor';
 import { prepararSonido, sonarCarreraCancelada, sonarNuevaCarrera } from './sonidos';
 
@@ -273,9 +274,38 @@ export default function PanelConductor({
   // vez: estaban repetidas en tres sitios, y tres copias de la misma regla es
   // como se separan con el tiempo.
   const enServicio = estado !== null && estado.estado !== 'DESCONECTADO';
+  // En un ref además de en una variable: el vigilante del GPS se monta una vez
+  // y lee esto desde dentro. Si dependiera del estado habría que rehacerlo en
+  // cada cambio, y rehacer un `watchPosition` cuesta una fijación nueva.
+  const enServicioRef = useRef(enServicio);
+  enServicioRef.current = enServicio;
   const parado = enServicio
     && (estado?.ofertas.length ?? 0) === 0
     && (estado?.pasajeros.length ?? 0) === 0;
+
+  // Vacía la cola de recorrido que se apuntó sin red (migración 051).
+  //
+  // Se llama después de un latido que ha salido bien, que es la señal más
+  // barata y más fiable de que hay cobertura: si el latido llegó, la red está.
+  //
+  // De cien en cien y en varias vueltas: un apagón de cobertura de una tarde
+  // deja unos cientos de puntos, y mandarlos todos de golpe por una red de
+  // Malabo es lo que hace que se caiga la petición y no se suba nada. Se borra
+  // cada lote SOLO cuando el servidor confirma haberlo recibido; si la
+  // respuesta se pierde, el lote se reenvía y el servidor lo descarta por
+  // repetido, que para eso está el índice único.
+  const vaciarRastroPendiente = async () => {
+    for (let vuelta = 0; vuelta < 5; vuelta += 1) {
+      const pendientes = await pendientesRastro(100);
+      if (pendientes.length === 0) return;
+      await api.subirRastro(
+        pendientes.map((p) => ({ lat: p.lat, lng: p.lng, en: p.en })),
+      );
+      await olvidarRastro(pendientes.map((p) => p.id!).filter((id) => id !== undefined));
+      // Si venía menos de un lote lleno, ya no queda nada.
+      if (pendientes.length < 100) return;
+    }
+  };
 
   // Heartbeat y refresco mientras está en servicio. 20 s en primer plano: la
   // ventana del servidor son 120 s, así que sobra margen.
@@ -302,8 +332,12 @@ export default function PanelConductor({
           if (respuesta.avisoTurnoHoras !== null) {
             setAvisoTurno(respuesta.avisoTurnoHoras);
           }
+          // El latido ha salido: hay red. Es el momento de vaciar lo que se
+          // apuntó mientras no la había.
+          await vaciarRastroPendiente();
         } catch {
-          // Sin red: el siguiente latido reintenta.
+          // Sin red: el siguiente latido reintenta, y el recorrido se sigue
+          // apuntando en el móvil mientras tanto.
         }
       }
       void refrescar();
@@ -367,6 +401,10 @@ export default function PanelConductor({
         moverCoche(nueva);
         anotarRumbo(nueva, p.coords.heading, p.coords.speed);
         anotarVelocidad(nueva, p.coords.speed, p.timestamp);
+        // Y el recorrido se apunta en el propio móvil, haya red o no
+        // (migración 051). Solo en servicio: fuera del turno no se registra
+        // por dónde anda, ni aquí ni en el servidor.
+        if (enServicioRef.current) void anotarRastro(nueva);
       },
       () => undefined,
       { enableHighAccuracy: true, maximumAge: 5000 },

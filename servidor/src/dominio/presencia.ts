@@ -124,14 +124,20 @@ export async function caducarPresencias(
 ): Promise<number> {
   const horas = await leerParametroEntero(cliente, 'abandono_servicio_horas');
   const vencidos = await cliente.query(
-    `SELECT conductor_id FROM presencia
+    `SELECT conductor_id, ultimo_heartbeat FROM presencia
      WHERE estado = 'DISPONIBLE'
        AND (ultimo_heartbeat IS NULL OR ultimo_heartbeat < $1::timestamptz - make_interval(hours => $2))
      FOR UPDATE`,
     [ahora, horas],
   );
   for (const fila of vencidos.rows) {
-    await transicionarConductor(cliente, fila.conductor_id, 'DESCONECTADO', 'sistema', 'turno_abandonado');
+    // El turno no terminó ahora: terminó en la última señal de vida, doce
+    // horas atrás. Se apunta ahí (migración 051) para que las estadísticas no
+    // le regalen media noche de servicio a quien cerró el móvil al anochecer.
+    await transicionarConductor(
+      cliente, fila.conductor_id, 'DESCONECTADO', 'sistema', 'turno_abandonado',
+      fila.ultimo_heartbeat === null ? null : new Date(fila.ultimo_heartbeat),
+    );
   }
   if (vencidos.rowCount !== 0) {
     await cliente.query(
