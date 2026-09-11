@@ -47,6 +47,11 @@ export interface PropiedadesMapa {
   puntos: PuntoMapa[];
   origen?: Marca | null;
   destino?: Marca | null;
+  // Si `origen` es la posición EN VIVO del pasajero y no el punto donde pidió
+  // el taxi (P46-01). Cambia cómo se pinta: un punto que se está moviendo
+  // ahora mismo tiene que verse distinto de una chincheta clavada hace diez
+  // minutos, o el taxista no sabe a cuál de los dos hacer caso.
+  origenEnVivo?: boolean;
   taxi?: { lat: number; lng: number } | null;
   buscando?: boolean;
   encuadre?: Encuadre;
@@ -113,6 +118,7 @@ const PRIORIDAD: Record<string, number> = {
 
 export default function Mapa({
   puntos, origen, destino, taxi, buscando, encuadre = 'persona', paradas, recorrido,
+  origenEnVivo = false,
   maxPasadas = 1, rumbo = null, rumboCoche = null, yo = null,
 }: PropiedadesMapa) {
   const contenedor = useRef<HTMLDivElement>(null);
@@ -674,7 +680,9 @@ export default function Mapa({
             const xy = pantalla(origen.lat, origen.lng);
             return (
               <g transform={`translate(${xy[0].toFixed(1)},${xy[1].toFixed(1)})`}>
-                {buscando && <circle r={26} fill="#ffb020" className="pulso-origen" />}
+                {(buscando || origenEnVivo) && (
+                  <circle r={26} fill="#ffb020" className="pulso-origen" />
+                )}
                 <circle r={9} fill="#0a0a0b" />
                 <circle r={6.5} fill="#ffb020" />
                 <circle r={12} fill="none" stroke="#ffb020" strokeWidth={1.5} opacity={0.5} />
@@ -707,12 +715,14 @@ export default function Mapa({
                     perspectiva acorta el morro; copiarlo alargado lo haría
                     parecer otro dibujo distinto. */}
                 <g transform={`rotate(${(rumboTaxi() + 90).toFixed(1)})`}>
-                  {/* El estrechón va DENTRO del giro, en los ejes del propio
-                      coche: lo hace más largo que ancho, como en la foto —ahí
-                      la proporción es 0,57 de ancho por 1 de largo y dibujado
-                      a ojo salía en 0,66, un coche demasiado rechoncho—, y al
-                      girar con él no lo deforma en ningún rumbo. */}
-                  <g transform="scale(1.6) scale(0.87,1)">
+                  {/* Sin estrechar. Lo llevó un tiempo y estaba MAL: medí la
+                      proporción a ojo sobre dos imágenes a distinta escala y
+                      me salió que la foto era 0,57 de ancho por 1 de largo.
+                      Medida sobre los píxeles, la carrocería de la foto son 70
+                      de ancho por 89 de largo: 0,79, que es exactamente lo que
+                      ya tenía el dibujo (20 por 26 = 0,77). El estrechón del
+                      13 % era lo que lo volvía ovalado. */}
+                  <g transform="scale(1.5)">
                     <defs>
                       {/* La luz cruzada: clara en el centro del capó, apagada
                           en los dos costados. Va A LO ANCHO y dentro del giro,
@@ -720,16 +730,16 @@ export default function Mapa({
                           igual en cualquier rumbo. */}
                       <linearGradient id="coche-chapa" x1="-10" y1="0" x2="10" y2="0"
                         gradientUnits="userSpaceOnUse">
-                        <stop offset="0" stopColor="#a7adba" />
-                        <stop offset="0.18" stopColor="#e4e7ec" />
-                        <stop offset="0.44" stopColor="#f6f7f9" />
-                        <stop offset="0.78" stopColor="#dcdfe6" />
-                        <stop offset="1" stopColor="#9ba2b1" />
+                        <stop offset="0" stopColor="#aeb4c0" />
+                        <stop offset="0.2" stopColor="#dfe3e9" />
+                        <stop offset="0.46" stopColor="#eef1f5" />
+                        <stop offset="0.78" stopColor="#d5d9e1" />
+                        <stop offset="1" stopColor="#9aa1b0" />
                       </linearGradient>
                       {/* La luneta: más clara arriba, donde se refleja el
                           cielo, y más oscura abajo. Es lo que más dice que
                           esto es un cristal y no una pegatina azul. */}
-                      <linearGradient id="coche-luneta" x1="0" y1="-3.4" x2="0" y2="2.3"
+                      <linearGradient id="coche-luneta" x1="0" y1="-3" x2="0" y2="3"
                         gradientUnits="userSpaceOnUse">
                         <stop offset="0" stopColor="#7ba2ce" />
                         <stop offset="0.45" stopColor="#5885b8" />
@@ -740,19 +750,19 @@ export default function Mapa({
                     {/* Sombra: ancha y suelta debajo, y otra pegada y corrida
                         hacia atrás. Sin ellas el coche se pega al plano y
                         pierde la altura que le da todo lo demás. */}
-                    <ellipse cy={2} rx={11.2} ry={13.6} fill="#08080a" opacity={0.13} />
-                    <path d={CARROCERIA} fill="#08080a" opacity={0.3}
-                      transform="translate(0,2.1) scale(1.02)" />
+                    <ellipse cy={2.2} rx={11.6} ry={14} fill="#08080a" opacity={0.1} />
+                    <path d={CARROCERIA} fill="#08080a" opacity={0.26}
+                      transform="translate(0,1.9) scale(1.03)" />
 
                     {/* Ruedas y espejos, por debajo de la carrocería: solo
                         asoman por los costados, como en la foto. */}
-                    <rect x={-10.3} y={-7.4} width={1.8} height={4.2} rx={0.8} fill="#1b2133" />
-                    <rect x={8.5} y={-7.4} width={1.8} height={4.2} rx={0.8} fill="#1b2133" />
-                    <rect x={-9.9} y={3.4} width={1.8} height={4.6} rx={0.8} fill="#1b2133" />
-                    <rect x={8.1} y={3.4} width={1.8} height={4.6} rx={0.8} fill="#1b2133" />
-                    <path d="M-8.3 -8.6 Q-10.3 -8.7 -10.2 -7.5 Q-9.4 -6.9 -8.3 -7.1 Z"
+                    <rect x={-10.5} y={-6.8} width={1.7} height={4} rx={0.8} fill="#1b2133" />
+                    <rect x={8.8} y={-6.8} width={1.7} height={4} rx={0.8} fill="#1b2133" />
+                    <rect x={-10.5} y={3.6} width={1.7} height={4.4} rx={0.8} fill="#1b2133" />
+                    <rect x={8.8} y={3.6} width={1.7} height={4.4} rx={0.8} fill="#1b2133" />
+                    <path d="M-7.9 -8.4 Q-9.7 -8.5 -9.6 -7.2 Q-8.8 -6.6 -7.9 -6.7 Z"
                       fill="#232a3d" />
-                    <path d="M8.3 -8.6 Q10.3 -8.7 10.2 -7.5 Q9.4 -6.9 8.3 -7.1 Z"
+                    <path d="M7.9 -8.4 Q9.7 -8.5 9.6 -7.2 Q8.8 -6.6 7.9 -6.7 Z"
                       fill="#232a3d" />
 
                     {/* Carrocería. Más estrecha por delante que por el centro:
@@ -762,39 +772,39 @@ export default function Mapa({
                     {/* El montante y el techo: la U azulada que en la foto
                         rodea el cristal por los lados y por delante. Es el
                         rasgo que hace que se reconozca al instante. */}
-                    <path d="M-6.1 2.2 L-6.1 -5.9 Q-6.1 -7.8 -4.2 -7.8 L4.2 -7.8
-                             Q6.1 -7.8 6.1 -5.9 L6.1 2.2"
-                      fill="none" stroke="#5f7fa4" strokeWidth={1.6}
+                    <path d="M-6.75 3 L-6.75 -7 Q-6.75 -9 -4.75 -9 L4.75 -9
+                             Q6.75 -9 6.75 -7 L6.75 3"
+                      fill="none" stroke="#6b88a6" strokeWidth={1.3}
                       strokeLinecap="round" opacity={0.92} />
                     {/* Techo: la chapa clara entre el montante y la luneta. */}
-                    <path d="M-5.3 -3.2 L-5.3 -6 Q-5.3 -7.1 -4.2 -7.1 L4.2 -7.1
-                             Q5.3 -7.1 5.3 -6 L5.3 -3.2 Z"
-                      fill="#f4f6f9" />
+                    <path d="M-6 -3 L-6 -7 Q-6 -8.2 -4.8 -8.2 L4.8 -8.2
+                             Q6 -8.2 6 -7 L6 -3 Z"
+                      fill="#eceff4" />
                     {/* Luneta trasera. Las esquinas de abajo, muy redondeadas:
                         es lo que la separa de una pegatina rectangular. */}
-                    <path d="M-5.2 -3.4 L5.2 -3.4 L5.2 0.6 Q5.2 2.3 3.5 2.3
-                             L-3.5 2.3 Q-5.2 2.3 -5.2 0.6 Z"
+                    <path d="M-5 -3 L5 -3 L5 1 Q5 3 3.2 3
+                             L-3.2 3 Q-5 3 -5 1 Z"
                       fill="url(#coche-luneta)" />
                     {/* Maletero: dos pliegues que bajan abriéndose desde las
                         esquinas de la luneta. Sin ellos, de la luneta al
                         paragolpes hay un vacío blanco que no dice nada. */}
-                    <path d="M-4.8 3.1 L-6.2 7.2 M4.6 3.1 L6 7.2"
+                    <path d="M-5.2 3.8 L-6.8 7.4 M5.2 3.8 L6.8 7.4"
                       stroke="#c3c8d2" strokeWidth={0.5} strokeLinecap="round" fill="none" />
-                    <path d="M-6.4 7.7 L6.4 7.7" stroke="#c3c8d2" strokeWidth={0.5}
+                    <path d="M-7 7.8 L7 7.8" stroke="#c3c8d2" strokeWidth={0.5}
                       strokeLinecap="round" />
                     {/* El brillo del canto del techo, que remata el volumen. */}
-                    <path d="M-4.4 -11.5 Q0 -12.2 4.4 -11.5" fill="none"
+                    <path d="M-5 -11.6 Q0 -12.4 5 -11.6" fill="none"
                       stroke="#ffffff" strokeWidth={0.9} strokeLinecap="round" opacity={0.7} />
 
                     {/* Pilotos: dos barras rojas verticales en las esquinas de
                         atrás. En la foto son lo más saturado de todo el
                         dibujo, y son también lo que dice de un vistazo cuál es
                         la parte de atrás. */}
-                    <rect x={-6.7} y={8} width={2.1} height={4} rx={1} fill="#d9202b" />
-                    <rect x={4.6} y={8} width={2.1} height={4} rx={1} fill="#d9202b" />
+                    <rect x={-7.4} y={8.1} width={1.8} height={4.3} rx={0.9} fill="#d9202b" />
+                    <rect x={5.6} y={8.1} width={1.8} height={4.3} rx={0.9} fill="#d9202b" />
                     {/* La sombra bajo el paragolpes: cierra el coche por abajo
                         y lo levanta del suelo. */}
-                    <path d="M-6.2 12.1 L6.2 12.1 Q6 13.1 5 13.1 L-5 13.1 Q-6 13.1 -6.2 12.1 Z"
+                    <path d="M-6.6 12.3 L6.6 12.3 Q6.4 13.1 5.4 13.1 L-5.4 13.1 Q-6.4 13.1 -6.6 12.3 Z"
                       fill="#1b2133" opacity={0.85} />
                   </g>
                 </g>
@@ -855,9 +865,16 @@ export default function Mapa({
 // La silueta del coche, apuntando arriba (−Y). Sirve dos veces: para la chapa
 // y para su propia sombra, un poco más grande y corrida hacia atrás. Escrita
 // una sola vez porque en cuanto fueran dos se separarían al primer retoque.
-const CARROCERIA = 'M0 -13 C3 -13 5.9 -12.2 7.4 -10.2 C9.2 -7.9 10 -5 10 -1.4 '
-  + 'C10 2.6 9.4 7.6 8.4 10.4 C7.9 12.1 7 13 5.4 13 L-5.4 13 C-7 13 -7.9 12.1 -8.4 10.4 '
-  + 'C-9.4 7.6 -10 2.6 -10 -1.4 C-10 -5 -9.2 -7.9 -7.4 -10.2 C-5.9 -12.2 -3 -13 0 -13 Z';
+//
+// Los costados van RECTOS en los dos tercios centrales y el estrechón está
+// solo en la cola. Se midió sobre la foto: en el coche del navegador el ancho
+// es el mismo de la fila 1528 a la 1588 y solo cae en las quince últimas. Con
+// curvas de lado a lado —que es como estaba— el coche salía ovalado y en
+// pantalla se leía como un ratón de ordenador, no como un coche.
+const CARROCERIA = 'M0 -13 C3.6 -13 6.9 -12.1 8.4 -10.2 C9.5 -8.8 10 -7.2 10 -5.6 '
+  + 'L10 5.2 C10 7.6 9.7 9.8 9.1 11.3 C8.6 12.6 7.6 13 6.2 13 L-6.2 13 '
+  + 'C-7.6 13 -8.6 12.6 -9.1 11.3 C-9.7 9.8 -10 7.6 -10 5.2 L-10 -5.6 '
+  + 'C-10 -7.2 -9.5 -8.8 -8.4 -10.2 C-6.9 -12.1 -3.6 -13 0 -13 Z';
 
 // Color de una parte del recorrido según cuántas veces pasó el taxi por ahí:
 // de azul lo que hizo una sola vez a rojo lo que más repite.

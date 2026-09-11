@@ -506,10 +506,23 @@ export default function PanelConductor({
   //   - En servicio y sin nadie: su propio barrio, esperando.
   const primerPendiente = pasajeros.find((p) => p.estado !== 'RECOGIDO');
   const primerABordo = pasajeros.find((p) => p.estado === 'RECOGIDO');
+  // Dónde está el pasajero AHORA, si su móvil lo está diciendo (P46-01).
+  //
+  // El punto de la solicitud es de cuando pidió el taxi: puede llevar diez
+  // minutos esperando, y en ese rato la gente se mueve —cruza la calle, se
+  // mete a la sombra, sale del portal—. La posición en vivo llegaba al taxista
+  // desde la migración 046 y no la usaba nadie: se pintaba el pin donde pidió
+  // y punto.
+  //
+  // Manda la de ahora solo si está FRESCA. Una posición de hace cinco minutos
+  // no es mejor que el punto de la solicitud, es peor: mueve el pin sin motivo
+  // y el taxista deja de fiarse de él.
+  const enVivo = primerPendiente?.posicionCliente ?? null;
+  const recogidaEnVivo = enVivo !== null && enVivo.frescuraSeg <= 90 ? enVivo : null;
   const siguienteParada = primerPendiente
     ? {
-      lat: primerPendiente.origenLat,
-      lng: primerPendiente.origenLng,
+      lat: recogidaEnVivo?.lat ?? primerPendiente.origenLat,
+      lng: recogidaEnVivo?.lng ?? primerPendiente.origenLng,
       nombre: primerPendiente.origen,
     }
     : primerABordo
@@ -537,6 +550,7 @@ export default function PanelConductor({
           encuadre={siguienteParada ? 'recogida' : 'persona'}
           rumbo={rumbo}
           rumboCoche={rumboCoche}
+          origenEnVivo={recogidaEnVivo !== null}
         />
         {/* Velocidad en vivo, abajo a la izquierda como en cualquier
             navegador. Solo en servicio: fuera del turno ni se mide ni se

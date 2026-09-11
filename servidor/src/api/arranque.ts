@@ -13,6 +13,7 @@ import { avanzarDespachos, iniciarDespacho } from '../dominio/despacho.js';
 import { ErrorSaldoInsuficiente } from '../dominio/errores.js';
 import { renovarSuscripcion } from '../dominio/monedero.js';
 import { caducarPresencias } from '../dominio/presencia.js';
+import { caducarViajesColgados } from '../dominio/caducidad.js';
 import { procesarProximidad } from '../dominio/proximidad.js';
 import { purgarRastro } from '../dominio/rastro.js';
 import { AdaptadorFcm } from '../eventos/adaptador-fcm.js';
@@ -185,6 +186,10 @@ async function principal(): Promise<void> {
         await avanzarDespachos(pool, emisor);
         await procesarProximidad(pool, emisor);
         await enTransaccion(pool, (c) => caducarPresencias(c));
+        // Viajes que nadie cerró (migración 052). Va aquí y no en su propio
+        // reloj porque es barato: la consulta no devuelve nada casi nunca, y
+        // cuando devuelve algo son una o dos filas.
+        await caducarViajesColgados(pool, emisor);
         await rescatarSolicitadas(pool, emisor);
         await renovarSuscripcionesCaducadas(pool, emisor);
       } catch (error) {

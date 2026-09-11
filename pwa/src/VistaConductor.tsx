@@ -102,6 +102,15 @@ function BloquePasajero({
               <small> · {t('recogida.aMetros', { m: pasajero.metrosDeLaReferencia })}</small>
             )}
             {!pasajero.recogidaEnGps && <small> · {t('recogida.aproximada')}</small>}
+            {/* Y si además su móvil está mandando la posición AHORA MISMO, se
+                dice: el pin no es donde pidió el taxi hace diez minutos, es
+                donde está. Sin decirlo, el taxista no sabe a cuál de los dos
+                puntos hacer caso cuando llega y no ve a nadie. */}
+            {pasajero.posicionCliente !== null
+              && pasajero.posicionCliente.frescuraSeg <= 90
+              && pasajero.estado !== 'RECOGIDO' && (
+              <small className="recogida-viva"> · {t('recogida.enVivo')}</small>
+            )}
           </span>
           <span className="ruta-hasta">{pasajero.destino}</span>
         </div>

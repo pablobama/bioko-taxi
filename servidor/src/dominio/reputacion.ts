@@ -71,18 +71,38 @@ export interface Estimacion {
 }
 
 // Tiempo estimado hasta un punto. SIN motor de rutas: línea recta corregida
-// por un factor de desvío (las calles no son rectas) y una velocidad urbana
-// media. Es una aproximación y así se presenta al usuario.
+// por un factor de desvío (las calles no son rectas) y una velocidad. Es una
+// aproximación y así se presenta al usuario, con un «unos» delante.
+//
+// La velocidad no es una sola (migración 052). Antes todo iba a la urbana, 18
+// por hora, que es lo que se anda en Malabo entre semáforos, baches y gente
+// cruzando. Aplicado a Malabo–Luba daba 142 minutos para un trayecto de unos
+// cuarenta, y ese número lo vio un pasajero que estaba compartiendo su viaje.
+//
+// Se parte en dos tramos y no se interpola: los primeros kilómetros a
+// velocidad de ciudad —salir de Malabo cuesta lo que cuesta, se vaya donde se
+// vaya— y el resto a velocidad de carretera. Un trayecto corto dentro del
+// casco queda exactamente igual que antes, que es lo que se quería: esa parte
+// estaba bien calibrada y es la que se usa cien veces al día.
 export async function estimarLlegada(
   cliente: pg.ClientBase | pg.Pool,
   desde: { lat: number; lng: number },
   hasta: { lat: number; lng: number },
 ): Promise<Estimacion> {
-  const velocidadKmh = await leerParametroEntero(cliente, 'velocidad_urbana_kmh');
+  const urbanaKmh = await leerParametroEntero(cliente, 'velocidad_urbana_kmh');
+  const interurbanaKmh = await leerParametroEntero(cliente, 'velocidad_interurbana_kmh');
+  const tramoUrbanoKm = await leerParametroEntero(cliente, 'eta_tramo_urbano_km');
   const factorDecimas = await leerParametroEntero(cliente, 'eta_factor_desvio');
 
   const rectaM = distanciaMetros(desde.lat, desde.lng, hasta.lat, hasta.lng);
-  const recorridoM = rectaM * (factorDecimas / 10);
-  const minutos = Math.max(1, Math.round((recorridoM / 1000) / velocidadKmh * 60));
-  return { distanciaM: Math.round(recorridoM), minutos };
+  const recorridoKm = (rectaM * (factorDecimas / 10)) / 1000;
+
+  const enCiudadKm = Math.min(recorridoKm, tramoUrbanoKm);
+  const enCarreteraKm = Math.max(0, recorridoKm - tramoUrbanoKm);
+  const horas = enCiudadKm / urbanaKmh + enCarreteraKm / interurbanaKmh;
+
+  return {
+    distanciaM: Math.round(recorridoKm * 1000),
+    minutos: Math.max(1, Math.round(horas * 60)),
+  };
 }

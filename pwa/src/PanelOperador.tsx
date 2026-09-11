@@ -614,6 +614,7 @@ const PERIODOS: Array<[PeriodoRecorrido, string]> = [
 
 function RecorridoConductor({ id }: { id: number }) {
   const [periodo, setPeriodo] = useState<PeriodoRecorrido>('dia');
+  const [pantallaCompleta, setPantallaCompleta] = useState(false);
   const [recorrido, setRecorrido] = useState<RecorridoOperador | null>(null);
   const [error, setError] = useState('');
   const [cargando, setCargando] = useState(true);
@@ -628,6 +629,18 @@ function RecorridoConductor({ id }: { id: number }) {
       .finally(() => { if (vivo) setCargando(false); });
     return () => { vivo = false; };
   }, [id, periodo]);
+
+  // Con el plano abierto a pantalla completa, la tecla de escape lo cierra: es
+  // lo que hace todo el mundo con algo que ocupa la pantalla entera, y sin eso
+  // hay que buscar una aspa con el pulgar.
+  useEffect(() => {
+    if (!pantallaCompleta) return;
+    const alTeclear = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPantallaCompleta(false);
+    };
+    window.addEventListener('keydown', alTeclear);
+    return () => window.removeEventListener('keydown', alTeclear);
+  }, [pantallaCompleta]);
 
   const tramos = recorrido?.tramos ?? [];
   const km = ((recorrido?.metros ?? 0) / 1000).toFixed(1);
@@ -685,11 +698,23 @@ function RecorridoConductor({ id }: { id: number }) {
       )}
 
       {tramos.length > 0 && (
-        <div className="mapa-recorrido">
+        <div className={pantallaCompleta ? 'mapa-recorrido a-pantalla' : 'mapa-recorrido'}>
           <Mapa
             puntos={[]} encuadre="recorrido" recorrido={tramos}
             maxPasadas={recorrido?.maxPasadas ?? 1}
           />
+          {/* Trescientos píxeles de alto bastan para saber si anduvo por el
+              centro o por Semu, y no bastan para nada más: un mes de recorrido
+              son cientos de calles superpuestas. Esto lo abre a la pantalla
+              entera, donde sí se distingue una calle de la de al lado. */}
+          <button
+            type="button"
+            className="mapa-ampliar"
+            onClick={() => setPantallaCompleta((abierto) => !abierto)}
+            aria-label={pantallaCompleta ? 'Cerrar el plano' : 'Ver el plano a pantalla completa'}
+          >
+            {pantallaCompleta ? '✕' : '⤢'}
+          </button>
           {/* La leyenda va ENCIMA del plano y en pequeño, no en tres párrafos
               debajo: ahí competía con los números y empujaba el mapa fuera de
               la pantalla en un móvil. */}

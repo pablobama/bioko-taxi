@@ -4,6 +4,15 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
 
 ## Abiertos
 
+- **[P52-05] El tiempo de llegada sigue sin motor de rutas.** La migración 052
+  lo parte en tramo urbano y tramo de carretera, que arregla el disparate de
+  Malabo–Luba (142 minutos para un trayecto de unos cuarenta), pero sigue
+  siendo una línea recta por un factor. No sabe de la carretera de Luba ni del
+  desvío de Riaba, así que un trayecto que rodee mucho se quedará corto. Con
+  las carreteras de Bioko ya compiladas en el plano (`mapa-malabo.json`), el
+  camino natural es calcular la ruta de verdad con el mismo grafo que ya usa la
+  PWA para dibujarla, y medir sobre ella.
+
 - **[P52-01] La app nativa y la PWA son dos aplicaciones distintas del mismo
   taxista.** La app Android tiene su propia pantalla en Kotlin —botones planos,
   sin mapa, sin velocímetro, sin brújula— mientras que todo el trabajo reciente
@@ -408,13 +417,14 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   lee el taxista sí. Se arregla mandando también los cercanos al GPS, no solo
   los más usados.
 
-- **[P46-01] La posición en vivo del pasajero que espera sigue sin usarse.**
-  `/api/conductor/estado` manda `posicionCliente` —dónde está de verdad quien
-  espera, refrescado mientras su pantalla esté encendida— y la app del taxista
-  no la lee. El punto de recogida ya es correcto al pedir el taxi (migración
-  046), pero si la persona se mueve mientras espera —cruza la calle, sale del
-  portal— el taxista sigue viendo el punto de partida. Es el mismo tipo de
-  fallo que la 046 arregló: el dato correcto existe y nadie lo consume.
+- **[P52-04] La posición en vivo del pasajero solo la usa el plano.** Resuelto
+  a medias lo que era P46-01: el pin del taxista ya se mueve a donde está el
+  pasajero AHORA, y la ficha lo dice con palabras. Lo que sigue sin usarse es
+  la posición en vivo para el ETA que ve el taxista y para el aviso de
+  «llegando»; y si el pasajero se aleja mucho del punto donde pidió, nadie le
+  avisa de que el taxi va a otro sitio.
+
+
 
 - **[P46-02] El pasajero no puede corregir su punto de recogida.** Si el GPS lo
   sitúa mal, o si está esperando en otra esquina a propósito, no hay forma de
