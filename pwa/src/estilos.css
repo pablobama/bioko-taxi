@@ -134,6 +134,16 @@ body {
 
 /* El aspa y la flecha de ampliar: arriba a la IZQUIERDA, porque a la derecha
    están la rosa de los vientos del propio plano y el conmutador de papeles. */
+/* El tiempo que le falta al taxista, debajo del estado del pasajero. En
+   ámbar y en su propia línea: es lo que busca de un vistazo conduciendo. */
+.eta-conductor {
+  display: block;
+  color: var(--ambar);
+  font-weight: 600;
+  font-size: 0.86rem;
+  margin-top: 2px;
+}
+
 /* «Te está diciendo dónde está ahora»: en ámbar, como el pin que late en el
    plano. Es la misma información dicha dos veces, y tiene que verse que lo es. */
 .recogida-viva {

@@ -292,6 +292,8 @@ const es: Diccionario = {
   'recogida.aMetros': 'a {m} m',
   'recogida.aproximada': 'punto aproximado',
   'recogida.enVivo': 'te está diciendo dónde está ahora',
+  'conductor.recogesEn': 'lo recoges en {min} min',
+  'conductor.llegasEn': 'llegas en {min} min',
 
   // «Mírame llegar» (migración 043): compartir el viaje con alguien de fuera.
   'seguir.titulo': 'Que alguien te siga',
@@ -582,6 +584,8 @@ const fr: Diccionario = {
   'recogida.aMetros': 'à {m} m',
   'recogida.aproximada': 'point approximatif',
   'recogida.enVivo': 'il t’indique où il est en ce moment',
+  'conductor.recogesEn': 'tu le prends dans {min} min',
+  'conductor.llegasEn': 'tu arrives dans {min} min',
 
   'seguir.titulo': 'Fais-toi suivre',
   'seguir.explicacion': 'Envoie un lien : la personne verra où tu vas et dans quelle voiture, jusqu’à ton arrivée.',
@@ -868,6 +872,8 @@ const en: Diccionario = {
   'recogida.aMetros': '{m} m away',
   'recogida.aproximada': 'approximate point',
   'recogida.enVivo': 'they are telling you where they are right now',
+  'conductor.recogesEn': 'pick-up in {min} min',
+  'conductor.llegasEn': 'arriving in {min} min',
 
   'seguir.titulo': 'Let someone follow you',
   'seguir.explicacion': 'Send a link and they will see where you are going and in which car, until you arrive.',

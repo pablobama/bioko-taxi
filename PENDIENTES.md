@@ -4,10 +4,18 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
 
 ## Abiertos
 
-- **[P52-05] El tiempo de llegada sigue sin motor de rutas.** La migración 052
-  lo parte en tramo urbano y tramo de carretera, que arregla el disparate de
-  Malabo–Luba (142 minutos para un trayecto de unos cuarenta), pero sigue
-  siendo una línea recta por un factor. No sabe de la carretera de Luba ni del
+- **[P53-01] La velocidad medida es del coche, no de la carretera que falta.**
+  El tiempo de llegada usa lo que el taxi ha andado en los últimos seis
+  minutos, y eso da por hecho que lo que viene se parece a lo que acaba de
+  pasar. Casi siempre es verdad y es muchísimo mejor que una constante, pero
+  falla en el caso claro: un taxi que sale de un atasco del centro hacia una
+  avenida despejada seguirá contando a velocidad de atasco durante unos
+  minutos. El suelo y el techo (8 y 100 km/h) evitan lo peor. Arreglarlo de
+  verdad es saber por qué calles va a pasar, o sea P52-05.
+
+- **[P52-05] El tiempo de llegada sigue sin motor de rutas.** La 052 lo parte
+  en tramo urbano y de carretera y la 053 mide la velocidad real del coche,
+  pero la DISTANCIA sigue siendo una línea recta por un factor. No sabe de la carretera de Luba ni del
   desvío de Riaba, así que un trayecto que rodee mucho se quedará corto. Con
   las carreteras de Bioko ya compiladas en el plano (`mapa-malabo.json`), el
   camino natural es calcular la ruta de verdad con el mismo grafo que ya usa la

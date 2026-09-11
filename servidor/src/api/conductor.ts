@@ -22,6 +22,7 @@ import {
 import { estadoPorOcupacion, ocupacionDe, rutaDe } from '../dominio/ocupacion.js';
 import { registrarPosicion } from '../dominio/proximidad.js';
 import { registrarRastro, registrarRastroDiferido } from '../dominio/rastro.js';
+import { llegadaDeViaje } from '../dominio/llegada.js';
 import { puntoDeRecogida } from '../dominio/recogida.js';
 import { recargasDe, solicitarRecarga } from '../dominio/recargas.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
@@ -551,6 +552,26 @@ export function registrarRutasConductor(
       });
     }
 
+    // Y la última posición del PROPIO taxista en cada viaje, que es desde
+    // donde se cuenta lo que le falta (migración 053). Sale de la misma tabla:
+    // su latido la escribe en todos sus viajes activos.
+    const posicionesSuyas = await pool.query(
+      `SELECT DISTINCT ON (p.viaje_id) p.viaje_id, p.lat, p.lng
+       FROM posicion p
+       JOIN viaje v ON v.id = p.viaje_id
+       JOIN solicitud s ON s.id = v.solicitud_id
+       WHERE s.conductor_id = $1
+         AND s.estado IN ('ACEPTADO', 'EN_CAMINO', 'RECOGIDO')
+         AND p.actor = 'conductor'
+         AND p.creado_en >= now() - make_interval(secs => $2)
+       ORDER BY p.viaje_id, p.creado_en DESC`,
+      [sesion.conductorId, frescuraSeg],
+    );
+    const ultimaPosicion = new Map<string, { lat: number; lng: number }>();
+    for (const p of posicionesSuyas.rows) {
+      ultimaPosicion.set(String(p.viaje_id), { lat: Number(p.lat), lng: Number(p.lng) });
+    }
+
     const relojSeg = await enTransaccion(pool, (c) => relojEsperaSeg(c, sesion.conductorId));
     const ocupacion = await ocupacionDe(pool, sesion.conductorId);
     const suscripcion = await pool.query(
@@ -577,7 +598,7 @@ export function registrarRutasConductor(
         expiraEn: o.expira_en,
         bandaPrecio: o.p50 === null ? null : { p25: Number(o.p25), p50: Number(o.p50), p75: Number(o.p75) },
       })),
-      pasajeros: pasajeros.rows.map((fila) => {
+      pasajeros: await Promise.all(pasajeros.rows.map(async (fila) => {
         const recogida = puntoDeRecogida({
           referenciaLat: Number(fila.ref_origen_lat),
           referenciaLng: Number(fila.ref_origen_lng),
@@ -586,6 +607,18 @@ export function registrarRutasConductor(
           precisionClienteM: fila.precision_cliente_m === null
             ? null : Number(fila.precision_cliente_m),
         }, precisionMaxima);
+
+        // Desde dónde: la última posición que mandó el propio taxista. Sin
+        // ella no hay tiempo que dar, y es mejor no decir nada que decir un
+        // número inventado desde el centro del barrio.
+        const suya = ultimaPosicion.get(String(fila.viaje_id)) ?? null;
+        const hacia = fila.estado === 'RECOGIDO'
+          ? { lat: Number(fila.destino_lat), lng: Number(fila.destino_lng) }
+          : { lat: recogida.lat, lng: recogida.lng };
+        const llegada = suya === null
+          ? null
+          : await llegadaDeViaje(pool, Number(fila.viaje_id), suya, hacia);
+
         return {
         solicitudId: fila.solicitud_id,
         viajeId: fila.viaje_id,
@@ -607,8 +640,15 @@ export function registrarRutasConductor(
         relojEsperaSeg: relojSeg,
         // null si el pasajero no comparte ubicación o ya va a bordo.
         posicionCliente: porViaje.get(String(fila.viaje_id)) ?? null,
+        // Cuánto le falta para llegar a su siguiente punto con ESTE pasajero:
+        // a recogerlo si no lo lleva todavía, a su destino si ya va dentro
+        // (migración 053). El taxista no veía ningún tiempo —sabía a dónde iba
+        // y no cuánto le faltaba—, que es lo primero que le pregunta el
+        // pasajero por teléfono.
+        etaMin: llegada?.minutos ?? null,
+        distanciaM: llegada?.distanciaM ?? null,
         };
-      }),
+      })),
     };
   });
 

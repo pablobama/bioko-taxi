@@ -10,7 +10,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type pg from 'pg';
 import { leerParametroEntero } from './parametros.js';
-import { estimarLlegada } from './reputacion.js';
+import { llegadaDeViaje } from './llegada.js';
 
 // Estados en los que el viaje sigue vivo y tiene sentido seguirlo.
 const EN_MARCHA = ['SOLICITADO', 'EMITIDO', 'ACEPTADO', 'EN_CAMINO', 'RECOGIDO'];
@@ -253,8 +253,9 @@ export async function vistaSeguida(
   let etaMin: number | null = null;
   let distanciaM: number | null = null;
   if (posicion !== null && EN_MARCHA.includes(f.estado)) {
-    const estimacion = await estimarLlegada(
+    const estimacion = await llegadaDeViaje(
       cliente,
+      Number(f.viaje_id),
       { lat: posicion.lat, lng: posicion.lng },
       { lat: Number(f.destino_lat), lng: Number(f.destino_lng) },
     );

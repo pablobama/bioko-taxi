@@ -19,7 +19,8 @@ import { ocupacionDe, rutaDe } from '../dominio/ocupacion.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
 import { registrarPosicion } from '../dominio/proximidad.js';
 import { puntoDeRecogida } from '../dominio/recogida.js';
-import { estimarLlegada, reputacionDe, valorarViaje } from '../dominio/reputacion.js';
+import { llegadaDeViaje } from '../dominio/llegada.js';
+import { reputacionDe, valorarViaje } from '../dominio/reputacion.js';
 import {
   EN_MARCHA, crearSeguimiento, graciaMin, registrarVisita, revocarSeguimiento,
   seguimientoPorToken, terminadoHaceMin, visitasDe, vistaSeguida,
@@ -558,13 +559,18 @@ export function crearServidor(
         ? null : Number(fila.precision_cliente_m),
     }, await leerParametroEntero(pool, 'recogida_precision_maxima_m'));
 
+    // Cuánto falta para llegar al DESTINO, ya a bordo (migración 053). Va
+    // aparte de `taxi` y sin coordenadas a propósito: el pasajero va dentro
+    // del coche, así que la posición del taxista sigue sin enviarse —es la
+    // regla de siempre— pero el tiempo sí, porque es justo lo que le importa
+    // a partir de que se sube. Antes lo veía mientras el taxi venía a por él y
+    // lo perdía al subirse, que es cuando empieza a servir.
+    let llegada: { etaMin: number; distanciaM: number } | null = null;
+
     let reputacion: Awaited<ReturnType<typeof reputacionDe>> | null = null;
     if (fila.conductor_id !== null) {
       reputacion = await reputacionDe(pool, fila.conductor_id);
-      // Solo mientras el taxi VIENE a por él. Una vez dentro (RECOGIDO) se deja
-      // de enviar: van en el mismo coche, así que sería mostrarle su propia
-      // posición, y cuanto menos se comparta la ubicación, mejor.
-      if (['ACEPTADO', 'EN_CAMINO'].includes(fila.estado) && fila.viaje_id !== null) {
+      if (fila.viaje_id !== null) {
         const posicion = await pool.query(
           `SELECT lat, lng, extract(epoch from (now() - creado_en))::int AS antiguedad
            FROM posicion
@@ -574,18 +580,30 @@ export function crearServidor(
         );
         if ((posicion.rowCount ?? 0) > 0) {
           const p = posicion.rows[0];
-          const estimacion = await estimarLlegada(
-            pool,
-            { lat: Number(p.lat), lng: Number(p.lng) },
-            { lat: recogida.lat, lng: recogida.lng },
-          );
-          taxi = {
-            lat: Number(p.lat),
-            lng: Number(p.lng),
-            etaMin: estimacion.minutos,
-            distanciaM: estimacion.distanciaM,
-            frescuraSeg: p.antiguedad,
-          };
+          const coche = { lat: Number(p.lat), lng: Number(p.lng) };
+          if (fila.estado === 'RECOGIDO') {
+            const estimacion = await llegadaDeViaje(
+              pool, Number(fila.viaje_id), coche,
+              { lat: Number(fila.destino_lat), lng: Number(fila.destino_lng) },
+            );
+            llegada = { etaMin: estimacion.minutos, distanciaM: estimacion.distanciaM };
+          } else if (['ACEPTADO', 'EN_CAMINO'].includes(fila.estado)) {
+            // Mientras VIENE a por él sí van las coordenadas: es lo que dibuja
+            // el coche acercándose en su mapa. Una vez dentro se dejan de
+            // enviar —van en el mismo coche, sería enseñarle su propia
+            // posición— y cuanto menos se comparta la ubicación, mejor.
+            const estimacion = await llegadaDeViaje(
+              pool, Number(fila.viaje_id), coche,
+              { lat: recogida.lat, lng: recogida.lng },
+            );
+            taxi = {
+              lat: coche.lat,
+              lng: coche.lng,
+              etaMin: estimacion.minutos,
+              distanciaM: estimacion.distanciaM,
+              frescuraSeg: p.antiguedad,
+            };
+          }
         }
       }
     }
@@ -632,6 +650,7 @@ export function crearServidor(
       taxiHaLlegado: fila.llegado_en !== null,
       compartido,
       taxi,
+      llegada,
       reputacion,
       viajeId: fila.viaje_id,
       // El teléfono del conductor no se expone jamás al cliente: es el

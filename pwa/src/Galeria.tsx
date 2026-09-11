@@ -69,6 +69,7 @@ function solicitud(cambios: Partial<DetalleSolicitud> = {}): DetalleSolicitud {
     graciaCancelacionSeg: 47,
     taxiHaLlegado: false,
     taxi: { lat: 3.756, lng: 8.779, etaMin: 4, distanciaM: 1180, frescuraSeg: 12 },
+    llegada: null,
     reputacion: { media: 4.6, valoraciones: 37, viajesCompletados: 52 },
     compartido: {
       pasajerosABordo: 0,

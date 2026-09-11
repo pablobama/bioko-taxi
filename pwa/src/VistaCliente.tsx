@@ -224,9 +224,13 @@ export default function VistaCliente({
             </p>
           )}
 
-          {detalle.taxi ? (
+          {/* El tiempo, venga de donde venga: del coche acercándose mientras
+              espera, o del viaje mismo ya a bordo (migración 053). Antes lo
+              veía mientras el taxi venía y lo perdía justo al subirse, que es
+              cuando de verdad empieza a preguntárselo. */}
+          {(detalle.taxi ?? detalle.llegada) ? (
             <h1 className="eta">
-              <strong>{detalle.taxi.etaMin}</strong> {t('asignado.min')}
+              <strong>{(detalle.taxi ?? detalle.llegada)!.etaMin}</strong> {t('asignado.min')}
               <small>
                 {detalle.estado === 'RECOGIDO' ? t('asignado.paraLlegar') : t('asignado.paraRecogerte')}
               </small>

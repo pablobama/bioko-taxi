@@ -115,7 +115,20 @@ function BloquePasajero({
           <span className="ruta-hasta">{pasajero.destino}</span>
         </div>
       </div>
-      <span className="pasajero-estado">{etiquetaEstado[fase] ?? fase}</span>
+      {/* Cuánto le falta (migración 053). Con la velocidad a la que va de
+          verdad, no con una constante: en Malabo un jueves a las siete no se
+          anda a lo mismo que un domingo por la mañana. Va junto al estado
+          porque es la misma pregunta —dónde estoy en esto— contada en tiempo.
+          Y es lo primero que le pregunta el pasajero por teléfono. */}
+      <span className="pasajero-estado">
+        {etiquetaEstado[fase] ?? fase}
+        {pasajero.etaMin !== null && (
+          <b className="eta-conductor">
+            {t(pasajero.estado === 'RECOGIDO' ? 'conductor.llegasEn' : 'conductor.recogesEn',
+              { min: pasajero.etaMin })}
+          </b>
+        )}
+      </span>
 
       {/* Llamada por internet, no `tel:`. Antes esto abría el marcador con el
           número del pasajero, que quedaba para siempre en el registro de

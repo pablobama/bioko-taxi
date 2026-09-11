@@ -151,6 +151,10 @@ export interface DetalleSolicitud {
   // Posición del coche acercándose y tiempo estimado. null si el conductor no
   // ha enviado posición reciente: el tiempo es aproximado, no una promesa.
   taxi: { lat: number; lng: number; etaMin: number; distanciaM: number; frescuraSeg: number } | null;
+  // Ya a bordo: cuánto falta para llegar al destino (migración 053). Va sin
+  // coordenadas a propósito — la posición del taxista deja de enviarse al
+  // subir— pero el tiempo sí, que es lo que importa a partir de ahí.
+  llegada: { etaMin: number; distanciaM: number } | null;
   reputacion: Reputacion | null;
   conductor: string | null;
   matricula: string | null;
@@ -545,6 +549,11 @@ export interface PasajeroConductor {
   // Dónde está el pasajero de verdad mientras espera. null si no comparte
   // ubicación o si ya va a bordo.
   posicionCliente: { lat: number; lng: number; frescuraSeg: number } | null;
+  // Cuánto le falta al taxista para llegar a su siguiente punto con este
+  // pasajero: a recogerlo, o a su destino si ya va dentro (migración 053).
+  // null si no ha mandado posición todavía.
+  etaMin: number | null;
+  distanciaM: number | null;
 }
 
 export interface EstadoConductor {
