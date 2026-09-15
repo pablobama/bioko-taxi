@@ -22,7 +22,9 @@ const ALMACEN = 'puntos';
 // y `rastro_anclaje_seg` en el servidor. Están repetidas porque este lado tiene
 // que decidir sin red, que es justo cuando no puede preguntarlas; si algún día
 // cambian allí, el servidor sigue siendo quien manda: aclara al recibir.
-const INTERVALO_MIN_MS = 45_000;
+// 15 s desde la migración 056 (antes 45): el recorrido guardado por calles
+// pierde la mitad de error con un punto cada ~25 s en vez de uno por minuto.
+const INTERVALO_MIN_MS = 15_000;
 const DISTANCIA_MIN_M = 40;
 const ANCLAJE_MS = 300_000;
 // Y `rastro_precision_maxima_m` (migración 054): peor que esto no se apunta.
@@ -30,11 +32,11 @@ const ANCLAJE_MS = 300_000;
 // rebote entre edificios, y dibuja y suma lo que no pasó.
 const PRECISION_MAXIMA_M = 50;
 
-// Tope de la cola. A un punto cada 45 s son unas 75 horas de turno guardadas
+// Tope de la cola. A un punto cada 15 s son unas 50 horas de turno guardadas
 // sin red, más que de sobra para cualquier apagón de cobertura real. Pasado
 // eso se tiran los MÁS VIEJOS: si se tiraran los nuevos, un móvil que llenó la
 // cola una vez no volvería a apuntar nada nunca.
-const TOPE = 6000;
+const TOPE = 12_000;
 
 export interface PuntoLocal {
   id?: number;
@@ -103,7 +105,7 @@ export async function anotarRastro(
 ): Promise<boolean> {
   if (typeof indexedDB === 'undefined') return false;
   // Una lectura mala no entra, y va ANTES del aclarado: si contara, un punto
-  // de antena ocuparía el hueco de 45 s y se perdería la buena lectura de GPS
+  // de antena ocuparía el hueco de 15 s y se perdería la buena lectura de GPS
   // que llega justo detrás.
   const precision = punto.precision ?? null;
   if (precision !== null && !(precision >= 0 && precision <= PRECISION_MAXIMA_M)) return false;

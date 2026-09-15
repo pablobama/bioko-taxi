@@ -33,7 +33,9 @@ object ColaRastro {
     // porque este lado tiene que decidir SIN RED, que es justo cuando no puede
     // preguntarlas. Si algún día cambian allí, el servidor sigue mandando:
     // aclara otra vez al recibir el lote.
-    private const val INTERVALO_MIN_MS = 45_000L
+    // 15 s desde la migración 056 (antes 45): con el recorrido reconstruido por
+    // calles, un punto cada ~25 s tiene la mitad de error que uno por minuto.
+    private const val INTERVALO_MIN_MS = 15_000L
     private const val DISTANCIA_MIN_M = 40f
     private const val ANCLAJE_MS = 300_000L
     // Y `rastro_precision_maxima_m` (migración 054). Importa aquí más que en
@@ -44,11 +46,11 @@ object ColaRastro {
     // kilómetros inventados.
     private const val PRECISION_MAXIMA_M = 50f
 
-    // A un punto cada 45 s son unas 75 horas de turno guardadas sin red: más
+    // A un punto cada 15 s son unas 50 horas de turno guardadas sin red: más
     // que cualquier apagón de cobertura real. Pasado el tope se tiran los MÁS
     // VIEJOS; si se tiraran los nuevos, un móvil que llenó la cola una vez no
     // volvería a apuntar nada nunca.
-    private const val TOPE = 6000
+    private const val TOPE = 12_000
 
     // Cuántos se mandan de una vez. Un lote entero por una red de Malabo es lo
     // que hace que se caiga la petición y no suba nada.
@@ -59,6 +61,7 @@ object ColaRastro {
         .apply { timeZone = TimeZone.getTimeZone("UTC") }
 
     private var ultimo: Location? = null
+    private var anotadosDesdeRecorte = 0
 
     private fun fichero(contexto: Context) = File(contexto.filesDir, FICHERO)
 
@@ -71,7 +74,7 @@ object ColaRastro {
     @Synchronized
     fun anotar(contexto: Context, posicion: Location): Boolean {
         // La lectura mala fuera, y ANTES del aclarado: si contara, ocuparía el
-        // hueco de 45 s y se perdería la buena de GPS que llega justo detrás.
+        // hueco de 15 s y se perdería la buena de GPS que llega justo detrás.
         // Sin precisión conocida se acepta, como en el servidor.
         if (posicion.hasAccuracy() && posicion.accuracy > PRECISION_MAXIMA_M) return false
         val previo = ultimo
@@ -91,7 +94,14 @@ object ColaRastro {
         return try {
             fichero(contexto).appendText(linea + "\n")
             ultimo = posicion
-            recortar(contexto)
+            // Cada cien puntos, no en cada uno: recortar lee el fichero entero,
+            // y con un punto cada 15 s eso era leer un megabyte cuatro veces por
+            // minuto para, casi siempre, no cortar nada.
+            anotadosDesdeRecorte += 1
+            if (anotadosDesdeRecorte >= 100) {
+                anotadosDesdeRecorte = 0
+                recortar(contexto)
+            }
             true
         } catch (_: Exception) {
             // Sin sitio en disco o sin permiso: se pierde el recorrido, pero el

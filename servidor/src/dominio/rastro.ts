@@ -67,8 +67,10 @@ async function limites(cliente: pg.ClientBase | pg.Pool) {
 //
 // Después, cuánto guardar:
 //   - Si no hay punto anterior, se guarda: es el principio del turno.
-//   - Si el anterior es de hace menos del intervalo mínimo, no. Esto es lo
-//     que corta de 180 puntos por hora a 80 como mucho.
+//   - Si el anterior es de hace menos del intervalo mínimo, no. Con el
+//     latido cada 20 s y el mínimo en 15 (migración 056), un punto por latido
+//     circulando; parado, el anclaje de abajo lo deja en uno cada cinco
+//     minutos.
 //   - Si se ha movido lo bastante, sí. Este es el caso normal circulando.
 //   - Si no se ha movido pero hace rato del último, sí: es la diferencia
 //     entre «estuvo una hora parado en la parada del mercado» y «no se sabe».

@@ -10,6 +10,7 @@ import { crearPool, enTransaccion } from '../bd/conexion.js';
 import {
   actividadDe, apuntarSenal, purgarRastro, recorridoDe, registrarRastro, registrarRastroDiferido,
 } from './rastro.js';
+import { leerParametroEntero } from './parametros.js';
 import { caducarPresencias } from './presencia.js';
 
 let pool: pg.Pool;
@@ -75,10 +76,11 @@ test('el primer punto del turno siempre se guarda: es por dónde empezó', async
 test('dos latidos seguidos no son dos puntos: entre ellos solo hay ruido de GPS', async () => {
   const id = await crearConductor();
   await guardar(id, 0, 0);
-  // El latido va cada 20 s y el intervalo mínimo es 45: aunque el coche haya
-  // cruzado media ciudad, este punto no entra. Es lo que corta de 180 puntos
-  // por hora a 80, y sin ello un mes de cien taxis no cabe en la base.
-  assert.equal(await guardar(id, 500, 20), false, 'demasiado pronto, aunque se haya movido');
+  // Antes del intervalo mínimo no entra, aunque el coche haya cruzado media
+  // ciudad. Se lee del parámetro y no se escribe el número: cambió de 45 a 15 s
+  // en la migración 056, y lo que se prueba es la regla, no la cifra.
+  const intervalo = await leerParametroEntero(pool, 'rastro_intervalo_min_seg');
+  assert.equal(await guardar(id, 500, intervalo - 5), false, 'demasiado pronto, aunque se haya movido');
 });
 
 test('pasado el intervalo, moverse guarda punto y no moverse no', async () => {
@@ -420,7 +422,10 @@ test('un lote demasiado apretado se aclara al recibirlo', async () => {
 
   const r = await enTransaccion(pool, (c) =>
     registrarRastroDiferido(c, id, puntos, enSegundo(9000)));
-  assert.ok(r.guardados <= 3, `con 45 s de intervalo caben dos o tres, no ${r.guardados}`);
+  // En un minuto caben, como mucho, un punto por intervalo más el primero.
+  const intervalo = await leerParametroEntero(pool, 'rastro_intervalo_min_seg');
+  const caben = Math.floor(60 / intervalo) + 1;
+  assert.ok(r.guardados <= caben, `con ${intervalo} s de intervalo caben ${caben}, no ${r.guardados}`);
 });
 
 test('una hora del futuro no se guarda: el reloj del móvil no es la verdad', async () => {

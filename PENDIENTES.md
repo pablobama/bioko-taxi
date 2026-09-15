@@ -4,24 +4,6 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
 
 ## Abiertos
 
-- **[P56-01] Guardar el recorrido el doble de denso, al mismo coste: decisión
-  tuya.** Con el recorrido ya reconstruido por las calles, el error que queda
-  en kilómetros y velocidad es de MUESTREO: un punto por minuto no ve la vuelta
-  a la manzana que el coche da entre dos puntos. Medido con
-  `scripts/diagnostico-rastro.ts`, seis simulaciones por calles reales:
-
-  | guardado | km | velocidad en marcha | tiempo al volante |
-  |---|---|---|---|
-  | 1 punto / ~58 s (hoy, `rastro_intervalo_min_seg` = 45) | −9 % | −19 % | +4 % |
-  | 1 punto / ~25 s (`rastro_intervalo_min_seg` = 20) | −4 % | −8 % | 0 % |
-
-  Cuesta 2,3 veces más filas. Se puede dejar a coste IGUAL bajando
-  `rastro_retencion_dias` de 90 a 45: la vista más larga del operador es de un
-  mes. No lo he cambiado porque borra historial antes, y eso no se deshace. Si
-  se hace, hay que cambiar lo mismo en las dos colas que guardan sin red —
-  `pwa/src/rastroLocal.ts` y `android/.../ColaRastro.kt`, ambas en 45 s—, o
-  los tramos sin cobertura seguirán a la densidad vieja.
-
 - **[P56-02] «Al volante» todavía supone a qué velocidad se va por cada calle.**
   Con puntos cada minuto no se sabe cuánto de ese minuto fue un semáforo; se
   estima con la velocidad típica de cada clase de calle del enrutador. Si en
@@ -541,6 +523,17 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   trabajo para el operador, que los va confirmando.
 
 ## Resueltos
+
+- **[P56-01] Recorrido el doble de denso, al mismo coste** — resuelto el
+  2026-09-15 (migración 056), decidido por el operador. `rastro_intervalo_min_seg`
+  pasa de 45 a 15 s y `rastro_retencion_dias` de 90 a 45. El mínimo va por
+  DEBAJO del latido (20 s) a propósito: el latido no llega exacto, y con el
+  mínimo igual al latido se tiraría uno de cada dos. Medido en seis
+  simulaciones: un punto cada ~25 s, kilómetros −4 % (antes −9 %), velocidad en
+  marcha −8 % (antes −19 %), tiempo al volante 0 % (antes +4 %). Coste, con los
+  219 bytes por fila medidos en la base: un taxi de 8 h diarias pasa de ~9,8 MB
+  a ~11,3 MB. Las dos colas sin red (PWA y Android) cambiadas igual. **Lo que
+  no se deshace:** al desplegar, la purga borra el recorrido de más de 45 días.
 
 - **[P27-01] Verificación de teléfono por SMS (Twilio Verify)** — resuelto el
   2026-07-31, y revierte la decisión 3.1 (SMS prohibido por coste): probado en
