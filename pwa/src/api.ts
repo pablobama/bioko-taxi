@@ -2,7 +2,7 @@
 // dispositivo (regla 4.2.4), guardado en localStorage y enviado en la
 // cabecera x-dispositivo (o como parámetro en el SSE, que no admite cabeceras).
 
-import { ErrorDeRed, marcarConexionCaida, marcarConexionViva } from './conexion';
+import { ErrorDeRed, marcarConexionCaida, marcarConexionViva, ErrorDelServidor } from './conexion';
 
 // Solo en localhost: permite fijar la identidad con ?dispositivo=<uuid> para
 // poder tener abiertas a la vez la ventana del pasajero y la del taxista
@@ -61,7 +61,10 @@ async function pedirJsonUnaVez<T>(ruta: string, opciones: RequestInit): Promise<
   marcarConexionViva();
   const cuerpo = await respuesta.json().catch(() => ({}));
   if (!respuesta.ok) {
-    throw new Error((cuerpo as { error?: string }).error ?? `Error ${respuesta.status}`);
+    throw new ErrorDelServidor(
+      respuesta.status,
+      (cuerpo as { error?: string }).error ?? `Error ${respuesta.status}`,
+    );
   }
   return cuerpo as T;
 }
@@ -658,6 +661,11 @@ export const api = {
       method: 'POST',
       body: '{}',
     }),
+
+  // Una acción que se hizo sin red y se manda ahora (migración 057). Genérica a
+  // propósito: la bandeja guarda la ruta y el cuerpo tal cual se iban a mandar.
+  enviarPendiente: (ruta: string, cuerpo: Record<string, unknown>) =>
+    pedirJson<Record<string, unknown>>(ruta, { method: 'POST', body: JSON.stringify(cuerpo) }),
 
   accionPasajero: (
     solicitudId: number,

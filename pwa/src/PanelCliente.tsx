@@ -17,11 +17,14 @@ import {
 } from './api';
 import Estadisticas from './Estadisticas';
 import { metrosEntre } from './geo';
-import { mensajeDeError } from './conexion';
+import { mensajeDeError, ErrorDeRed, useConexion, ErrorDelServidor } from './conexion';
 import IconoCategoria from './IconoCategoria';
 import { crearT, localeVoz, type Idioma } from './i18n';
 import { useLlamada, type SenalRecibida } from './llamada';
 import MandosFlotantes from './MandosFlotantes';
+import {
+  encolar, guardarUltimo, olvidarUltimo, sincronizar, ultimoGuardado, usePendientes,
+} from './sinRed';
 import Mapa from './Mapa';
 import PanelLlamada from './PanelLlamada';
 import VistaCliente from './VistaCliente';
@@ -218,6 +221,12 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
   const [coordenadas, setCoordenadas] = useState<{ lat: number; lng: number } | null>(null);
   // Hoja recogida: el plano se ve entero. Lo manda el botón flotante.
   const [panelPlegado, setPanelPlegado] = useState(false);
+  // Sin red (migración 057): de cuándo es el viaje que se está enseñando si no
+  // es de ahora. null = fresco.
+  const [datosDe, setDatosDe] = useState<string | null>(null);
+  const ultimaFrescura = useRef<string | null>(null);
+  const pendientes = usePendientes();
+  const enLinea = useConexion();
   const [gpsResuelto, setGpsResuelto] = useState(false);
   const [valorada, setValorada] = useState(false);
   // Destinos de un toque y si la persona ha pedido escribir en su lugar.
@@ -255,6 +264,9 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
 
   const limpiar = useCallback(() => {
     localStorage.removeItem('solicitudActiva');
+    // Un viaje terminado no puede volver a salir mañana «sin red» como si
+    // siguiera en marcha.
+    olvidarUltimo('cliente');
     cerrarSse.current?.();
     cerrarSse.current = null;
     setDetalle(null);
@@ -272,6 +284,12 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
 
   const aplicarEstado = useCallback((estado: DetalleSolicitud) => {
     setDetalle(estado);
+    // Lo último que se supo del viaje, para poder enseñarlo sin red: el PIN,
+    // el taxista y la matrícula hacen falta justo en la acera, que es donde se
+    // va la cobertura.
+    guardarUltimo('cliente', estado);
+    ultimaFrescura.current = new Date().toISOString();
+    setDatosDe(null);
     gracia.current = estado.graciaCancelacionSeg === null
       ? null
       : { seg: estado.graciaCancelacionSeg, recibidaEn: Date.now() };
@@ -352,18 +370,62 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
       setFase('destino');
       return;
     }
-    api.estado(activa)
-      .then((estado) => {
-        aplicarEstado(estado);
-        // También con el taxi ya asignado: por esta conexión entran las
-        // llamadas. Antes solo se abría mientras se buscaba taxi, así que al
-        // recargar la página en mitad de un viaje el teléfono dejaba de sonar.
-        if (['SOLICITADO', 'EMITIDO', 'ACEPTADO', 'EN_CAMINO', 'RECOGIDO'].includes(estado.estado)) {
-          escuchar(activa);
-        }
-      })
-      .catch(() => limpiar());
-    return () => cerrarSse.current?.();
+    let reintento: ReturnType<typeof setTimeout> | undefined;
+    let escuchando = false;
+    const cargar = () => {
+      api.estado(activa)
+        .then((estado) => {
+          aplicarEstado(estado);
+          // También con el taxi ya asignado: por esta conexión entran las
+          // llamadas. Antes solo se abría mientras se buscaba taxi, así que al
+          // recargar la página en mitad de un viaje el teléfono dejaba de sonar.
+          if (!escuchando
+            && ['SOLICITADO', 'EMITIDO', 'ACEPTADO', 'EN_CAMINO', 'RECOGIDO'].includes(estado.estado)) {
+            escuchando = true;
+            escuchar(activa);
+          }
+        })
+        .catch((error) => {
+          // Antes, CUALQUIER fallo borraba el viaje activo, y sin red también:
+          // quien abría la aplicación en la acera sin cobertura perdía su PIN y
+          // los datos de su taxista justo cuando los necesitaba para subir.
+          // Ahora el viaje solo se olvida si el SERVIDOR dice que ya no existe
+          // (un 4xx). Sin red, o con el servidor fallando —Render devuelve 502
+          // mientras despierta y durante cada despliegue—, se enseña el último
+          // estado conocido con su hora, y se sigue intentando.
+          if (error instanceof ErrorDeRed || (error instanceof ErrorDelServidor && error.estado >= 500)) {
+            const guardado = ultimoGuardado<DetalleSolicitud>('cliente');
+            // Como texto: el servidor manda los identificadores bigint como
+            // cadena y `solicitudActiva` devuelve un número. Comparados tal
+            // cual no coinciden nunca, y la pantalla se quedaba en «Cargando…»
+            // con el viaje guardado sin enseñar. Pasó al probarlo.
+            if (guardado && String(guardado.valor.solicitudId) === String(activa)) {
+              // Sin sonidos: al abrir no ha cambiado nada, solo se recuerda.
+              estadoAnterior.current = guardado.valor.estado;
+              setDetalle(guardado.valor);
+              setFase(['SOLICITADO', 'EMITIDO'].includes(guardado.valor.estado) ? 'esperando' : 'asignado');
+              setDatosDe(guardado.guardadoEn);
+              // Con la fase puesta, el refresco periódico ya se encarga de
+              // ponerlo al día en cuanto el servidor conteste.
+            } else {
+              // Nada guardado que enseñar: «Cargando…» es la verdad, pero no
+              // puede quedarse ahí para siempre. Se reintenta solo.
+              reintento = setTimeout(cargar, 10_000);
+            }
+            if (!escuchando) {
+              escuchando = true;
+              escuchar(activa);
+            }
+            return;
+          }
+          limpiar();
+        });
+    };
+    cargar();
+    return () => {
+      clearTimeout(reintento);
+      cerrarSse.current?.();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -481,12 +543,29 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
     return () => navigator.geolocation.clearWatch(vigilancia);
   }, [detalle?.estado]);
 
+  // En cuanto vuelve la red: lo pendiente sale, y el viaje se pone al día sin
+  // esperar al siguiente refresco.
+  useEffect(() => {
+    if (!enLinea) return;
+    void sincronizar(api.enviarPendiente, (e) => e instanceof ErrorDeRed);
+    const activa = solicitudActiva();
+    if (activa) api.estado(activa).then(aplicarEstado).catch(() => undefined);
+  }, [enLinea, aplicarEstado]);
+
   // Refresco del estado mientras el taxi viene: mueve el coche y el ETA.
   useEffect(() => {
     if (fase !== 'asignado' && fase !== 'esperando') return;
     const temporizador = setInterval(() => {
       const activa = solicitudActiva();
-      if (activa) api.estado(activa).then(aplicarEstado).catch(() => undefined);
+      if (activa) {
+        api.estado(activa).then(aplicarEstado).catch((error) => {
+          // Sin red o con el servidor fallando, lo que se ve deja de ser de
+          // ahora: se dice de cuándo es.
+          if (error instanceof ErrorDeRed || (error instanceof ErrorDelServidor && error.estado >= 500)) {
+            setDatosDe(ultimaFrescura.current);
+          }
+        });
+      }
     }, fase === 'asignado' ? 10_000 : 20_000);
     return () => clearInterval(temporizador);
   }, [fase, aplicarEstado]);
@@ -519,7 +598,12 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
       escuchar(respuesta.solicitudId);
       api.estado(respuesta.solicitudId).then(aplicarEstado).catch(() => undefined);
     } catch (error) {
-      setAviso(mensajeDeError(error, t('aviso.noSePudoPedir')));
+      // Sin red no se guarda para después, a propósito: una petición que sale
+      // veinte minutos tarde manda un taxi a quien ya se fue. Se dice claro y
+      // el destino se queda elegido para pulsar otra vez.
+      setAviso(error instanceof ErrorDeRed
+        ? t('sinRed.pedirNecesitaRed')
+        : mensajeDeError(error, t('aviso.noSePudoPedir')));
     }
   }
 
@@ -531,7 +615,11 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
       setAviso(resultado.strike ? t('aviso.canceladoTarde') : '');
       limpiar();
     } catch (error) {
-      setAviso(mensajeDeError(error, t('aviso.noSePudoCancelar')));
+      // Tampoco se guarda: una cancelación tardía llega con el taxista ya en la
+      // puerta. Si el taxi ya viene, lo que sirve es llamarle.
+      setAviso(error instanceof ErrorDeRed
+        ? t('sinRed.cancelarNecesitaRed')
+        : mensajeDeError(error, t('aviso.noSePudoCancelar')));
     }
   }
 
@@ -541,7 +629,17 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
     setValorada(true);
     try {
       await api.valorar(solicitudId, puntuacion);
-    } catch {
+    } catch (error) {
+      if (error instanceof ErrorDeRed) {
+        // La valoración sí espera: es una opinión sobre algo que ya pasó, y
+        // llegar tarde no cambia nada. Se queda dada.
+        await encolar({
+          ruta: `/api/solicitudes/${solicitudId}/valoracion`,
+          cuerpo: { puntuacion },
+          descripcion: t('sinRed.valoracion'),
+        });
+        return;
+      }
       setValorada(false);
       setAviso(t('aviso.noSePudoValorar'));
     }
@@ -663,6 +761,7 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
       {fase !== 'estadisticas' && fase !== 'ajustes' && (
         <VistaCliente
           plegada={panelPlegado}
+          sinRed={datosDe !== null || pendientes > 0 ? { datosDe, pendientes } : null}
           fase={fase}
           detalle={detalle}
           origen={origen}

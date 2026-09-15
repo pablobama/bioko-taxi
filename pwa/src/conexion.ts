@@ -67,6 +67,18 @@ export class ErrorDeRed extends Error {
   }
 }
 
+// El servidor contestó, pero mal. Lleva el código HTTP porque la bandeja de
+// acciones sin red (sinRed.ts) necesita distinguir un 409 —esa acción ya no
+// tiene arreglo: se descarta y se avisa— de un 500 —falló el servidor, no la
+// acción: se reintenta—. Hereda de Error, así que todo lo que ya leía
+// `error.message` sigue igual.
+export class ErrorDelServidor extends Error {
+  constructor(readonly estado: number, mensaje: string) {
+    super(mensaje);
+    this.name = 'ErrorDelServidor';
+  }
+}
+
 // Qué enseñar dentro de la hoja cuando algo falla.
 //
 // Si fue la red, nada: ya lo dice la banda de arriba, y repetirlo dentro

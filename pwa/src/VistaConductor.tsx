@@ -8,6 +8,7 @@
 import { useState } from 'react';
 import type { DatosConductor, EstadoConductor, PasajeroConductor, ZonaConDemanda } from './api';
 import type { crearT } from './i18n';
+import AvisoSinRed from './AvisoSinRed';
 
 type T = ReturnType<typeof crearT>;
 
@@ -41,6 +42,9 @@ export interface PropiedadesVistaConductor {
   aviso?: string;
   // Horas que lleva en servicio, cuando toca recordárselo. null casi siempre.
   avisoTurno?: number | null;
+  // Sin red (migración 057): de cuándo son los datos que se ven y cuántas
+  // acciones esperan a la conexión. null con red y nada pendiente.
+  sinRed?: { datosDe: string | null; pendientes: number } | null;
   ocupado?: boolean;
   // Hoja recogida: el plano se ve entero. Lo manda el botón flotante.
   plegada?: boolean;
@@ -225,7 +229,7 @@ function BloquePasajero({
 }
 
 export default function VistaConductor({
-  conductor, estado, demanda, aviso, avisoTurno = null, ocupado = false,
+  conductor, estado, demanda, aviso, avisoTurno = null, sinRed = null, ocupado = false,
   plegada = false, t, acciones,
 }: PropiedadesVistaConductor) {
   const enServicio = estado !== null && estado.estado !== 'DESCONECTADO';
@@ -238,6 +242,11 @@ export default function VistaConductor({
   return (
     <section className={plegada ? 'hoja hoja-plegada' : 'hoja'} aria-hidden={plegada}>
       {aviso && <p className="aviso">{aviso}</p>}
+      {/* Sin red: se sigue trabajando, pero sabiendo dos cosas —de cuándo es lo
+          que se ve y cuánto falta por enviar—. Sin esto, la pantalla avanzaría
+          en silencio y no habría forma de saber que el servidor aún no se ha
+          enterado de nada. */}
+      <AvisoSinRed sinRed={sinRed} t={t} />
       {/* Migración 049: el turno ya no se cae solo, así que puede quedarse
           encendido toda la noche sin querer. Cada hora se le recuerda —con el
           número de horas, que es lo que hace que reaccione— y el botón de

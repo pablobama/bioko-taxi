@@ -82,7 +82,16 @@ export function registrarRutasConductor(
     solicitudId: number,
     conductorId: number,
     estadosEsperados: string[],
-  ): Promise<{ estado: string; viajeId: number; dispositivoClienteId: number; telefonoCliente: string; llegadoEn: Date | null }> {
+    // Estados en los que la acción YA ESTÁ HECHA (migración 057). Una acción
+    // hecha sin red llega tarde, y para entonces el viaje puede haber avanzado
+    // solo: la proximidad GPS recogió al pasajero, o el cierre automático lo
+    // terminó. Eso no es un error, y antes lo era: se devuelve `yaHecho` y
+    // quien llama no hace nada.
+    estadosYaHechos: string[] = [],
+  ): Promise<{
+    estado: string; viajeId: number; dispositivoClienteId: number;
+    telefonoCliente: string; llegadoEn: Date | null; yaHecho: boolean;
+  }> {
     const res = await cliente.query(
       `SELECT s.estado, s.telefono_cliente, s.dispositivo_cliente_id, v.id AS viaje_id, v.llegado_en
        FROM solicitud s JOIN viaje v ON v.solicitud_id = s.id
@@ -94,7 +103,8 @@ export function registrarRutasConductor(
       throw errorHttp(404, `La solicitud ${solicitudId} no existe o no es tuya.`);
     }
     const fila = res.rows[0];
-    if (!estadosEsperados.includes(fila.estado)) {
+    const yaHecho = estadosYaHechos.includes(fila.estado);
+    if (!yaHecho && !estadosEsperados.includes(fila.estado)) {
       throw errorHttp(409, `La solicitud ${solicitudId} está en ${fila.estado}; se esperaba ${estadosEsperados.join(' o ')}.`);
     }
     return {
@@ -103,6 +113,7 @@ export function registrarRutasConductor(
       dispositivoClienteId: fila.dispositivo_cliente_id,
       telefonoCliente: fila.telefono_cliente,
       llegadoEn: fila.llegado_en,
+      yaHecho,
     };
   }
 
@@ -114,6 +125,7 @@ export function registrarRutasConductor(
     conductorId: number,
     actor: 'conductor' | 'sistema',
     origenEvento: string,
+    ocurrioEn: Date | null = null,
   ): Promise<void> {
     const fila = await cliente.query(
       'SELECT estado FROM presencia WHERE conductor_id = $1 FOR UPDATE',
@@ -121,7 +133,7 @@ export function registrarRutasConductor(
     );
     const objetivo = await estadoPorOcupacion(cliente, conductorId);
     if (fila.rows[0]?.estado !== objetivo) {
-      await transicionarConductor(cliente, conductorId, objetivo, actor, origenEvento);
+      await transicionarConductor(cliente, conductorId, objetivo, actor, origenEvento, ocurrioEn);
     }
   }
 
@@ -279,16 +291,26 @@ export function registrarRutasConductor(
     const sesion = await sesionDesde(req);
     const cuerpo = req.body as {
       enServicio?: boolean; zonaId?: number; lat?: number; lng?: number;
+      ocurridoEn?: string;
     };
     if (typeof cuerpo?.enServicio !== 'boolean') {
       throw errorHttp(400, 'Falta enServicio (true/false).');
     }
     try {
       return await enTransaccion(pool, async (cliente) => {
+        const momento = await momentoDeLaAccion(cliente, cuerpo.ocurridoEn, { conductorId: sesion.conductorId });
+        const presencia = await cliente.query(
+          'SELECT estado FROM presencia WHERE conductor_id = $1', [sesion.conductorId],
+        );
+        const dentro = presencia.rows[0]?.estado !== undefined
+          && presencia.rows[0].estado !== 'DESCONECTADO';
         if (!cuerpo.enServicio) {
-          await salirDeServicio(cliente, sesion.conductorId);
+          // Repetible (migración 057): si ya estaba fuera, ya está hecho.
+          if (!dentro) return { enServicio: false, zonaId: null, zona: null, yaHecho: true };
+          await salirDeServicio(cliente, sesion.conductorId, momento);
           return { enServicio: false, zonaId: null, zona: null };
         }
+        if (dentro) return { enServicio: true, zonaId: null, zona: null, yaHecho: true };
         // El barrio NO lo elige el taxista: lo dice dónde está. Antes se
         // mandaba un `zonaId` de una lista y nada impedía declararse en un
         // barrio al otro lado de la ciudad —ni por error ni a propósito—,
@@ -313,7 +335,7 @@ export function registrarRutasConductor(
             'Para entrar en servicio hace falta saber dónde estás: activa la ubicación.',
           );
         }
-        await entrarEnServicio(cliente, sesion.conductorId, zonaId);
+        await entrarEnServicio(cliente, sesion.conductorId, zonaId, new Date(), momento);
         return { enServicio: true, zonaId, zona: nombre };
       });
     } catch (error) {
@@ -370,6 +392,40 @@ export function registrarRutasConductor(
   // Y un margen, porque el reloj de un móvil barato se desajusta. Fuera de él
   // manda el del servidor: un teléfono con la hora mal puesta no puede mover el
   // recorrido de sitio.
+  // Cuándo se pulsó el botón, si la acción se hizo sin red y llega ahora
+  // (migración 057). null = ahora mismo, que es lo de siempre. No se le cree
+  // una hora del futuro ni una más vieja que `accion_diferida_max_horas`: un
+  // reloj de móvil tan desfasado no puede reordenar la historia de un viaje.
+  //
+  // Y nunca antes del último cambio ya apuntado de la misma entidad. El registro
+  // de estados ya lo garantiza por su cuenta, pero la hora se usa también en
+  // `viaje` (validado_en, llegado_en, completado_en): si solo se corrigiera en
+  // un sitio, el mismo hecho tendría dos horas distintas según dónde se mire.
+  async function momentoDeLaAccion(
+    cliente: pg.ClientBase,
+    ocurridoEn: unknown,
+    de: { solicitudId: number } | { conductorId: number },
+  ): Promise<Date | null> {
+    if (typeof ocurridoEn !== 'string') return null;
+    let cuando = new Date(ocurridoEn);
+    if (Number.isNaN(cuando.getTime())) return null;
+    const ahora = Date.now();
+    if (cuando.getTime() > ahora + 60_000) return null;
+    const maxHoras = await leerParametroEntero(cliente, 'accion_diferida_max_horas');
+    if (ahora - cuando.getTime() > maxHoras * 3_600_000) return null;
+    const ultimo = await cliente.query(
+      'solicitudId' in de
+        ? `SELECT max(COALESCE(ocurrio_en, creado_en)) AS en FROM transicion
+           WHERE ambito = 'solicitud' AND solicitud_id = $1`
+        : `SELECT max(COALESCE(ocurrio_en, creado_en)) AS en FROM transicion
+           WHERE ambito = 'conductor' AND conductor_id = $1`,
+      ['solicitudId' in de ? de.solicitudId : de.conductorId],
+    );
+    const minimo = ultimo.rows[0]?.en ? new Date(ultimo.rows[0].en) : null;
+    if (minimo !== null && cuando < minimo) cuando = minimo;
+    return cuando.getTime() > ahora ? new Date(ahora) : cuando;
+  }
+
   async function horaDeLectura(cliente: pg.ClientBase, en: string | undefined): Promise<Date> {
     const ahora = new Date();
     if (typeof en !== 'string') return ahora;
@@ -719,9 +775,16 @@ export function registrarRutasConductor(
   app.post('/api/conductor/solicitudes/:id/salir', async (req) => {
     const sesion = await sesionDesde(req);
     const solicitudId = Number((req.params as { id: string }).id);
+    const cuerpo = (req.body ?? {}) as { ocurridoEn?: string };
     return enTransaccion(pool, async (cliente) => {
-      const solicitud = await solicitudDelConductor(cliente, solicitudId, sesion.conductorId, ['ACEPTADO']);
-      await transicionarSolicitud(cliente, solicitudId, 'EN_CAMINO', 'conductor', 'app_conductor');
+      const solicitud = await solicitudDelConductor(
+        cliente, solicitudId, sesion.conductorId, ['ACEPTADO'], ['EN_CAMINO', 'RECOGIDO', 'COMPLETADO'],
+      );
+      if (solicitud.yaHecho) return { telefonoCliente: solicitud.telefonoCliente, yaHecho: true };
+      await transicionarSolicitud(
+        cliente, solicitudId, 'EN_CAMINO', 'conductor', 'app_conductor',
+        await momentoDeLaAccion(cliente, cuerpo.ocurridoEn, { solicitudId }),
+      );
       // Este es el momento de la revelación del teléfono (R3).
       return { telefonoCliente: solicitud.telefonoCliente };
     });
@@ -730,11 +793,17 @@ export function registrarRutasConductor(
   app.post('/api/conductor/solicitudes/:id/he-llegado', async (req) => {
     const sesion = await sesionDesde(req);
     const solicitudId = Number((req.params as { id: string }).id);
-    const cuerpo = (req.body ?? {}) as { lat?: number; lng?: number };
+    const cuerpo = (req.body ?? {}) as { lat?: number; lng?: number; ocurridoEn?: string };
     return enTransaccion(pool, async (cliente) => {
-      const solicitud = await solicitudDelConductor(cliente, solicitudId, sesion.conductorId, ['EN_CAMINO']);
+      const solicitud = await solicitudDelConductor(
+        cliente, solicitudId, sesion.conductorId, ['EN_CAMINO'], ['RECOGIDO', 'COMPLETADO'],
+      );
+      if (solicitud.yaHecho) {
+        return { llegadoEn: solicitud.llegadoEn, relojEsperaSeg: 0, yaHecho: true };
+      }
+      const momento = await momentoDeLaAccion(cliente, cuerpo.ocurridoEn, { solicitudId });
       const res = await cliente.query(
-        `UPDATE viaje SET llegado_en = COALESCE(llegado_en, now()),
+        `UPDATE viaje SET llegado_en = COALESCE(llegado_en, $4::timestamptz, now()),
                           lat_llegada = COALESCE($2, lat_llegada),
                           lng_llegada = COALESCE($3, lng_llegada)
          WHERE id = $1 RETURNING llegado_en`,
@@ -742,6 +811,7 @@ export function registrarRutasConductor(
           solicitud.viajeId,
           typeof cuerpo.lat === 'number' ? cuerpo.lat : null,
           typeof cuerpo.lng === 'number' ? cuerpo.lng : null,
+          momento,
         ],
       );
       const relojSeg = await relojEsperaSeg(cliente, sesion.conductorId);
@@ -752,27 +822,40 @@ export function registrarRutasConductor(
   app.post('/api/conductor/solicitudes/:id/cliente-ausente', async (req) => {
     const sesion = await sesionDesde(req);
     const solicitudId = Number((req.params as { id: string }).id);
+    const cuerpo = (req.body ?? {}) as { ocurridoEn?: string };
     return enTransaccion(pool, async (cliente) => {
-      const solicitud = await solicitudDelConductor(cliente, solicitudId, sesion.conductorId, ['EN_CAMINO']);
+      const solicitud = await solicitudDelConductor(
+        cliente, solicitudId, sesion.conductorId, ['EN_CAMINO'], ['CLIENTE_AUSENTE'],
+      );
+      if (solicitud.yaHecho) return { revisionManual: true, yaHecho: true };
+      const momento = await momentoDeLaAccion(cliente, cuerpo.ocurridoEn, { solicitudId });
       if (solicitud.llegadoEn === null) {
         throw errorHttp(409, 'Antes de declarar ausencia tienes que pulsar «he llegado» y esperar el reloj.');
       }
       const relojSeg = await relojEsperaSeg(cliente, sesion.conductorId);
+      // El reloj se mide contra CUÁNDO se pulsó, no contra cuándo llegó: una
+      // ausencia declarada sin red a su hora no puede rechazarse porque ahora,
+      // media hora después, «todavía no se había agotado».
       const restante = Math.ceil(
-        (solicitud.llegadoEn.getTime() + relojSeg * 1000 - Date.now()) / 1000,
+        (solicitud.llegadoEn.getTime() + relojSeg * 1000 - (momento ?? new Date()).getTime()) / 1000,
       );
       if (restante > 0) {
         throw errorHttp(409, `El reloj de espera aún no se ha agotado: quedan ${restante} segundos.`);
       }
 
-      await transicionarSolicitud(cliente, solicitudId, 'CLIENTE_AUSENTE', 'conductor', 'reloj_agotado');
-      // R4: si el cliente tenía sesión SSE viva, NUNCA sanción automática.
+      await transicionarSolicitud(
+        cliente, solicitudId, 'CLIENTE_AUSENTE', 'conductor', 'reloj_agotado', momento,
+      );
+      // R4: si el cliente tenía sesión SSE viva, NUNCA sanción automática. Y si
+      // la ausencia se declaró sin red, no se sabe si la tenía ENTONCES —la de
+      // ahora no dice nada—: ante la duda, como si la tuviera. Sancionar a
+      // alguien por un dato que no se tiene es peor que revisarlo a mano.
       const resultado = await procesarClienteAusente(
         cliente,
         solicitud.viajeId,
-        conexionesSse.tieneConexion(solicitud.dispositivoClienteId),
+        momento !== null || conexionesSse.tieneConexion(solicitud.dispositivoClienteId),
       );
-      await ajustarPresencia(cliente, sesion.conductorId, 'sistema', 'cliente_ausente');
+      await ajustarPresencia(cliente, sesion.conductorId, 'sistema', 'cliente_ausente', momento);
       return { revisionManual: !resultado.strikeAplicado };
     });
   });
@@ -780,7 +863,7 @@ export function registrarRutasConductor(
   app.post('/api/conductor/solicitudes/:id/recoger', async (req) => {
     const sesion = await sesionDesde(req);
     const solicitudId = Number((req.params as { id: string }).id);
-    const cuerpo = (req.body ?? {}) as { pin?: string; lat?: number; lng?: number };
+    const cuerpo = (req.body ?? {}) as { pin?: string; lat?: number; lng?: number; ocurridoEn?: string };
     // Validación manual sin PIN (estilo Cabify): el PIN es opcional; si la
     // app lo envía, debe coincidir. La recogida también puede marcarla sola
     // la proximidad GPS (procesarProximidad) antes de que nadie pulse nada.
@@ -788,7 +871,13 @@ export function registrarRutasConductor(
       throw errorHttp(400, 'El PIN, si se envía, son 4 dígitos.');
     }
     return enTransaccion(pool, async (cliente) => {
-      const solicitud = await solicitudDelConductor(cliente, solicitudId, sesion.conductorId, ['EN_CAMINO']);
+      const solicitud = await solicitudDelConductor(
+        cliente, solicitudId, sesion.conductorId, ['EN_CAMINO'], ['RECOGIDO', 'COMPLETADO'],
+      );
+      // Ya recogido —normalmente por la proximidad GPS mientras el taxista no
+      // tenía red—: no se toca nada. La hora de recogida buena es la primera.
+      if (solicitud.yaHecho) return { recogido: true, distanciaValidacionM: null, yaHecho: true };
+      const momento = await momentoDeLaAccion(cliente, cuerpo.ocurridoEn, { solicitudId });
       const viaje = await cliente.query('SELECT pin FROM viaje WHERE id = $1', [solicitud.viajeId]);
       if (cuerpo.pin !== undefined && viaje.rows[0].pin !== cuerpo.pin) {
         throw errorHttp(400, 'PIN incorrecto. Pídele al pasajero que te lo dicte otra vez.');
@@ -796,6 +885,7 @@ export function registrarRutasConductor(
       await transicionarSolicitud(
         cliente, solicitudId, 'RECOGIDO', 'conductor',
         cuerpo.pin !== undefined ? 'pin_validado' : 'confirmacion_manual',
+        momento,
       );
 
       // Señal antifraude (migración 010): lectura GPS única del conductor al
@@ -815,7 +905,7 @@ export function registrarRutasConductor(
         );
       }
       await cliente.query(
-        `UPDATE viaje SET validado_en = now(),
+        `UPDATE viaje SET validado_en = COALESCE($5::timestamptz, now()),
                           lat_validacion = $2, lng_validacion = $3, distancia_validacion_m = $4
          WHERE id = $1`,
         [
@@ -823,6 +913,7 @@ export function registrarRutasConductor(
           typeof cuerpo.lat === 'number' ? cuerpo.lat : null,
           typeof cuerpo.lng === 'number' ? cuerpo.lng : null,
           distanciaM,
+          momento,
         ],
       );
       return { recogido: true, distanciaValidacionM: distanciaM };
@@ -835,21 +926,25 @@ export function registrarRutasConductor(
   app.post('/api/conductor/solicitudes/:id/completar', async (req) => {
     const sesion = await sesionDesde(req);
     const solicitudId = Number((req.params as { id: string }).id);
+    const cuerpo = (req.body ?? {}) as { ocurridoEn?: string };
     return enTransaccion(pool, async (cliente) => {
       // Si la separación GPS ya cerró el viaje (COMPLETADO), aquí solo se
       // registra el precio del conductor; si no, el cierre es manual.
       const solicitud = await solicitudDelConductor(
         cliente, solicitudId, sesion.conductorId, ['RECOGIDO', 'COMPLETADO'],
       );
+      const momento = await momentoDeLaAccion(cliente, cuerpo.ocurridoEn, { solicitudId });
       if (solicitud.estado === 'RECOGIDO') {
-        await transicionarSolicitud(cliente, solicitudId, 'COMPLETADO', 'conductor', 'app_conductor');
+        await transicionarSolicitud(
+          cliente, solicitudId, 'COMPLETADO', 'conductor', 'app_conductor', momento,
+        );
         // Se libera una plaza: DISPONIBLE si estaba lleno, y si ya lo estaba
         // (llevaba a otros con hueco) no hay transición que hacer.
-        await ajustarPresencia(cliente, sesion.conductorId, 'conductor', 'viaje_cerrado');
+        await ajustarPresencia(cliente, sesion.conductorId, 'conductor', 'viaje_cerrado', momento);
       }
       await cliente.query(
-        'UPDATE viaje SET completado_en = COALESCE(completado_en, now()) WHERE id = $1',
-        [solicitud.viajeId],
+        'UPDATE viaje SET completado_en = COALESCE(completado_en, $2::timestamptz, now()) WHERE id = $1',
+        [solicitud.viajeId, momento],
       );
       // Con suscripción no hay comisión por viaje: el cierre no cobra nada.
       const umbral = await leerParametroEntero(cliente, 'umbral_saldo_bajo_xaf');

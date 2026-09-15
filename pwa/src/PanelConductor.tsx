@@ -11,7 +11,7 @@ import {
   type DatosConductor, type EstadoConductor, type Posicion, type PuntoMapa,
   type Zona, type ZonaConDemanda,
 } from './api';
-import { mensajeDeError } from './conexion';
+import { mensajeDeError, ErrorDeRed, useConexion, ErrorDelServidor } from './conexion';
 import { escucharBrujula, pedirPermisoBrujula } from './brujula';
 import { metrosEntre, porCercaniaA, rumboEntre, velocidadKmhEntre } from './geo';
 import { crearT, localeVoz, type Idioma } from './i18n';
@@ -21,8 +21,22 @@ import PanelLlamada from './PanelLlamada';
 import Recarga from './Recarga';
 import MandosFlotantes from './MandosFlotantes';
 import { anotarRastro, olvidarRastro, pendientesRastro } from './rastroLocal';
+import {
+  encolar, guardarUltimo, sincronizar, ultimoGuardado, usePendientes,
+} from './sinRed';
 import VistaConductor from './VistaConductor';
 import { prepararSonido, sonarCarreraCancelada, sonarNuevaCarrera } from './sonidos';
+
+// Las acciones de un viaje que se pueden hacer sin red y mandar después. Son
+// hechos —ya ocurrieron en la calle—, así que apuntarlos tarde con su hora es
+// correcto. Aceptar y rechazar no están: son decisiones que valen ahora.
+const SE_PUEDEN_HACER_SIN_RED: Record<string, string> = {
+  salir: 'accion.voyDeCamino',
+  'he-llegado': 'accion.heLlegado',
+  recoger: 'accion.pasajeroRecogido',
+  completar: 'accion.viajeTerminado',
+  'cliente-ausente': 'accion.noAparece',
+};
 
 export default function PanelConductor({
   conductor, puntos, idioma, alAbrirAjustes, alAbrirEstadisticas, alAbrirCampo,
@@ -45,6 +59,13 @@ export default function PanelConductor({
   const [aviso, setAviso] = useState('');
   const [ocupado, setOcupado] = useState(false);
   const [enRecarga, setEnRecarga] = useState(false);
+  // Sin red (migración 057): la hora de los datos que se están enseñando si no
+  // son de ahora, y cuántas acciones esperan a la red para salir. null = datos
+  // frescos.
+  const [datosDe, setDatosDe] = useState<string | null>(null);
+  const ultimaFrescura = useRef<string | null>(null);
+  const pendientes = usePendientes();
+  const enLinea = useConexion();
   // Panel recogido: conduciendo, lo que hace falta es el plano entero.
   const [panelPlegado, setPanelPlegado] = useState(false);
   const [demanda, setDemanda] = useState<{ zonas: ZonaConDemanda[]; ventanaMin: number } | null>(null);
@@ -209,8 +230,15 @@ export default function PanelConductor({
 
   const refrescar = useCallback(async () => {
     try {
+      // Lo que se hizo sin red, ANTES de pedir el estado. Si no, el estado de
+      // ahora —que todavía no sabe que se pulsó «recogido»— pisaría en pantalla
+      // lo que el taxista ya hizo, y el botón volvería atrás un instante.
+      await sincronizarBandeja();
       const nuevo = await api.estadoConductor();
       setEstado(nuevo);
+      guardarUltimo('conductor', nuevo);
+      ultimaFrescura.current = new Date().toISOString();
+      setDatosDe(null);
 
       // Aviso sonoro solo la primera vez que aparece cada oferta: si sonara en
       // cada refresco, el taxista apagaría el sonido en cinco minutos.
@@ -227,9 +255,30 @@ export default function PanelConductor({
         if (!vivas.has(id)) ofertasAvisadas.current.delete(id);
       }
     } catch (error) {
+      if (error instanceof ErrorDeRed || (error instanceof ErrorDelServidor && error.estado >= 500)) {
+        // Sin red —o con el servidor caído, que para quien conduce es lo
+        // mismo—: se enseña lo último que se supo, CON SU HORA. Si la
+        // aplicación acaba de abrirse y no hay nada en pantalla, lo guardado.
+        // Sin las ofertas: aceptar necesita red, y una oferta vieja en pantalla
+        // solo invita a pulsar algo que no puede salir bien.
+        const guardado = ultimoGuardado<EstadoConductor>('conductor');
+        setEstado((actual) => actual ?? (guardado ? { ...guardado.valor, ofertas: [] } : null));
+        setDatosDe(ultimaFrescura.current ?? guardado?.guardadoEn ?? null);
+      }
       setAviso(mensajeDeError(error, t('aviso.sinConexion')));
     }
   }, []);
+
+  // Manda lo que se hizo sin red. Si el servidor rechaza algo que ya no tiene
+  // arreglo —el pasajero canceló mientras tanto—, se dice qué y por qué.
+  async function sincronizarBandeja() {
+    const r = await sincronizar(api.enviarPendiente, (e) => e instanceof ErrorDeRed);
+    if (r.rechazadas.length > 0) {
+      setAviso(r.rechazadas
+        .map((x) => t('sinRed.rechazada', { accion: x.descripcion, motivo: x.motivo }))
+        .join(' '));
+    }
+  }
 
   // Registro del dispositivo como este conductor.
   useEffect(() => {
@@ -307,6 +356,13 @@ export default function PanelConductor({
     }
   };
 
+  // En cuanto vuelve la red, lo pendiente sale y el estado se pone al día. No
+  // se espera al siguiente latido: pueden ser veinte segundos con el pasajero
+  // ya fuera del coche.
+  useEffect(() => {
+    if (enLinea) void refrescar();
+  }, [enLinea, refrescar]);
+
   // Heartbeat y refresco mientras está en servicio. 20 s en primer plano: la
   // ventana del servidor son 120 s, así que sobra margen.
   useEffect(() => {
@@ -332,8 +388,10 @@ export default function PanelConductor({
           if (respuesta.avisoTurnoHoras !== null) {
             setAvisoTurno(respuesta.avisoTurnoHoras);
           }
-          // El latido ha salido: hay red. Es el momento de vaciar lo que se
-          // apuntó mientras no la había.
+          // El latido ha salido: hay red. Primero las acciones —entrar en
+          // servicio incluida— y después el recorrido: el servidor solo acepta
+          // puntos que caigan dentro de un turno que ya conozca.
+          await sincronizarBandeja();
           await vaciarRastroPendiente();
         } catch {
           // Sin red: el siguiente latido reintenta, y el recorrido se sigue
@@ -445,13 +503,63 @@ export default function PanelConductor({
       });
       await refrescar();
     } catch (error) {
-      // Los mensajes del servidor son útiles tal cual: «expiró hace N
-      // segundos», «quedan N segundos»…
-      setAviso(mensajeDeError(error, t('aviso.noSePudo')));
-      await refrescar();
+      const etiqueta = SE_PUEDEN_HACER_SIN_RED[tipo];
+      if (error instanceof ErrorDeRed && etiqueta !== undefined) {
+        // Sin red: se guarda con la hora de ahora y la pantalla avanza como si
+        // hubiera llegado. Saldrá sola en cuanto haya conexión.
+        const posicion = await coordenadasOportunistas();
+        await encolar({
+          ruta: `/api/conductor/solicitudes/${solicitudId}/${tipo}`,
+          cuerpo: { ...cuerpo, ...(posicion ?? {}) },
+          descripcion: t(etiqueta),
+        });
+        avanzarSinRed(solicitudId, tipo);
+        setAviso(t('sinRed.guardada'));
+      } else if (error instanceof ErrorDeRed) {
+        // Aceptar o rechazar una carrera: valen ahora o nunca.
+        setAviso(t('sinRed.necesitaRed'));
+      } else {
+        // Los mensajes del servidor son útiles tal cual: «expiró hace N
+        // segundos», «quedan N segundos»…
+        setAviso(mensajeDeError(error, t('aviso.noSePudo')));
+        await refrescar();
+      }
     } finally {
       setOcupado(false);
     }
+  }
+
+  // Lo que la pantalla tiene que enseñar después de una acción que se guardó
+  // sin red, sin esperar a que el servidor lo confirme. Se guarda también como
+  // último estado: si la aplicación se cierra y se vuelve a abrir sin red, el
+  // taxista tiene que ver el viaje como lo dejó, no como estaba antes.
+  function avanzarSinRed(solicitudId: number, tipo: string) {
+    setEstado((e) => {
+      if (!e) return e;
+      const ahora = new Date().toISOString();
+      let pasajeros = e.pasajeros.map((p) => {
+        if (p.solicitudId !== solicitudId) return p;
+        // El tiempo de llegada se quita al cambiar de fase: era hasta RECOGER
+        // al pasajero, y sin red no hay forma de calcular el nuevo hasta su
+        // destino. Dejarlo enseñaba «llegas en 1 min» con el pasajero recién
+        // subido a un viaje de veinte.
+        const sinTiempo = { etaMin: null, distanciaM: null };
+        if (tipo === 'salir') return { ...p, ...sinTiempo, estado: 'EN_CAMINO' };
+        if (tipo === 'he-llegado') return { ...p, llegadoEn: p.llegadoEn ?? ahora };
+        if (tipo === 'recoger') return { ...p, ...sinTiempo, estado: 'RECOGIDO' };
+        return p;
+      });
+      if (tipo === 'completar' || tipo === 'cliente-ausente') {
+        pasajeros = pasajeros.filter((p) => p.solicitudId !== solicitudId);
+      }
+      const nuevo = {
+        ...e,
+        pasajeros,
+        pasajerosABordo: pasajeros.filter((p) => p.estado === 'RECOGIDO').length,
+      };
+      guardarUltimo('conductor', nuevo);
+      return nuevo;
+    });
   }
 
   async function alternarServicio() {
@@ -468,9 +576,34 @@ export default function PanelConductor({
           setAviso(t('aviso.sinUbicacionServicio'));
           return;
         }
-        await api.servicio(true, donde);
+        try {
+          await api.servicio(true, donde);
+        } catch (error) {
+          if (!(error instanceof ErrorDeRed)) throw error;
+          // Sin red también se entra: el GPS funciona igual, así que el
+          // recorrido se graba desde AHORA y no desde que vuelva la cobertura.
+          // Carreras no llegarán hasta entonces, y se le dice.
+          await encolar({
+            ruta: '/api/conductor/servicio',
+            cuerpo: { enServicio: true, ...donde },
+            descripcion: t('accion.entrarServicio'),
+          });
+          cambiarServicioSinRed(true);
+          return;
+        }
       } else {
-        await api.servicio(false);
+        try {
+          await api.servicio(false);
+        } catch (error) {
+          if (!(error instanceof ErrorDeRed)) throw error;
+          await encolar({
+            ruta: '/api/conductor/servicio',
+            cuerpo: { enServicio: false },
+            descripcion: t('accion.salirServicio'),
+          });
+          cambiarServicioSinRed(false);
+          return;
+        }
       }
       await refrescar();
     } catch (error) {
@@ -478,6 +611,16 @@ export default function PanelConductor({
     } finally {
       setOcupado(false);
     }
+  }
+
+  function cambiarServicioSinRed(dentro: boolean) {
+    setEstado((e) => {
+      if (!e) return e;
+      const nuevo = { ...e, estado: dentro ? 'DISPONIBLE' : 'DESCONECTADO', ofertas: [] };
+      guardarUltimo('conductor', nuevo);
+      return nuevo;
+    });
+    setAviso(t(dentro ? 'sinRed.enServicioSinRed' : 'sinRed.guardada'));
   }
 
   async function suscribir() {
@@ -584,6 +727,7 @@ export default function PanelConductor({
         demanda={demanda}
         aviso={aviso}
         avisoTurno={avisoTurno}
+        sinRed={datosDe !== null || pendientes > 0 ? { datosDe, pendientes } : null}
         ocupado={ocupado}
         t={t}
         acciones={{

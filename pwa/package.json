@@ -9,7 +9,7 @@
     "compilar-mapa": "node scripts/compilar-mapa.mjs",
     "construir": "vite build && node scripts/generar-sw.mjs",
     "previsualizar": "vite preview",
-    "probar": "tsx --test src/rutas.prueba.ts src/proyeccion.prueba.ts src/geo.prueba.ts"
+    "probar": "tsx --test src/rutas.prueba.ts src/proyeccion.prueba.ts src/geo.prueba.ts src/sinRed.prueba.ts"
   },
   "dependencies": {
     "react": "^18.3.1",

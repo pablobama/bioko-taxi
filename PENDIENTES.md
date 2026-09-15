@@ -4,6 +4,27 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
 
 ## Abiertos
 
+- **[P57-01] La app nativa Android todavía no guarda acciones sin red.** La
+  PWA sí (migración 057): los botones del viaje y entrar o salir de servicio
+  se guardan con su hora y salen al volver la cobertura. La app Android graba
+  el recorrido sin red desde la 051, pero sus BOTONES siguen llamando a la API
+  directamente: sin cobertura, «pasajero recogido» da error como antes. El
+  servidor ya está listo —acepta `ocurridoEn` y trata cada acción como
+  repetible—, así que falta solo el lado del teléfono: una cola como
+  `ColaRastro` para las acciones, vaciada en el latido antes del recorrido.
+
+- **[P57-02] El panel del operador no funciona sin red.** Ni guarda lo último
+  que vio ni sus acciones esperan. Es un puesto de trabajo que normalmente
+  tiene conexión, así que se dejó para después; si el operador trabaja desde
+  el móvil en la calle, habrá que hacerlo.
+
+- **[P57-03] Pedir, aceptar y cancelar necesitan red, a propósito.** No es un
+  hueco: una petición que sale veinte minutos tarde manda un taxi a quien ya
+  se fue, una aceptación tardía le quita la carrera a otro taxista, y una
+  cancelación tardía llega con el taxista en la puerta. La aplicación lo dice
+  claro. Si algún día se quiere «pedir en cuanto haya red», tiene que llevar
+  una caducidad corta y explícita, y decírselo al pasajero.
+
 - **[P56-02] «Al volante» todavía supone a qué velocidad se va por cada calle.**
   Con puntos cada minuto no se sabe cuánto de ese minuto fue un semáforo; se
   estima con la velocidad típica de cada clase de calle del enrutador. Si en

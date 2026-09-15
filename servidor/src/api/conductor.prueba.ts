@@ -489,3 +489,160 @@ test('el latido mueve el barrio del conductor al que le corresponde por GPS', as
   );
   assert.equal(Number(presencia.rows[0].zona_id), Number(zonaLlegada.zonaId));
 });
+
+// --- Acciones hechas sin red (migración 057) -----------------------------
+
+// Un viaje aceptado y con el taxista de camino, listo para las acciones.
+async function viajeEnCamino(): Promise<{ conductor: ConductorPrueba; solicitudId: number; uuidCliente: string }> {
+  await crearEscenario();
+  const conductor = await darDeAlta();
+  await registrarYConectar(conductor);
+  const { solicitudId, uuidCliente } = await pedirTaxi();
+  assert.equal((await llamar('POST', `/api/conductor/solicitudes/${solicitudId}/aceptar`, conductor.uuid)).codigo, 200);
+  assert.equal((await llamar('POST', `/api/conductor/solicitudes/${solicitudId}/salir`, conductor.uuid)).codigo, 200);
+  return { conductor, solicitudId, uuidCliente };
+}
+
+const haceMinutos = (m: number) => new Date(Date.now() - m * 60_000);
+
+test('sin red: la acción llega tarde y se apunta con la hora en que se pulsó', async () => {
+  await crearEscenario();
+  const conductor = await darDeAlta();
+  await registrarYConectar(conductor);
+  const { solicitudId } = await pedirTaxi();
+  await llamar('POST', `/api/conductor/solicitudes/${solicitudId}/aceptar`, conductor.uuid);
+  // Sin cobertura desde que aceptó: «voy de camino» y «recogido» pulsados
+  // sin red, y los dos llegan ahora, en orden. (La aceptación se apuntó hace
+  // un instante, así que el servidor acercará las dos horas hasta ahí: lo que
+  // se prueba es que, corrija lo que corrija, lo haga igual en todas partes.)
+  const salida = haceMinutos(6);
+  const recogida = haceMinutos(2);
+  const ruta = `/api/conductor/solicitudes/${solicitudId}`;
+  await llamar('POST', `${ruta}/salir`, conductor.uuid, { ocurridoEn: salida.toISOString() });
+  const recoger = await llamar('POST', `${ruta}/recoger`, conductor.uuid, { ocurridoEn: recogida.toISOString() });
+  assert.equal(recoger.codigo, 200, JSON.stringify(recoger.json));
+
+  const r = await pool.query(
+    `SELECT v.validado_en, t.ocurrio_en
+     FROM viaje v JOIN transicion t ON t.solicitud_id = v.solicitud_id AND t.estado_nuevo = 'RECOGIDO'
+     WHERE v.solicitud_id = $1`,
+    [solicitudId],
+  );
+  // La hora de recogida del viaje y la del registro de estados son LA MISMA:
+  // si solo se corrigiera una, el mismo hecho tendría dos horas.
+  assert.equal(
+    new Date(r.rows[0].validado_en).getTime(), new Date(r.rows[0].ocurrio_en).getTime(),
+    'viaje y registro de estados dicen la misma hora',
+  );
+});
+
+test('sin red: una hora anterior a lo ya apuntado se acerca, igual en todas partes', async () => {
+  const { conductor, solicitudId } = await viajeEnCamino();
+  // «Voy de camino» se apuntó hace un instante; llega un «recogido» que dice
+  // ser de hace diez minutos. Recogido antes de salir no puede ser.
+  const r = await llamar('POST', `/api/conductor/solicitudes/${solicitudId}/recoger`, conductor.uuid, {
+    ocurridoEn: haceMinutos(10).toISOString(),
+  });
+  assert.equal(r.codigo, 200);
+  const fila = await pool.query(
+    `SELECT v.validado_en,
+            (SELECT COALESCE(ocurrio_en, creado_en) FROM transicion
+             WHERE solicitud_id = v.solicitud_id AND estado_nuevo = 'EN_CAMINO') AS salida,
+            (SELECT ocurrio_en FROM transicion
+             WHERE solicitud_id = v.solicitud_id AND estado_nuevo = 'RECOGIDO') AS recogida
+     FROM viaje v WHERE v.solicitud_id = $1`,
+    [solicitudId],
+  );
+  const { validado_en: validado, salida, recogida: recogidaLog } = fila.rows[0];
+  assert.ok(new Date(validado) >= new Date(salida), 'la recogida no puede ser antes de salir');
+  assert.equal(new Date(validado).getTime(), new Date(recogidaLog).getTime(), 'y la misma hora en los dos sitios');
+});
+
+test('sin red: repetir una acción ya hecha no es un error', async () => {
+  const { conductor, solicitudId } = await viajeEnCamino();
+  const ruta = `/api/conductor/solicitudes/${solicitudId}`;
+  // La cola reenvía si no llegó la confirmación: la segunda vez tiene que dar
+  // lo mismo, no un 409 que la aplicación enseñaría como fallo.
+  for (const accion of ['salir', 'recoger', 'recoger', 'completar', 'completar']) {
+    const r = await llamar('POST', `${ruta}/${accion}`, conductor.uuid);
+    assert.equal(r.codigo, 200, `${accion}: ${JSON.stringify(r.json)}`);
+  }
+  const estado = await pool.query('SELECT estado FROM solicitud WHERE id = $1', [solicitudId]);
+  assert.equal(estado.rows[0].estado, 'COMPLETADO');
+});
+
+test('sin red: si la proximidad ya recogió al pasajero, el «recogido» tardío no pisa nada', async () => {
+  const { conductor, solicitudId } = await viajeEnCamino();
+  // Mientras el taxista no tenía red, el sistema lo marcó recogido solo.
+  await enTransaccion(pool, (c) => c.query(
+    `UPDATE viaje SET validado_en = now() - interval '5 minutes' WHERE solicitud_id = $1`, [solicitudId],
+  ));
+  const { transicionarSolicitud } = await import('../dominio/transiciones.js');
+  await enTransaccion(pool, (c) => transicionarSolicitud(c, solicitudId, 'RECOGIDO', 'sistema', 'proximidad_gps'));
+  const antes = await pool.query('SELECT validado_en FROM viaje WHERE solicitud_id = $1', [solicitudId]);
+
+  const tardio = await llamar('POST', `/api/conductor/solicitudes/${solicitudId}/recoger`, conductor.uuid, {
+    ocurridoEn: haceMinutos(2).toISOString(),
+  });
+  assert.equal(tardio.codigo, 200);
+  assert.equal(tardio.json.yaHecho, true);
+  const despues = await pool.query('SELECT validado_en FROM viaje WHERE solicitud_id = $1', [solicitudId]);
+  assert.equal(
+    new Date(despues.rows[0].validado_en).getTime(), new Date(antes.rows[0].validado_en).getTime(),
+    'la hora de recogida buena es la primera',
+  );
+});
+
+test('sin red: una acción sobre un viaje que el pasajero canceló mientras tanto se rechaza', async () => {
+  await crearEscenario();
+  const conductor = await darDeAlta();
+  await registrarYConectar(conductor);
+  const { solicitudId } = await pedirTaxi();
+  await llamar('POST', `/api/conductor/solicitudes/${solicitudId}/aceptar`, conductor.uuid);
+  // El pasajero canceló, y al taxista le llega tarde su «voy de camino».
+  const { transicionarSolicitud } = await import('../dominio/transiciones.js');
+  await enTransaccion(pool, (c) => transicionarSolicitud(c, solicitudId, 'CANCELADO_CLIENTE', 'cliente'));
+  const salir = await llamar('POST', `/api/conductor/solicitudes/${solicitudId}/salir`, conductor.uuid, {
+    ocurridoEn: haceMinutos(1).toISOString(),
+  });
+  assert.equal(salir.codigo, 409, 'no hay arreglo: la aplicación lo enseña y lo descarta');
+});
+
+test('sin red: una hora imposible no se cree', async () => {
+  const { conductor, solicitudId } = await viajeEnCamino();
+  // Un reloj de móvil con días de desfase, o del futuro.
+  for (const ocurridoEn of [new Date(Date.now() + 3_600_000).toISOString(), haceMinutos(60 * 48).toISOString()]) {
+    const { solicitudId: otra } = { solicitudId };
+    void otra;
+    const r = await llamar('POST', `/api/conductor/solicitudes/${solicitudId}/he-llegado`, conductor.uuid, { ocurridoEn });
+    assert.equal(r.codigo, 200);
+  }
+  const viaje = await pool.query('SELECT llegado_en FROM viaje WHERE solicitud_id = $1', [solicitudId]);
+  const llegado = new Date(viaje.rows[0].llegado_en).getTime();
+  assert.ok(Math.abs(llegado - Date.now()) < 60_000, 'con una hora imposible manda el reloj del servidor');
+});
+
+test('sin red: el reloj de espera se mide contra cuándo se pulsó «no aparece»', async () => {
+  const { conductor, solicitudId } = await viajeEnCamino();
+  // Llegó hace media hora y declaró la ausencia hace veinte minutos, sin red.
+  await pool.query(`UPDATE viaje SET llegado_en = now() - interval '30 minutes' WHERE solicitud_id = $1`, [solicitudId]);
+  const r = await llamar('POST', `/api/conductor/solicitudes/${solicitudId}/cliente-ausente`, conductor.uuid, {
+    ocurridoEn: haceMinutos(20).toISOString(),
+  });
+  assert.equal(r.codigo, 200, JSON.stringify(r.json));
+  // Y como no se sabe si el pasajero estaba conectado ENTONCES, no hay sanción
+  // automática: se revisa a mano.
+  assert.equal(r.json.revisionManual, true);
+});
+
+test('sin red: salir de servicio dos veces no es un error', async () => {
+  await crearEscenario();
+  const conductor = await darDeAlta();
+  await registrarYConectar(conductor);
+  const pulsado = haceMinutos(15);
+  const una = await llamar('POST', '/api/conductor/servicio', conductor.uuid, { enServicio: false, ocurridoEn: pulsado.toISOString() });
+  const dos = await llamar('POST', '/api/conductor/servicio', conductor.uuid, { enServicio: false, ocurridoEn: pulsado.toISOString() });
+  assert.equal(una.codigo, 200);
+  assert.equal(dos.codigo, 200);
+  assert.equal(dos.json.yaHecho, true);
+});

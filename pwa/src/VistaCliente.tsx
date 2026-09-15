@@ -6,6 +6,7 @@ import type { DestinoSugerido, DetalleSolicitud, ReferenciaSugerida, TaxisCerca 
 import CompartirViaje from './CompartirViaje';
 import IconoCategoria from './IconoCategoria';
 import type { crearT } from './i18n';
+import AvisoSinRed from './AvisoSinRed';
 
 type T = ReturnType<typeof crearT>;
 
@@ -54,6 +55,8 @@ export interface PropiedadesVistaCliente {
   buscadorOrigen: React.ReactNode;
   // Hoja recogida: el plano se ve entero. Lo manda el botón flotante.
   plegada?: boolean;
+  // Sin red (migración 057): de cuándo es lo que se ve y cuánto espera a salir.
+  sinRed?: { datosDe: string | null; pendientes: number } | null;
 }
 
 function Estrellas({ media, valoraciones, t }: { media: number | null; valoraciones: number; t: T }) {
@@ -72,11 +75,12 @@ function Estrellas({ media, valoraciones, t }: { media: number | null; valoracio
 export default function VistaCliente({
   fase, detalle, origen, destino, gpsResuelto, hayCoordenadas, taxisCerca,
   valorada, aviso, t, sugeridos, escribiendo, puedeDeshacer, segundosGracia,
-  buscadorDestino, buscadorOrigen, plegada = false, acciones,
+  buscadorDestino, buscadorOrigen, plegada = false, sinRed = null, acciones,
 }: PropiedadesVistaCliente & { acciones: AccionesCliente }) {
   return (
     <section className={plegada ? 'hoja hoja-plegada' : 'hoja'} aria-hidden={plegada}>
       {aviso && <p className="aviso">{aviso}</p>}
+      <AvisoSinRed sinRed={sinRed} t={t} />
 
       {fase === 'destino' && (
         <>

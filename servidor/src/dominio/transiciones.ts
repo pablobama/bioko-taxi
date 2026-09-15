@@ -66,13 +66,33 @@ export async function registrarTransicion(
   // turno terminó en la señal, y las estadísticas tienen que verlo así.
   ocurrioEn: Date | null = null,
 ): Promise<void> {
+  // Una hora del pasado nunca puede quedar POR DETRÁS del último cambio de la
+  // misma entidad (migración 057). Pasa con las acciones hechas sin red: un
+  // «recogido» de las 10:00 que llega a las 10:30, cuando a las 10:05 ya se
+  // había apuntado otra cosa. Colarlo detrás desordenaría la historia, y de
+  // ese orden salen el tiempo en servicio y la duración de los viajes. Se
+  // acerca hasta el último cambio: es lo más temprano que puede haber pasado
+  // sabiendo lo que ya se sabe. Y nunca en el futuro.
+  let cuando = ocurrioEn;
+  if (cuando !== null) {
+    const ultimo = await cliente.query(
+      `SELECT max(COALESCE(ocurrio_en, creado_en)) AS en FROM transicion
+       WHERE ambito = $1 AND (($1 = 'solicitud' AND solicitud_id = $2)
+                           OR ($1 = 'conductor' AND conductor_id = $3))`,
+      [ambito, solicitudId, conductorId],
+    );
+    const minimo = ultimo.rows[0]?.en ? new Date(ultimo.rows[0].en) : null;
+    if (minimo !== null && cuando < minimo) cuando = minimo;
+    const ahora = new Date();
+    if (cuando > ahora) cuando = ahora;
+  }
   await cliente.query(
     `INSERT INTO transicion
        (ambito, solicitud_id, conductor_id, estado_anterior, estado_nuevo, actor,
         origen_evento, ocurrio_en)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
     [ambito, solicitudId, conductorId, estadoAnterior, estadoNuevo, actor,
-     origenEvento, ocurrioEn],
+     origenEvento, cuando],
   );
 }
 
@@ -156,6 +176,9 @@ export async function transicionarSolicitud(
   estadoDestino: string,
   actor: Actor,
   origenEvento?: string,
+  // Cuándo pasó de verdad, si fue antes de llegar aquí: una acción hecha sin
+  // red que se sincroniza después (migración 057).
+  ocurrioEn: Date | null = null,
 ): Promise<ResultadoTransicion> {
   // FOR UPDATE: dos transiciones concurrentes sobre la misma solicitud se
   // serializan; la segunda ve el estado que dejó la primera.
@@ -172,7 +195,7 @@ export async function transicionarSolicitud(
   await cliente.query('UPDATE solicitud SET estado = $1 WHERE id = $2', [estadoDestino, solicitudId]);
   await registrarTransicion(
     cliente, 'solicitud', solicitudId, null, estadoAnterior, estadoDestino,
-    actor, origenEvento ?? null,
+    actor, origenEvento ?? null, ocurrioEn,
   );
   return { estadoAnterior, estadoNuevo: estadoDestino };
 }

@@ -52,8 +52,13 @@ export async function entrarEnServicio(
   conductorId: number,
   zonaId: number,
   ahora: Date = new Date(),
+  // Si entró sin red y se sincroniza después (migración 057): el turno empezó
+  // entonces, pero el latido es de ahora, que es cuando se le puede alcanzar.
+  ocurrioEn: Date | null = null,
 ): Promise<void> {
-  await transicionarConductor(cliente, conductorId, 'DISPONIBLE', 'conductor', 'entrar_en_servicio');
+  await transicionarConductor(
+    cliente, conductorId, 'DISPONIBLE', 'conductor', 'entrar_en_servicio', ocurrioEn,
+  );
   await registrarHeartbeat(cliente, conductorId, zonaId, ahora);
   // Desde cuándo lleva el turno: de aquí salen el aviso de la hora y la red
   // de seguridad del abandono (migración 049). Se pone al ENTRAR y no en cada
@@ -61,15 +66,18 @@ export async function entrarEnServicio(
   await cliente.query(
     `UPDATE presencia SET en_servicio_desde = $2, avisado_turno_en = NULL
      WHERE conductor_id = $1`,
-    [conductorId, ahora],
+    [conductorId, ocurrioEn ?? ahora],
   );
 }
 
 export async function salirDeServicio(
   cliente: pg.ClientBase,
   conductorId: number,
+  ocurrioEn: Date | null = null,
 ): Promise<void> {
-  await transicionarConductor(cliente, conductorId, 'DESCONECTADO', 'conductor', 'salir_de_servicio');
+  await transicionarConductor(
+    cliente, conductorId, 'DESCONECTADO', 'conductor', 'salir_de_servicio', ocurrioEn,
+  );
   await cliente.query(
     `UPDATE presencia SET en_servicio_desde = NULL, avisado_turno_en = NULL
      WHERE conductor_id = $1`,
