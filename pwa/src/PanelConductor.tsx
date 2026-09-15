@@ -299,7 +299,7 @@ export default function PanelConductor({
       const pendientes = await pendientesRastro(100);
       if (pendientes.length === 0) return;
       await api.subirRastro(
-        pendientes.map((p) => ({ lat: p.lat, lng: p.lng, en: p.en })),
+        pendientes.map((p) => ({ lat: p.lat, lng: p.lng, en: p.en, precision: p.precision ?? null })),
       );
       await olvidarRastro(pendientes.map((p) => p.id!).filter((id) => id !== undefined));
       // Si venía menos de un lote lleno, ya no queda nada.
@@ -404,7 +404,7 @@ export default function PanelConductor({
         // Y el recorrido se apunta en el propio móvil, haya red o no
         // (migración 051). Solo en servicio: fuera del turno no se registra
         // por dónde anda, ni aquí ni en el servidor.
-        if (enServicioRef.current) void anotarRastro(nueva);
+        if (enServicioRef.current) void anotarRastro(nueva, new Date(p.timestamp));
       },
       () => undefined,
       { enableHighAccuracy: true, maximumAge: 5000 },

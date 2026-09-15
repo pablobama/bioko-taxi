@@ -233,6 +233,29 @@ async function principal(): Promise<void> {
       const mediana = intervalos[Math.floor(intervalos.length / 2)] ?? 0;
       console.log(`   Intervalo mediano entre puntos: ${mediana.toFixed(0)} s (lo normal, 45-60)`);
 
+      // Calidad de cada punto (migración 054). Los puntos de antes de la 054
+      // salen todos «sin precisión»: no es que fueran buenos, es que no se
+      // sabía. A partir de la 054, lo peor de 50 m ya no debería aparecer.
+      const calidad = await cliente.query(
+        `SELECT count(*)::int AS total,
+                count(precision_m)::int AS con,
+                percentile_cont(0.5) WITHIN GROUP (ORDER BY precision_m) AS mediana,
+                percentile_cont(0.9) WITHIN GROUP (ORDER BY precision_m) AS p90,
+                count(*) FILTER (WHERE precision_m > 50)::int AS malos
+         FROM rastro WHERE conductor_id = $1 AND creado_en >= $2 AND creado_en < $3`,
+        [conductor.id, desde, hasta],
+      );
+      const q = calidad.rows[0];
+      if (q.con === 0) {
+        console.log('   Precisión: NINGÚN punto la trae. O son de antes de la migración 054,');
+        console.log('   o el móvil usa una versión vieja de la app.');
+      } else {
+        console.log(`   Precisión: ${q.con}/${q.total} puntos la traen · mediana ±${Number(q.mediana).toFixed(0)} m · 9 de cada 10 por debajo de ±${Number(q.p90).toFixed(0)} m`);
+        if (q.malos > 0) {
+          console.log(`   AVISO: ${q.malos} punto(s) con más de ±50 m. No debería haber: revisa la versión.`);
+        }
+      }
+
       // Puntos fuera de turno: no debería haber ni uno.
       const fuera = await cliente.query(
         `WITH marcas AS (

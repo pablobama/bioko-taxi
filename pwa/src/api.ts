@@ -624,7 +624,7 @@ export const api = {
   // El recorrido apuntado sin cobertura (migración 051). Va aparte del latido:
   // el latido tiene que ser barato y salir cada veinte segundos, y esto es un
   // lote que solo aparece cuando vuelve la red.
-  subirRastro: (puntos: Array<{ lat: number; lng: number; en: string }>) =>
+  subirRastro: (puntos: Array<{ lat: number; lng: number; en: string; precision: number | null }>) =>
     pedirJson<{ recibidos: number; guardados: number; descartados: number }>(
       '/api/conductor/rastro',
       { method: 'POST', body: JSON.stringify({ puntos }) },
@@ -1007,6 +1007,10 @@ export interface Posicion {
   // Radio de error en metros, tal cual lo da el navegador. null si el GPS va
   // fingido por la URL en pruebas locales.
   precision: number | null;
+  // Cuándo se TOMÓ, en ISO (migración 054). El servidor se la cree dentro de
+  // un margen; sin ella pone la hora de llegada, que llega hasta ocho segundos
+  // tarde y estropea la velocidad de cada tramo.
+  en?: string;
 }
 
 export function coordenadasOportunistas(
@@ -1039,6 +1043,7 @@ export function coordenadasOportunistas(
         lat: mejor.coords.latitude,
         lng: mejor.coords.longitude,
         precision: mejor.coords.accuracy,
+        en: new Date(mejor.timestamp).toISOString(),
       });
     };
 

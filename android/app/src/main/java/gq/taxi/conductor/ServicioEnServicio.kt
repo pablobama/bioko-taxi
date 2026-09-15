@@ -44,7 +44,7 @@ class ServicioEnServicio : Service() {
             ejecutor.execute {
                 try {
                     val posicion = Ubicacion.actual(this@ServicioEnServicio)
-                    Api.heartbeat(this@ServicioEnServicio, posicion?.latitude, posicion?.longitude)
+                    Api.heartbeat(this@ServicioEnServicio, posicion)
                     // El latido ha salido: hay red. Es el momento de vaciar lo
                     // que se apuntó mientras no la había.
                     subirRecorridoPendiente()

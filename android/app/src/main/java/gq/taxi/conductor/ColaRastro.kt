@@ -36,6 +36,13 @@ object ColaRastro {
     private const val INTERVALO_MIN_MS = 45_000L
     private const val DISTANCIA_MIN_M = 40f
     private const val ANCLAJE_MS = 300_000L
+    // Y `rastro_precision_maxima_m` (migración 054). Importa aquí más que en
+    // ningún otro sitio: esta app pide posiciones también al proveedor de RED,
+    // para que el latido tenga algo dentro de un edificio, y esas lecturas
+    // vienen con cientos de metros de error. Sirven para decir «está por esta
+    // zona»; en el recorrido dibujan líneas que no existieron y suman
+    // kilómetros inventados.
+    private const val PRECISION_MAXIMA_M = 50f
 
     // A un punto cada 45 s son unas 75 horas de turno guardadas sin red: más
     // que cualquier apagón de cobertura real. Pasado el tope se tiran los MÁS
@@ -47,7 +54,8 @@ object ColaRastro {
     // que hace que se caiga la petición y no suba nada.
     const val LOTE = 100
 
-    private val ISO = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+    // Público: el latido manda la hora de la lectura con el mismo formato.
+    val ISO = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
         .apply { timeZone = TimeZone.getTimeZone("UTC") }
 
     private var ultimo: Location? = null
@@ -62,6 +70,10 @@ object ColaRastro {
     // hora parado en la parada del mercado» y «no se sabe».
     @Synchronized
     fun anotar(contexto: Context, posicion: Location): Boolean {
+        // La lectura mala fuera, y ANTES del aclarado: si contara, ocuparía el
+        // hueco de 45 s y se perdería la buena de GPS que llega justo detrás.
+        // Sin precisión conocida se acepta, como en el servidor.
+        if (posicion.hasAccuracy() && posicion.accuracy > PRECISION_MAXIMA_M) return false
         val previo = ultimo
         if (previo != null) {
             val transcurrido = posicion.time - previo.time
@@ -70,11 +82,12 @@ object ColaRastro {
                 return false
             }
         }
-        val linea = JSONObject()
+        val json = JSONObject()
             .put("lat", posicion.latitude)
             .put("lng", posicion.longitude)
             .put("en", ISO.format(Date(posicion.time)))
-            .toString()
+        if (posicion.hasAccuracy()) json.put("precision", posicion.accuracy.toDouble())
+        val linea = json.toString()
         return try {
             fichero(contexto).appendText(linea + "\n")
             ultimo = posicion

@@ -62,11 +62,19 @@ object Api {
 
     // El heartbeat lleva la posición: el servidor solo la guarda si hay viaje
     // activo (GPS continuo durante el viaje, nunca fuera de él).
-    fun heartbeat(contexto: Context, lat: Double?, lng: Double?): JSONObject {
+    fun heartbeat(contexto: Context, posicion: android.location.Location?): JSONObject {
         val cuerpo = JSONObject()
         val zonaId = Sesion.zonaId(contexto)
         if (zonaId > 0) cuerpo.put("zonaId", zonaId)
-        if (lat != null && lng != null) cuerpo.put("lat", lat).put("lng", lng)
+        if (posicion != null) {
+            cuerpo.put("lat", posicion.latitude).put("lng", posicion.longitude)
+            // Precisión y hora de la lectura (migraciones 047 y 054). Sin la
+            // precisión, el servidor no puede distinguir una lectura de GPS de
+            // una de antena; sin la hora, le pone la de llegada y la
+            // velocidad de cada tramo sale mal.
+            if (posicion.hasAccuracy()) cuerpo.put("precision", posicion.accuracy.toDouble())
+            cuerpo.put("en", ColaRastro.ISO.format(java.util.Date(posicion.time)))
+        }
         return peticion(contexto, "POST", "/api/conductor/heartbeat", cuerpo)
     }
 

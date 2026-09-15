@@ -78,12 +78,22 @@ export async function registrarRastro(
   lat: number,
   lng: number,
   ahora: Date = new Date(),
+  // Radio de error de la lectura (migración 054). null si el cliente no lo
+  // manda: se apunta igual, y queda a la vista como «no se sabe».
+  precisionM: number | null = null,
 ): Promise<boolean> {
   const enServicio = await cliente.query(
     `SELECT 1 FROM presencia WHERE conductor_id = $1 AND estado <> 'DESCONECTADO'`,
     [conductorId],
   );
   if (enServicio.rowCount === 0) return false;
+
+  // Una lectura mala no entra. Va ANTES del aclarado a propósito: si entrara
+  // en la comparación, un punto de antena podría ocupar el hueco de 45 s y
+  // hacer que se descartara la buena lectura de GPS que llega justo después.
+  if (!precisionAceptable(precisionM, await leerParametroEntero(cliente, 'rastro_precision_maxima_m'))) {
+    return false;
+  }
 
   const { intervaloSeg, distanciaM, anclajeSeg } = await limites(cliente);
 
@@ -103,11 +113,21 @@ export async function registrarRastro(
     if (metros < distanciaM && segundos < anclajeSeg) return false;
   }
 
-  await cliente.query(
-    'INSERT INTO rastro (conductor_id, lat, lng, creado_en) VALUES ($1, $2, $3, $4)',
-    [conductorId, lat, lng, ahora],
+  // ON CONFLICT: el latido y el envío diferido pueden traer la misma lectura
+  // con la misma hora ahora que los dos usan la hora del GPS (migración 054).
+  const res = await cliente.query(
+    `INSERT INTO rastro (conductor_id, lat, lng, creado_en, precision_m)
+     VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
+    [conductorId, lat, lng, ahora, precisionM],
   );
-  return true;
+  return (res.rowCount ?? 0) > 0;
+}
+
+// Sin precisión se acepta —clientes viejos, pruebas— y con ella, solo por
+// debajo del máximo. Un NaN o un negativo es un dato roto, no uno bueno.
+export function precisionAceptable(precisionM: number | null, maximaM: number): boolean {
+  if (precisionM === null) return true;
+  return Number.isFinite(precisionM) && precisionM >= 0 && precisionM <= maximaM;
 }
 
 // El recorrido que el móvil apuntó sin cobertura y sube después (migración
@@ -139,12 +159,13 @@ export async function registrarRastro(
 export async function registrarRastroDiferido(
   cliente: pg.ClientBase,
   conductorId: number,
-  puntos: Array<{ lat: number; lng: number; en: Date }>,
+  puntos: Array<{ lat: number; lng: number; en: Date; precisionM?: number | null }>,
   ahora: Date = new Date(),
 ): Promise<{ guardados: number; descartados: number }> {
   if (puntos.length === 0) return { guardados: 0, descartados: 0 };
 
   const { intervaloSeg } = await limites(cliente);
+  const precisionMaxima = await leerParametroEntero(cliente, 'rastro_precision_maxima_m');
   const retencionDias = await leerParametroEntero(cliente, 'rastro_retencion_dias');
   const masViejo = ahora.getTime() - retencionDias * 24 * 60 * 60 * 1000;
   // Un minuto de margen: los relojes de dos móviles no coinciden al segundo, y
@@ -153,7 +174,8 @@ export async function registrarRastroDiferido(
 
   const ordenados = [...puntos]
     .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng)
-      && p.en.getTime() >= masViejo && p.en.getTime() <= masNuevo)
+      && p.en.getTime() >= masViejo && p.en.getTime() <= masNuevo
+      && precisionAceptable(p.precisionM ?? null, precisionMaxima))
     .sort((a, b) => a.en.getTime() - b.en.getTime());
   if (ordenados.length === 0) return { guardados: 0, descartados: puntos.length };
 
@@ -207,9 +229,9 @@ export async function registrarRastroDiferido(
     const pegado = horas.some((h) => Math.abs(h - cuando) < intervaloSeg * 1000);
     if (pegado) continue;
     const res = await cliente.query(
-      `INSERT INTO rastro (conductor_id, lat, lng, creado_en)
-       VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
-      [conductorId, punto.lat, punto.lng, punto.en],
+      `INSERT INTO rastro (conductor_id, lat, lng, creado_en, precision_m)
+       VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
+      [conductorId, punto.lat, punto.lng, punto.en, punto.precisionM ?? null],
     );
     if (res.rowCount !== 0) {
       guardados += 1;

@@ -25,6 +25,10 @@ const ALMACEN = 'puntos';
 const INTERVALO_MIN_MS = 45_000;
 const DISTANCIA_MIN_M = 40;
 const ANCLAJE_MS = 300_000;
+// Y `rastro_precision_maxima_m` (migración 054): peor que esto no se apunta.
+// Un GPS en la calle da 5-20 m; por encima de 50 casi siempre es antena o un
+// rebote entre edificios, y dibuja y suma lo que no pasó.
+const PRECISION_MAXIMA_M = 50;
 
 // Tope de la cola. A un punto cada 45 s son unas 75 horas de turno guardadas
 // sin red, más que de sobra para cualquier apagón de cobertura real. Pasado
@@ -37,6 +41,9 @@ export interface PuntoLocal {
   lat: number;
   lng: number;
   en: string;
+  // null en los puntos apuntados antes de la migración 054, que siguen en la
+  // cola de algún móvil y hay que poder subir igual.
+  precision?: number | null;
 }
 
 let baseAbierta: Promise<IDBDatabase> | null = null;
@@ -91,10 +98,15 @@ function metrosEntre(a: { lat: number; lng: number }, b: { lat: number; lng: num
 // rato del último, también —que es la diferencia entre «estuvo una hora parado
 // en la parada del mercado» y «no se sabe»—.
 export async function anotarRastro(
-  punto: { lat: number; lng: number },
+  punto: { lat: number; lng: number; precision?: number | null },
   ahora: Date = new Date(),
 ): Promise<boolean> {
   if (typeof indexedDB === 'undefined') return false;
+  // Una lectura mala no entra, y va ANTES del aclarado: si contara, un punto
+  // de antena ocuparía el hueco de 45 s y se perdería la buena lectura de GPS
+  // que llega justo detrás.
+  const precision = punto.precision ?? null;
+  if (precision !== null && !(precision >= 0 && precision <= PRECISION_MAXIMA_M)) return false;
   try {
     if (!ultimoLeido) {
       ultimoLeido = true;
@@ -112,7 +124,7 @@ export async function anotarRastro(
       }
     }
     await enAlmacen('readwrite', (a) => a.add({
-      lat: punto.lat, lng: punto.lng, en: ahora.toISOString(),
+      lat: punto.lat, lng: punto.lng, en: ahora.toISOString(), precision,
     }) as IDBRequest<IDBValidKey>);
     ultimo = { lat: punto.lat, lng: punto.lng, en: ahora.getTime() };
     await recortar();

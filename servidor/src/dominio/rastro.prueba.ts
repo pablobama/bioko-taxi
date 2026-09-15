@@ -423,3 +423,61 @@ test('una hora del futuro no se guarda: el reloj del móvil no es la verdad', as
   ], enSegundo(1000)));
   assert.equal(r.guardados, 0);
 });
+
+// --- Calidad de cada punto (migración 054) -------------------------------
+
+test('una lectura de antena no entra en el recorrido', async () => {
+  const id = await crearConductor();
+  const bueno = aMetros(0);
+  const malo = aMetros(300);
+  assert.equal(await enTransaccion(pool, (c) =>
+    registrarRastro(c, id, bueno.lat, bueno.lng, enSegundo(0), 8)), true);
+  // ±900 m: es lo que da un teléfono resolviendo por antena.
+  assert.equal(await enTransaccion(pool, (c) =>
+    registrarRastro(c, id, malo.lat, malo.lng, enSegundo(120), 900)), false);
+
+  const r = await recorridoDe(pool, id, enSegundo(-100), enSegundo(1000));
+  assert.equal(r.puntos, 1, 'solo el bueno');
+});
+
+test('la lectura mala no ocupa el hueco de la buena que llega detrás', async () => {
+  const id = await crearConductor();
+  await enTransaccion(pool, (c) => {
+    const p = aMetros(0);
+    return registrarRastro(c, id, p.lat, p.lng, enSegundo(0), 8);
+  });
+  // Llega una mala a los 50 s y una buena a los 60. Si la mala contara para
+  // el aclarado, la buena caería dentro de sus 45 s y se perdería.
+  await enTransaccion(pool, (c) => {
+    const p = aMetros(400);
+    return registrarRastro(c, id, p.lat, p.lng, enSegundo(50), 600);
+  });
+  const guardada = await enTransaccion(pool, (c) => {
+    const p = aMetros(400);
+    return registrarRastro(c, id, p.lat, p.lng, enSegundo(60), 10);
+  });
+  assert.equal(guardada, true);
+});
+
+test('sin precisión conocida se apunta igual, y queda como NULL', async () => {
+  const id = await crearConductor();
+  await guardar(id, 0, 0);
+  const fila = await pool.query('SELECT precision_m FROM rastro WHERE conductor_id = $1', [id]);
+  assert.equal(fila.rows[0].precision_m, null);
+});
+
+test('el envío diferido también filtra por precisión, y la guarda', async () => {
+  const id = await crearConductor();
+  await transicion(id, 'DESCONECTADO', 'DISPONIBLE', enSegundo(0));
+  const r = await enTransaccion(pool, (c) => registrarRastroDiferido(c, id, [
+    { ...aMetros(0), en: enSegundo(0), precisionM: 6 },
+    { ...aMetros(300), en: enSegundo(120), precisionM: 1500 },
+    { ...aMetros(600), en: enSegundo(240), precisionM: 12 },
+  ], enSegundo(9000)));
+  assert.equal(r.guardados, 2);
+
+  const filas = await pool.query(
+    'SELECT precision_m FROM rastro WHERE conductor_id = $1 ORDER BY creado_en', [id],
+  );
+  assert.deepEqual(filas.rows.map((f) => Number(f.precision_m)), [6, 12]);
+});

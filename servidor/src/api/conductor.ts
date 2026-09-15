@@ -331,9 +331,11 @@ export function registrarRutasConductor(
   app.post('/api/conductor/rastro', async (req) => {
     const sesion = await sesionDesde(req);
     const cuerpo = (req.body ?? {}) as {
-      puntos?: Array<{ lat?: unknown; lng?: unknown; en?: unknown }>;
+      puntos?: Array<{ lat?: unknown; lng?: unknown; en?: unknown; precision?: unknown }>;
     };
     const crudos = Array.isArray(cuerpo.puntos) ? cuerpo.puntos : [];
+    // `precision` es opcional: los móviles que aún no la mandan siguen
+    // subiendo lo suyo (migración 054).
     const maximo = await leerParametroEntero(pool, 'rastro_lote_maximo');
     if (crudos.length > maximo) {
       throw errorHttp(413, `Como mucho ${maximo} puntos por envío.`);
@@ -343,6 +345,7 @@ export function registrarRutasConductor(
         lat: Number(p.lat),
         lng: Number(p.lng),
         en: new Date(String(p.en)),
+        precisionM: typeof p.precision === 'number' ? p.precision : null,
       }))
       // Una fecha ilegible es `Invalid Date`, y su `getTime()` es NaN: sin
       // esta comprobación se colaría hasta el INSERT y reventaría el lote
@@ -359,10 +362,29 @@ export function registrarRutasConductor(
     return { recibidos: puntos.length, ...resultado };
   });
 
+  // La hora a la que se TOMÓ la posición, si el móvil la manda y es creíble
+  // (migración 054). El latido espera hasta ocho segundos la mejor fijación y
+  // luego cruza la red: ponerle la hora de llegada mete hasta un veinticinco
+  // por ciento de error en la velocidad de un tramo de treinta segundos.
+  //
+  // Y un margen, porque el reloj de un móvil barato se desajusta. Fuera de él
+  // manda el del servidor: un teléfono con la hora mal puesta no puede mover el
+  // recorrido de sitio.
+  async function horaDeLectura(cliente: pg.ClientBase, en: string | undefined): Promise<Date> {
+    const ahora = new Date();
+    if (typeof en !== 'string') return ahora;
+    const leida = new Date(en);
+    if (Number.isNaN(leida.getTime())) return ahora;
+    const margenSeg = await leerParametroEntero(cliente, 'latido_desfase_maximo_seg');
+    return Math.abs(ahora.getTime() - leida.getTime()) <= margenSeg * 1000 ? leida : ahora;
+  }
+
   app.post('/api/conductor/heartbeat', async (req) => {
     const sesion = await sesionDesde(req);
     const cuerpo = (req.body ?? {}) as {
       zonaId?: number; lat?: number; lng?: number; precision?: number;
+      // Hora de la LECTURA, no del envío (migración 054). Opcional.
+      en?: string;
     };
     await enTransaccion(pool, async (cliente) => {
       // El barrio sigue al coche: cada latido lo recalcula desde el GPS. Sin
@@ -404,7 +426,11 @@ export function registrarRutasConductor(
         // es lo que enseña dónde esperó y por dónde volvió de vacío. Se
         // guarda filtrado, y solo estando en servicio — de eso se encarga
         // `registrarRastro`, que lo comprueba contra la presencia.
-        await registrarRastro(cliente, sesion.conductorId, cuerpo.lat, cuerpo.lng);
+        await registrarRastro(
+          cliente, sesion.conductorId, cuerpo.lat, cuerpo.lng,
+          await horaDeLectura(cliente, cuerpo.en),
+          typeof cuerpo.precision === 'number' ? cuerpo.precision : null,
+        );
       }
     });
     // Migración 049: si lleva más de una hora en servicio se le recuerda, y
