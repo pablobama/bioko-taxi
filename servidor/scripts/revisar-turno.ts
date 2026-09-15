@@ -69,6 +69,17 @@ const hora = (d: Date | string | null) => (d === null || d === undefined
   : new Date(new Date(d).getTime() + HORAS_MALABO * 3_600_000)
     .toISOString().slice(11, 19));
 
+// Con día delante. Hace falta en todo lo que pueda caer fuera del día pedido:
+// sin él, un cambio de estado de ayer se lee como de hoy, y el informe parece
+// contradecirse —«turno de tres horas» arriba y «0 min en servicio» abajo—.
+// Pasó con el primer informe de producción.
+const fechaHora = (d: Date | string | null) => (d === null || d === undefined
+  ? '—'
+  : (() => {
+    const iso = new Date(new Date(d).getTime() + HORAS_MALABO * 3_600_000).toISOString();
+    return `${iso.slice(8, 10)}/${iso.slice(5, 7)} ${iso.slice(11, 19)}`;
+  })());
+
 const duracion = (seg: number) => {
   const m = Math.round(seg / 60);
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`;
@@ -144,13 +155,24 @@ async function principal(): Promise<void> {
     if (transiciones.rowCount === 0) {
       console.log('   NADA. No entró en servicio ese día (ni el anterior).');
     } else {
+      // Se miran también las del día anterior, para no cortar un turno que
+      // empezó antes de medianoche. Pero se MARCAN: son contexto, no el día.
       console.table(transiciones.rows.map((t) => ({
+        cuando: fechaHora(t.ocurrio_en ?? t.creado_en),
+        dia: new Date(t.ocurrio_en ?? t.creado_en) < desde ? 'ANTERIOR' : 'este',
         de: t.estado_anterior, a: t.estado_nuevo, actor: t.actor,
         motivo: t.origen_evento ?? '',
-        apuntado: hora(t.creado_en),
-        // Los dos solo se separan en el turno dado por abandonado (mig. 051).
-        ocurrio: t.ocurrio_en === null ? '=' : hora(t.ocurrio_en),
+        // Solo se separan en el turno dado por abandonado (migración 051).
+        apuntado: t.ocurrio_en === null ? '=' : fechaHora(t.creado_en),
       })));
+      const delDia = transiciones.rows.filter(
+        (t) => new Date(t.ocurrio_en ?? t.creado_en) >= desde,
+      );
+      if (delDia.length === 0) {
+        console.log(`   AVISO: todos estos cambios son del DÍA ANTERIOR. El ${etiqueta} no`);
+        console.log('   hubo ningún cambio de estado: lo de abajo saldrá a cero, y es');
+        console.log('   correcto — no es que no se grabara, es que no hubo turno.');
+      }
       const abandonados = transiciones.rows.filter((t) => t.origen_evento === 'turno_abandonado');
       if (abandonados.length > 0) {
         console.log(`   AVISO: ${abandonados.length} turno(s) dados por ABANDONADO.`);
@@ -182,9 +204,15 @@ async function principal(): Promise<void> {
       [conductor.id, desde, hasta],
     );
     if (puntos.rowCount === 0) {
-      console.log('   NINGÚN PUNTO. Si sí hubo turno, el móvil no mandó posición:');
-      console.log('   permiso de ubicación denegado, o iPhone con la pantalla bloqueada');
-      console.log('   (P47-01), o la app nativa sin instalar.');
+      // Cero puntos significa dos cosas muy distintas, y antes se decían igual:
+      // si no hubo turno, es lo correcto; si lo hubo, es un fallo de recogida.
+      if (actividad.segundosEnServicio === 0) {
+        console.log('   Ningún punto, y es lo esperado: ese día no estuvo en servicio.');
+      } else {
+        console.log(`   NINGÚN PUNTO en ${duracion(actividad.segundosEnServicio)} de servicio. ESTO SÍ ES UN FALLO:`);
+        console.log('   el móvil no mandó posición. Permiso de ubicación denegado, iPhone con');
+        console.log('   la pantalla bloqueada (P47-01), o la app nativa sin instalar.');
+      }
     } else {
       const filas = puntos.rows.map((f) => ({
         lat: Number(f.lat), lng: Number(f.lng), en: new Date(f.creado_en),
@@ -367,6 +395,22 @@ async function principal(): Promise<void> {
           console.log('     podía funcionar, y el taxista no vio dónde estaba de verdad.');
         }
       }
+    }
+
+    // Si el día pedido salió vacío, decir cuál es el que tiene datos. Es lo
+    // primero que hace falta saber, y sin esto había que ir probando fechas.
+    if (actividad.segundosEnServicio === 0) {
+      const ultimo = await cliente.query(
+        `SELECT to_char(max(COALESCE(ocurrio_en, creado_en)) + interval '1 hour', 'YYYY-MM-DD') AS dia
+         FROM transicion
+         WHERE ambito = 'conductor' AND conductor_id = $1 AND estado_nuevo <> 'DESCONECTADO'`,
+        [conductor.id],
+      );
+      const dia = ultimo.rows[0]?.dia ?? null;
+      console.log('');
+      console.log(dia === null
+        ? 'Este conductor no ha entrado en servicio NUNCA.'
+        : `El último día que entró en servicio fue el ${dia}. Para verlo:\n   --dia=${dia}`);
     }
 
     console.log(`\n${'='.repeat(72)}`);
