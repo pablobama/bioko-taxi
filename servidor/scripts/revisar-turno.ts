@@ -20,10 +20,22 @@
 // a otra parecida. Al lado de cada cifra se pone el dato crudo con el que
 // compararla, para poder discutirla.
 
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { urlBaseDatos } from '../src/bd/migrar.js';
 import { actividadDe, recorridoDe } from '../src/dominio/rastro.js';
 import { distanciaMetros } from '../src/dominio/geo.js';
+
+// El `.env` del servidor, se lance desde donde se lance. Con `--env-file=.env`
+// Node lo busca en la carpeta ACTUAL, y lanzarlo desde la raíz del repositorio
+// fallaba con «.env: not found» aunque el fichero estuviera en su sitio. Aquí
+// se busca junto al propio script. Si BD_URL ya viene puesta, manda esa.
+if (process.env.BD_URL === undefined) {
+  const env = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '.env');
+  if (existsSync(env)) process.loadEnvFile(env);
+}
 
 const HORAS_MALABO = 1;
 
@@ -109,6 +121,11 @@ async function principal(): Promise<void> {
     }
 
     console.log('='.repeat(72));
+    // Solo si es local o no, nunca la cadena: lleva la contraseña. Pero hay que
+    // decirlo, porque un informe vacío de la base de desarrollo se parece
+    // demasiado a un turno que no se grabó.
+    const esLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(urlBaseDatos());
+    console.log(`Base de datos: ${esLocal ? 'LOCAL (desarrollo)' : 'remota (producción)'}`);
     console.log(`TURNO DEL ${etiqueta} (hora de Malabo)`);
     console.log(`Conductor ${conductor.id} · ${conductor.nombre} · ${conductor.matricula ?? 'sin vehículo'}`);
     console.log('='.repeat(72));
