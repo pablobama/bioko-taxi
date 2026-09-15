@@ -21,7 +21,7 @@ import {
 } from '../dominio/monedero.js';
 import { estadoPorOcupacion, ocupacionDe, rutaDe } from '../dominio/ocupacion.js';
 import { registrarPosicion } from '../dominio/proximidad.js';
-import { registrarRastro, registrarRastroDiferido } from '../dominio/rastro.js';
+import { apuntarSenal, registrarRastro, registrarRastroDiferido } from '../dominio/rastro.js';
 import { llegadaDeViaje } from '../dominio/llegada.js';
 import { puntoDeRecogida } from '../dominio/recogida.js';
 import { recargasDe, solicitarRecarga } from '../dominio/recargas.js';
@@ -403,6 +403,13 @@ export function registrarRutasConductor(
         if (barrio !== null) zonaId = barrio.id;
       }
       await registrarHeartbeat(cliente, sesion.conductorId, zonaId);
+      // Constancia de que latió, con posición o sin ella (migración 055): es
+      // lo que permite explicar después un hueco en el recorrido.
+      await apuntarSenal(
+        cliente, sesion.conductorId,
+        typeof cuerpo.lat === 'number' && typeof cuerpo.lng === 'number',
+        typeof cuerpo.precision === 'number' ? cuerpo.precision : null,
+      );
       // GPS continuo (migración 011): la posición del conductor viaja en el
       // propio heartbeat y solo se guarda mientras hay viajes activos.
       //

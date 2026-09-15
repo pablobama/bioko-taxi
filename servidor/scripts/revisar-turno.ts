@@ -230,27 +230,113 @@ async function principal(): Promise<void> {
       console.log(`   Lo que cuenta el sistema:   ${(actividad.metros / 1000).toFixed(2)} km`);
       console.log(`   Descartado (temblor y saltos): ${((ingenua - actividad.metros) / 1000).toFixed(2)} km`);
 
-      // Huecos: cada uno es un trozo del turno que no se grabó.
-      const huecos: Array<{ desde: string; hasta: string; falta: string }> = [];
       let masRapido = { kmh: 0, en: filas[0].en };
       const intervalos: number[] = [];
       for (let i = 1; i < filas.length; i += 1) {
         const seg = (filas[i].en.getTime() - filas[i - 1].en.getTime()) / 1000;
         intervalos.push(seg);
-        if (seg > 600) {
-          huecos.push({
-            desde: hora(filas[i - 1].en), hasta: hora(filas[i].en), falta: duracion(seg),
-          });
-        }
         const m = distanciaMetros(filas[i - 1].lat, filas[i - 1].lng, filas[i].lat, filas[i].lng);
         const kmh = seg > 0 ? (m / seg) * 3.6 : 0;
         if (kmh > masRapido.kmh) masRapido = { kmh, en: filas[i].en };
       }
-      if (huecos.length > 0) {
-        console.log(`   ${huecos.length} hueco(s) de más de 10 min — trozos NO grabados:`);
-        console.table(huecos);
+
+      // Huecos, pero SOLO DENTRO DE CADA TURNO. Antes se medían entre dos
+      // puntos cualesquiera, y el primer informe de producción dio un «hueco de
+      // 3 h 32 min» que era casi entero tiempo fuera de servicio: eso no es
+      // recorrido perdido, es no estar trabajando. Y un turno sin puntos al
+      // final —el caso que sí importa— no se veía, porque no hay punto
+      // siguiente con el que medir.
+      const turnosDelDia = await cliente.query(
+        `WITH marcas AS (
+           SELECT estado_nuevo, COALESCE(ocurrio_en, creado_en) AS en, id
+           FROM transicion WHERE ambito = 'conductor' AND conductor_id = $1
+         )
+         SELECT GREATEST(inicio, $2::timestamptz) AS inicio,
+                LEAST(COALESCE(fin, now()), $3::timestamptz) AS fin
+         FROM (
+           SELECT estado_nuevo, en AS inicio, lead(en) OVER (ORDER BY en, id) AS fin
+           FROM marcas
+         ) t
+         WHERE estado_nuevo <> 'DESCONECTADO'
+           AND COALESCE(fin, now()) > $2 AND inicio < $3
+         ORDER BY inicio`,
+        [conductor.id, desde, hasta],
+      );
+      // Un turno de tres estados seguidos (DISPONIBLE → OFERTADO → DISPONIBLE)
+      // son tres filas contiguas: se funden en una.
+      const turnos: Array<{ inicio: Date; fin: Date }> = [];
+      for (const t of turnosDelDia.rows) {
+        const actual = { inicio: new Date(t.inicio), fin: new Date(t.fin) };
+        const previo = turnos[turnos.length - 1];
+        if (previo !== undefined && actual.inicio.getTime() - previo.fin.getTime() < 1000) {
+          previo.fin = actual.fin;
+        } else {
+          turnos.push(actual);
+        }
+      }
+
+      const huecos: Array<{ desde: Date; hasta: Date }> = [];
+      for (const turno of turnos) {
+        const dentro = filas.filter((f) => f.en >= turno.inicio && f.en <= turno.fin);
+        const marcas = [turno.inicio, ...dentro.map((f) => f.en), turno.fin];
+        for (let i = 1; i < marcas.length; i += 1) {
+          if (marcas[i].getTime() - marcas[i - 1].getTime() > 600_000) {
+            huecos.push({ desde: marcas[i - 1], hasta: marcas[i] });
+          }
+        }
+      }
+
+      if (huecos.length === 0) {
+        console.log('   Sin huecos de más de 10 min dentro del turno: el recorrido está entero.');
       } else {
-        console.log('   Sin huecos de más de 10 min: el recorrido está entero.');
+        // Y POR QUÉ, con la señal de la migración 055. Sin ella, un hueco solo
+        // dice que falta algo; con ella dice qué arreglar.
+        const explicados = [];
+        let segundosPerdidos = 0;
+        // Desde cuándo se apunta la señal. Un hueco anterior NO se puede
+        // explicar: que no haya latidos apuntados no significa que no latiera,
+        // significa que no se estaba mirando. Decir «la app no latía» de un día
+        // de antes de la 055 sería inventárselo.
+        const tabla = await cliente.query(`SELECT to_regclass('public.senal') IS NOT NULL AS hay`);
+        const desdeCuando = tabla.rows[0].hay
+          ? (await cliente.query('SELECT min(minuto) AS en FROM senal')).rows[0].en
+          : null;
+        for (const h of huecos) {
+          const seg = (h.hasta.getTime() - h.desde.getTime()) / 1000;
+          segundosPerdidos += seg;
+          let porque: string;
+          if (desdeCuando === null || new Date(desdeCuando) > h.desde) {
+            porque = 'no se sabe: anterior al registro de latidos (migración 055)';
+            explicados.push({ desde: hora(h.desde), hasta: hora(h.hasta), falta: duracion(seg), porque });
+            continue;
+          }
+          const s = await cliente.query(
+            `SELECT COALESCE(sum(latidos), 0)::int AS latidos,
+                    COALESCE(sum(con_posicion), 0)::int AS con_posicion
+             FROM senal WHERE conductor_id = $1 AND minuto >= $2 AND minuto < $3`,
+            [conductor.id, h.desde, h.hasta],
+          );
+          const { latidos, con_posicion: conPosicion } = s.rows[0];
+          if (latidos === 0) {
+            porque = 'la app NO latía: cerrada, pantalla bloqueada o sin red';
+          } else if (conPosicion === 0) {
+            porque = `latía (${latidos}) SIN posición: GPS sin permiso o sin fijación`;
+          } else {
+            porque = `latía CON posición (${conPosicion}) y no se guardó: fallo del servidor`;
+          }
+          explicados.push({
+            desde: hora(h.desde), hasta: hora(h.hasta), falta: duracion(seg), porque,
+          });
+        }
+        console.log(`   ${huecos.length} hueco(s) de más de 10 min DENTRO del turno — recorrido NO grabado:`);
+        console.table(explicados);
+        const cobertura = actividad.segundosEnServicio > 0
+          ? 1 - segundosPerdidos / actividad.segundosEnServicio : 1;
+        console.log(`   Del tiempo en servicio, se grabó el ${Math.max(0, Math.round(cobertura * 100))} %.`);
+        if (cobertura < 0.5) {
+          console.log('   AVISO: con menos de la mitad grabada, los km, «al volante» y la media');
+          console.log('   de km/h de arriba están INCOMPLETOS: cuentan solo lo que se grabó.');
+        }
       }
       console.log(`   Salto más rápido entre dos puntos: ${masRapido.kmh.toFixed(0)} km/h a las ${hora(masRapido.en)}`);
       if (masRapido.kmh > 180) {
@@ -364,7 +450,23 @@ async function principal(): Promise<void> {
           }
         }
         if (v.separado_desde !== null) {
-          console.log(`     AVISO: separado_desde = ${hora(v.separado_desde)} con el viaje aún abierto.`);
+          // Que empezara a contar una separación es una pista, termine como
+          // termine el viaje. Y si empezó DESPUÉS de la última posición del
+          // pasajero, se midió contra un punto congelado: es el fallo que
+          // corrige la migración 055, visto por primera vez en el viaje 97.
+          const ultimaCliente = await cliente.query(
+            `SELECT max(creado_en) AS en FROM posicion WHERE viaje_id = $1 AND actor = 'cliente'`,
+            [v.viaje_id],
+          );
+          const ultima = ultimaCliente.rows[0]?.en ?? null;
+          const abierto = !['COMPLETADO', 'INCIDENCIA', 'NO_PRESENTADO', 'CLIENTE_AUSENTE',
+            'CANCELADO_CLIENTE', 'CANCELADO_CONDUCTOR', 'SIN_OFERTA'].includes(v.estado);
+          console.log(`     El sistema EMPEZÓ a contar una separación pasajero-coche a las ${hora(v.separado_desde)}${abierto ? ' y el viaje sigue abierto' : ', y no llegó a cerrar'}.`);
+          if (ultima !== null && new Date(v.separado_desde) > new Date(ultima)) {
+            console.log(`       -> Su última posición era de las ${hora(ultima)}: se comparó un punto CONGELADO`);
+            console.log('          con el coche en marcha. Estuvo a punto de cerrarse con el pasajero dentro.');
+            console.log('          Corregido en la migración 055.');
+          }
         }
         if (v.cerro !== null && String(v.cerro).includes('separacion_gps')) {
           console.log('     Lo cerró el SISTEMA por separación GPS, no el taxista.');

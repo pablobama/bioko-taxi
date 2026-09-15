@@ -74,6 +74,64 @@ async function ultimasPosicionesFrescas(
   return resultado;
 }
 
+// La posición del pasajero y la del coche TOMADAS EN EL MISMO MOMENTO
+// (migración 055), para decidir si se han separado.
+//
+// Antes se comparaba la última de cada uno, y eso es comparar momentos
+// distintos. El móvil del pasajero deja de mandar en cuanto apaga la pantalla,
+// pero su último punto sigue contando como fresco un minuto y medio; el coche,
+// mientras, sigue andando. Un punto congelado contra un coche en marcha: el
+// pasajero se «alejaba» del coche en el que iba sentado. En producción, el
+// viaje 97 del 14/09 estuvo a veinticinco segundos de cerrarse así.
+//
+// Ahora se coge la última del pasajero y, del coche, la más cercana a ELLA en
+// el tiempo. «Dónde estaba el coche cuando el pasajero estaba ahí.» Si no hay
+// ninguna a menos de `gps_desfase_par_seg`, no hay par y no se decide nada.
+interface Par {
+  cliente: PosicionFresca;
+  conductor: PosicionFresca;
+  // La hora de la lectura del pasajero. Es el reloj de la separación sostenida:
+  // se mide entre LECTURAS, no entre tiques del planificador.
+  en: Date;
+}
+
+async function parSincronizado(
+  cliente: pg.ClientBase,
+  viajeId: number,
+  frescuraSeg: number,
+  desfaseSeg: number,
+  ahora: Date,
+): Promise<Par | null> {
+  const delCliente = await cliente.query(
+    `SELECT lat, lng, precision_m, creado_en FROM posicion
+     WHERE viaje_id = $1 AND actor = 'cliente'
+       AND creado_en >= $2::timestamptz - make_interval(secs => $3)
+     ORDER BY creado_en DESC LIMIT 1`,
+    [viajeId, ahora, frescuraSeg],
+  );
+  if (delCliente.rowCount === 0) return null;
+  const p = delCliente.rows[0];
+  const en = new Date(p.creado_en);
+
+  const delCoche = await cliente.query(
+    `SELECT lat, lng, precision_m FROM posicion
+     WHERE viaje_id = $1 AND actor = 'conductor'
+       AND creado_en BETWEEN $2::timestamptz - make_interval(secs => $3)
+                         AND $2::timestamptz + make_interval(secs => $3)
+     ORDER BY abs(extract(epoch FROM (creado_en - $2::timestamptz))) LIMIT 1`,
+    [viajeId, en, desfaseSeg],
+  );
+  if (delCoche.rowCount === 0) return null;
+  const c = delCoche.rows[0];
+
+  const aFresca = (f: { lat: number; lng: number; precision_m: number | null }) => ({
+    lat: Number(f.lat),
+    lng: Number(f.lng),
+    precisionM: f.precision_m === null ? null : Number(f.precision_m),
+  });
+  return { cliente: aFresca(p), conductor: aFresca(c), en };
+}
+
 // Tique del planificador: revisa los viajes activos y aplica la detección.
 // Idempotente; con posiciones ausentes o rancias no hace nada.
 export async function procesarProximidad(
@@ -253,10 +311,20 @@ async function procesarViaje(
       const separadoDesde: Date | null = marcas.rows[0]?.separado_desde ?? null;
       const recogidoEn: Date | null = marcas.rows[0]?.recogido_en ?? null;
 
+      // Del mismo instante, no la última de cada uno (migración 055).
+      const desfaseSeg = await leerParametroEntero(cliente, 'gps_desfase_par_seg');
+      const par = await parSincronizado(cliente, activo.viaje_id, frescuraSeg, desfaseSeg, ahora);
+      if (par === null) return; // sin dos lecturas del mismo momento no se decide
+
+      const distanciaPar = distanciaMetros(
+        par.conductor.lat, par.conductor.lng, par.cliente.lat, par.cliente.lng,
+      );
+      const errorPar = (par.cliente.precisionM ?? supuesta) + (par.conductor.precisionM ?? supuesta);
+
       const umbralSeparacion = await leerParametroEntero(cliente, 'gps_umbral_separacion_m');
       // Con el margen RESTADO: solo cuenta como separación si lo es más allá
       // del error de las dos medidas. Es la mitad que faltaba.
-      const separadosAhora = distancia - errorCierre >= umbralSeparacion;
+      const separadosAhora = distanciaPar - errorPar >= umbralSeparacion;
 
       if (!separadosAhora) {
         // Vuelven a verse juntos: la cuenta se borra. Una racha de separación
@@ -274,16 +342,22 @@ async function procesarViaje(
       }
 
       if (separadoDesde === null) {
-        // Primera vez que se les ve lejos: se apunta la hora y se espera. Si
-        // era una lectura mala, el siguiente tique borrará esta marca.
+        // Primera vez que se les ve lejos: se apunta la hora DE LA LECTURA, no
+        // la del tique (migración 055). Si era una lectura mala, la siguiente
+        // borrará esta marca.
         await cliente.query(
-          'UPDATE viaje SET separado_desde = $2 WHERE id = $1', [activo.viaje_id, ahora],
+          'UPDATE viaje SET separado_desde = $2 WHERE id = $1', [activo.viaje_id, par.en],
         );
         return;
       }
 
+      // La separación sostenida se mide entre LECTURAS DEL PASAJERO: hace falta
+      // una posterior a la que abrió la cuenta, y todavía separada. Mientras el
+      // pasajero no vuelva a mandar, `par.en` no avanza y esto no se cumple
+      // por mucho que pase el reloj — una sola lectura, por buena que sea, no
+      // cierra un viaje.
       const sostenidaSeg = await leerParametroEntero(cliente, 'gps_separacion_sostenida_seg');
-      if (ahora.getTime() - separadoDesde.getTime() >= sostenidaSeg * 1000) {
+      if (par.en.getTime() - separadoDesde.getTime() >= sostenidaSeg * 1000) {
         await transicionarSolicitud(
           cliente, activo.solicitud_id, 'COMPLETADO', 'sistema', 'separacion_gps',
         );

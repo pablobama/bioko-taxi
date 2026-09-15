@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import { crearPool, enTransaccion } from '../bd/conexion.js';
 import {
-  actividadDe, purgarRastro, recorridoDe, registrarRastro, registrarRastroDiferido,
+  actividadDe, apuntarSenal, purgarRastro, recorridoDe, registrarRastro, registrarRastroDiferido,
 } from './rastro.js';
 import { caducarPresencias } from './presencia.js';
 
@@ -480,4 +480,27 @@ test('el envío diferido también filtra por precisión, y la guarda', async () 
     'SELECT precision_m FROM rastro WHERE conductor_id = $1 ORDER BY creado_en', [id],
   );
   assert.deepEqual(filas.rows.map((f) => Number(f.precision_m)), [6, 12]);
+});
+
+// --- Señal: por qué hay un hueco (migración 055) --------------------------
+
+test('la señal cuenta latidos por minuto, con y sin posición', async () => {
+  const id = await crearConductor();
+  const minuto = new Date('2026-08-05T08:00:10Z');
+  await enTransaccion(pool, (c) => apuntarSenal(c, id, true, 12, minuto));
+  await enTransaccion(pool, (c) => apuntarSenal(c, id, false, null, new Date(minuto.getTime() + 20_000)));
+  await enTransaccion(pool, (c) => apuntarSenal(c, id, true, 6, new Date(minuto.getTime() + 40_000)));
+
+  const r = await pool.query('SELECT latidos, con_posicion, mejor_precision_m FROM senal WHERE conductor_id = $1', [id]);
+  assert.equal(r.rowCount, 1, 'una fila por minuto');
+  assert.equal(r.rows[0].latidos, 3);
+  assert.equal(r.rows[0].con_posicion, 2);
+  assert.equal(Number(r.rows[0].mejor_precision_m), 6);
+});
+
+test('fuera de servicio no se apunta señal', async () => {
+  const id = await crearConductor('DESCONECTADO');
+  await enTransaccion(pool, (c) => apuntarSenal(c, id, true, 10));
+  const r = await pool.query('SELECT 1 FROM senal WHERE conductor_id = $1', [id]);
+  assert.equal(r.rowCount, 0);
 });

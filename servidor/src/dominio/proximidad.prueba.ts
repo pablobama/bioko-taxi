@@ -331,3 +331,66 @@ test('el cierre automático no actúa en los primeros minutos tras la recogida',
     assert.equal(await estadoDe(viaje.solicitudId), 'RECOGIDO');
   }
 });
+
+// El viaje 97 de producción (14/09), segundo a segundo (migración 055).
+//
+// El pasajero va dentro y los dos móviles mandan. A las 09:03:23 el suyo deja
+// de mandar —pantalla apagada— y el coche sigue andando. Su último punto seguía
+// contando como fresco noventa segundos, y el sistema lo comparaba con el coche
+// en marcha: a las 09:03:48 lo dio por separado. No se cerró por veinticinco
+// segundos. Aquí no puede ni empezar a contar.
+test('el pasajero que apaga la pantalla no se aleja del coche en el que va', async () => {
+  const viaje = await montarViajeEnCamino();
+  const emisor = new EmisorRegistro();
+  const t0 = new Date();
+
+  await ponerPosicion(viaje.viajeId, 'conductor', 3.7500, 8.7800, t0, 5);
+  await ponerPosicion(viaje.viajeId, 'cliente', 3.7500, 8.7800, t0, 5);
+  await procesarProximidad(pool, emisor, t0);
+  assert.equal(await estadoDe(viaje.solicitudId), 'RECOGIDO');
+
+  // Minuto tres: van juntos y los dos mandan, cada uno a su ritmo.
+  const juntos = new Date(t0.getTime() + 180_000);
+  await ponerPosicion(viaje.viajeId, 'conductor', 3.7600, 8.7800, juntos, 5);
+  await ponerPosicion(viaje.viajeId, 'cliente', 3.7600, 8.7800, juntos, 5);
+
+  // Y el pasajero calla. El coche sigue a unos 40 km/h, un punto cada 10 s,
+  // y durante un minuto y medio el último punto del pasajero sigue «fresco».
+  for (let s = 10; s <= 150; s += 10) {
+    const t = new Date(juntos.getTime() + s * 1000);
+    const metros = (40 / 3.6) * s;
+    await ponerPosicion(viaje.viajeId, 'conductor', 3.7600 + metros / 111_320, 8.7800, t, 5);
+    await procesarProximidad(pool, emisor, t);
+  }
+
+  assert.equal(await estadoDe(viaje.solicitudId), 'RECOGIDO', 'sigue dentro del coche');
+  const marca = await pool.query('SELECT separado_desde FROM viaje WHERE id = $1', [viaje.viajeId]);
+  assert.equal(marca.rows[0].separado_desde, null,
+    'ni siquiera empieza a contar: su último punto se compara con dónde estaba el coche ENTONCES');
+});
+
+test('una sola lectura separada no cierra aunque pase el tiempo: hace falta otra', async () => {
+  const viaje = await montarViajeEnCamino();
+  const emisor = new EmisorRegistro();
+  const t0 = new Date();
+
+  await ponerPosicion(viaje.viajeId, 'conductor', 3.7500, 8.7800, t0, 5);
+  await ponerPosicion(viaje.viajeId, 'cliente', 3.7500, 8.7800, t0, 5);
+  await procesarProximidad(pool, emisor, t0);
+
+  // A los tres minutos, UNA lectura del mismo instante que los separa de
+  // verdad. Y el pasajero ya no manda más.
+  const t1 = new Date(t0.getTime() + 180_000);
+  await ponerPosicion(viaje.viajeId, 'conductor', 3.7600, 8.7800, t1, 5);
+  await ponerPosicion(viaje.viajeId, 'cliente', 3.7640, 8.7800, t1, 5);
+  await procesarProximidad(pool, emisor, t1);
+
+  // El reloj corre y el coche sigue latiendo, pero no hay lectura nueva del
+  // pasajero: la cuenta no puede darse por sostenida.
+  for (const s of [30, 60, 85]) {
+    const t = new Date(t1.getTime() + s * 1000);
+    await ponerPosicion(viaje.viajeId, 'conductor', 3.7600, 8.7800, t, 5);
+    await procesarProximidad(pool, emisor, t);
+  }
+  assert.equal(await estadoDe(viaje.solicitudId), 'RECOGIDO');
+});

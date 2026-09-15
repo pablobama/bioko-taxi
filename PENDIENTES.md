@@ -4,6 +4,28 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
 
 ## Abiertos
 
+- **[P55-01] Render en plan gratuito se DUERME, y con él todo lo automático.**
+  `render.yaml` dice `plan: free`: sin peticiones durante 15 minutos el
+  servicio se apaga, y un `setInterval` no corre en un proceso apagado. Se vio
+  en el primer informe de producción: un turno cuya última señal fue el 13/09
+  a las 13:50 se dio por abandonado el 14/09 a las 08:57:48 —diecinueve horas
+  después en vez de doce—, SEIS SEGUNDOS antes de la siguiente petición, la de
+  volver a entrar en servicio. Es decir, el planificador no corrió en toda la
+  noche. Lo mismo vale para las oleadas del reparto, el cierre y la caducidad
+  de viajes y la renovación de suscripciones: con la ciudad tranquila, nada de
+  eso pasa hasta que alguien abre la aplicación. Con tráfico real de día quizá
+  no se note, pero una petición de taxi a las cinco de la mañana despierta un
+  servidor que tarda de treinta a sesenta segundos en arrancar. Arreglarlo es
+  un plan de pago (el más pequeño no se duerme) o un vigilante externo que lo
+  llame cada pocos minutos; es decisión de dinero, no de código.
+
+- **[P55-02] El recorrido del iPhone del operador: un 5 % grabado.** El 14/09,
+  de 3 h de servicio se grabaron 9 minutos: el segundo turno (12:38–15:28)
+  tiene un único punto, el de entrar. El teléfono del operador es un iPhone y
+  la app nativa es solo Android, así que es casi seguro P47-01 — pero «casi
+  seguro» no es saberlo, y hasta la migración 055 no había forma de saberlo.
+  Ahora sí: el siguiente turno con hueco lo explicará en el informe.
+
 - **[P53-01] La velocidad medida es del coche, no de la carretera que falta.**
   El tiempo de llegada usa lo que el taxi ha andado en los últimos seis
   minutos, y eso da por hecho que lo que viene se parece a lo que acaba de

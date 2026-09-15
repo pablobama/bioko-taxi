@@ -413,6 +413,38 @@ function aligerar(tramos: Tramo[], maxPuntos: number): Tramo[] {
   });
 }
 
+// Un latido de un taxista en servicio, apuntado por minuto (migración 055).
+//
+// Del latido solo se guardaba el último, y eso hacía imposible explicar un
+// hueco en el recorrido después: el turno de 12:38 a 15:28 del 14/09 tiene un
+// solo punto y no hay forma de saber si la aplicación no latía, si latía sin
+// posición o si latía con posición y no se guardó. Son tres fallos distintos
+// con tres arreglos distintos.
+//
+// Por minuto y no por latido: con lo que cuenta —latidos, cuántos con
+// posición, la mejor precisión— basta para distinguir los tres casos, y es una
+// fila por minuto como mucho en vez de seis.
+export async function apuntarSenal(
+  cliente: pg.ClientBase,
+  conductorId: number,
+  conPosicion: boolean,
+  precisionM: number | null,
+  ahora: Date = new Date(),
+): Promise<void> {
+  await cliente.query(
+    `INSERT INTO senal (conductor_id, minuto, latidos, con_posicion, mejor_precision_m)
+     SELECT $1, date_trunc('minute', $2::timestamptz), 1, $3::int, $4
+     WHERE EXISTS (
+       SELECT 1 FROM presencia WHERE conductor_id = $1 AND estado <> 'DESCONECTADO'
+     )
+     ON CONFLICT (conductor_id, minuto) DO UPDATE SET
+       latidos = senal.latidos + 1,
+       con_posicion = senal.con_posicion + EXCLUDED.con_posicion,
+       mejor_precision_m = LEAST(senal.mejor_precision_m, EXCLUDED.mejor_precision_m)`,
+    [conductorId, ahora, conPosicion ? 1 : 0, precisionM],
+  );
+}
+
 // Se ejecuta sola cada pocas horas. Sin esto, la tabla que más crece de toda
 // la base no para nunca.
 export async function purgarRastro(
@@ -422,6 +454,8 @@ export async function purgarRastro(
   const dias = await leerParametroEntero(pool, 'rastro_retencion_dias');
   const corte = new Date(ahora.getTime() - dias * 24 * 60 * 60 * 1000);
   const res = await pool.query('DELETE FROM rastro WHERE creado_en < $1', [corte]);
+  // La señal se va con el rastro: solo sirve para explicar sus huecos.
+  await pool.query('DELETE FROM senal WHERE minuto < $1', [corte]);
   return res.rowCount ?? 0;
 }
 
