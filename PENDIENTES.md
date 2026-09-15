@@ -4,6 +4,33 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
 
 ## Abiertos
 
+- **[P56-01] Guardar el recorrido el doble de denso, al mismo coste: decisión
+  tuya.** Con el recorrido ya reconstruido por las calles, el error que queda
+  en kilómetros y velocidad es de MUESTREO: un punto por minuto no ve la vuelta
+  a la manzana que el coche da entre dos puntos. Medido con
+  `scripts/diagnostico-rastro.ts`, seis simulaciones por calles reales:
+
+  | guardado | km | velocidad en marcha | tiempo al volante |
+  |---|---|---|---|
+  | 1 punto / ~58 s (hoy, `rastro_intervalo_min_seg` = 45) | −9 % | −19 % | +4 % |
+  | 1 punto / ~25 s (`rastro_intervalo_min_seg` = 20) | −4 % | −8 % | 0 % |
+
+  Cuesta 2,3 veces más filas. Se puede dejar a coste IGUAL bajando
+  `rastro_retencion_dias` de 90 a 45: la vista más larga del operador es de un
+  mes. No lo he cambiado porque borra historial antes, y eso no se deshace. Si
+  se hace, hay que cambiar lo mismo en las dos colas que guardan sin red —
+  `pwa/src/rastroLocal.ts` y `android/.../ColaRastro.kt`, ambas en 45 s—, o
+  los tramos sin cobertura seguirán a la densidad vieja.
+
+- **[P56-02] «Al volante» todavía supone a qué velocidad se va por cada calle.**
+  Con puntos cada minuto no se sabe cuánto de ese minuto fue un semáforo; se
+  estima con la velocidad típica de cada clase de calle del enrutador. Si en
+  Malabo se va más deprisa que eso, el tiempo al volante sale largo y la
+  velocidad corta (es buena parte del −19 % de arriba). La solución que no
+  supone nada es guardar con cada punto la velocidad que ya mide el GPS
+  (`coords.speed` en la PWA, `Location.speed` en Android): el móvil SABE si
+  estaba parado.
+
 - **[P55-01] Render en plan gratuito se DUERME, y con él todo lo automático.**
   `render.yaml` dice `plan: free`: sin peticiones durante 15 minutos el
   servicio se apaga, y un `setInterval` no corre en un proceso apagado. Se vio

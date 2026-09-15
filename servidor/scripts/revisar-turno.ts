@@ -226,9 +226,11 @@ async function principal(): Promise<void> {
       for (let i = 1; i < filas.length; i += 1) {
         ingenua += distanciaMetros(filas[i - 1].lat, filas[i - 1].lng, filas[i].lat, filas[i].lng);
       }
-      console.log(`   Suma ingenua punto a punto: ${(ingenua / 1000).toFixed(2)} km`);
-      console.log(`   Lo que cuenta el sistema:   ${(actividad.metros / 1000).toFixed(2)} km`);
-      console.log(`   Descartado (temblor y saltos): ${((ingenua - actividad.metros) / 1000).toFixed(2)} km`);
+      // Desde el diagnóstico del 15/09 el sistema cuenta POR LAS CALLES, así que
+      // puede dar MÁS que la suma en recta (las esquinas) y a la vez MENOS (el
+      // temblor del coche parado). La diferencia ya no es solo lo descartado.
+      console.log(`   Suma en recta, punto a punto: ${(ingenua / 1000).toFixed(2)} km`);
+      console.log(`   Lo que cuenta el sistema:     ${(actividad.metros / 1000).toFixed(2)} km (por las calles, sin temblor ni saltos)`);
 
       let masRapido = { kmh: 0, en: filas[0].en };
       const intervalos: number[] = [];

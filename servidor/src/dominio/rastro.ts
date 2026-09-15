@@ -7,6 +7,7 @@
 // de GPS—. Ver `debeGuardar` para la regla.
 
 import type pg from 'pg';
+import { caminoPorCarretera } from './carreteras.js';
 import { distanciaMetros } from './geo.js';
 import { leerParametroEntero } from './parametros.js';
 
@@ -47,12 +48,12 @@ export interface Recorrido {
 // mueva) y menos que cualquier parada de verdad.
 const CORTE_TRAMO_MS = 10 * 60 * 1000;
 
+// Seguidas y no con Promise.all: sobre un mismo cliente, pg avisa de que las
+// consultas simultáneas dejarán de funcionar en su próxima versión.
 async function limites(cliente: pg.ClientBase | pg.Pool) {
-  const [intervaloSeg, distanciaM, anclajeSeg] = await Promise.all([
-    leerParametroEntero(cliente, 'rastro_intervalo_min_seg'),
-    leerParametroEntero(cliente, 'rastro_distancia_min_m'),
-    leerParametroEntero(cliente, 'rastro_anclaje_seg'),
-  ]);
+  const intervaloSeg = await leerParametroEntero(cliente, 'rastro_intervalo_min_seg');
+  const distanciaM = await leerParametroEntero(cliente, 'rastro_distancia_min_m');
+  const anclajeSeg = await leerParametroEntero(cliente, 'rastro_anclaje_seg');
   return { intervaloSeg, distanciaM, anclajeSeg };
 }
 
@@ -264,24 +265,36 @@ export async function recorridoDe(
   // midieran sobre la versión reducida, un mes recorrido saldría más corto
   // que una semana del mismo taxi solo por haberse dibujado con menos puntos.
   const tramosCompletos = trocear(todos);
-  const [ruidoM, maximaKmh] = await Promise.all([
-    leerParametroEntero(cliente, 'rastro_ruido_m'),
-    leerParametroEntero(cliente, 'rastro_velocidad_maxima_kmh'),
-  ]);
+  // Seguidas, no con Promise.all: son consultas sobre el MISMO cliente, y pg
+  // ya avisa de que eso dejará de funcionar en su próxima versión.
+  const ruidoM = await leerParametroEntero(cliente, 'rastro_ruido_m');
+  const maximaKmh = await leerParametroEntero(cliente, 'rastro_velocidad_maxima_kmh');
   let metros = 0;
   let segundosEnMovimiento = 0;
+  const trazados: Tramo[] = [];
   for (const tramo of tramosCompletos) {
-    const andado = metrosDe(tramo, ruidoM, maximaKmh);
+    const andado = andarPorCalles(tramo, ruidoM, maximaKmh);
     metros += andado.metros;
     segundosEnMovimiento += andado.segundos;
+    if (andado.trazado.length >= 2) {
+      trazados.push(andado.trazado);
+    } else {
+      // Un tramo en el que no se movió de verdad —una hora esperando en la
+      // parada del mercado— no suma metros, pero se sigue VIENDO dónde esperó.
+      // Sin esto, al pasar el recorrido por las calles un taxi parado
+      // desaparecía del mapa del operador, que es justo lo que quiere saber.
+      trazados.push([{ ...tramo[0] }, { ...tramo[tramo.length - 1] }]);
+    }
   }
 
-  // La intensidad se calcula sobre TODOS los puntos y antes de aligerar: si se
-  // contara sobre los que se dibujan, la ruta más repetida cambiaría según
-  // cuántos puntos quepan en la respuesta.
-  const pasadas = pasadasPorCelda(tramosCompletos);
+  // La intensidad se cuenta sobre el camino POR LAS CALLES, denso y antes de
+  // aligerar. Sobre los puntos guardados —uno cada 300 m, en un sitio distinto
+  // en cada pasada— la misma calle recorrida tres veces salía pintada de una
+  // sola pasada en una parte de su longitud. Y antes de aligerar porque, si no,
+  // la ruta más repetida cambiaría según cuántos puntos quepan en la respuesta.
+  const pasadas = pasadasPorCelda(trazados);
   let maxPasadas = 0;
-  for (const tramo of tramosCompletos) {
+  for (const tramo of trazados) {
     for (const punto of tramo) {
       punto.pasadas = pasadas.get(celdaDe(punto)) ?? 1;
       if (punto.pasadas > maxPasadas) maxPasadas = punto.pasadas;
@@ -291,7 +304,7 @@ export async function recorridoDe(
   return {
     desde,
     hasta,
-    tramos: aligerar(tramosCompletos, maxPuntos),
+    tramos: aligerar(trazados, maxPuntos),
     puntos: todos.length,
     metros: Math.round(metros),
     segundosEnMovimiento: Math.round(segundosEnMovimiento),
@@ -299,53 +312,96 @@ export async function recorridoDe(
   };
 }
 
-// Cuántos metros anduvo de verdad en un tramo (migración 051).
+// Cuánto anduvo de verdad en un tramo, por dónde y durante cuánto (migración
+// 051 y diagnóstico del 15/09).
 //
-// Sumar la distancia entre cada dos puntos seguidos cuenta también lo que no
-// se anduvo. Un taxi esperando en la parada del mercado deja un punto de
-// anclaje cada cinco minutos, y entre dos de esos puntos hay quince o veinte
-// metros de puro temblor del chip; doce puntos por hora, ocho horas de turno,
-// y son kilómetro y medio de «recorrido» sin haberse movido del sitio.
+// DOS DEFENSAS contra lo que no se anduvo:
 //
-// Así que la cuenta no va de punto a punto sino contra un ANCLA: mientras el
-// coche no se separe de ella más de `ruidoM`, no se cuenta nada y el ancla se
-// queda donde está. En cuanto se separa, se suma esa distancia y el ancla pasa
-// a ser el punto nuevo.
+//   - Contra un ANCLA y con suelo de ruido. Un taxi parado deja un punto cada
+//     cinco minutos a quince o veinte metros del anterior: temblor del chip. El
+//     ancla no se mueve hasta que el coche se separa de ella más de `ruidoM`, y
+//     así un atasco —que avanza de veinte en veinte metros— sí acumula.
+//   - Sin saltos imposibles: una fijación disparada no es un coche.
 //
-// El ancla es lo que lo hace correcto y no solo un filtro: si se descartara
-// cada salto pequeño sin más, un coche en un atasco —que avanza de veinte en
-// veinte metros— no recorrería nada en toda la tarde. Contra el ancla, esos
-// avances se acumulan y en cuanto suman lo bastante, cuentan enteros.
+// Y UNA CORRECCIÓN de lo que sí se anduvo: entre dos puntos no hay una recta,
+// hay calles. El diagnóstico contra una ruta verdadera por Malabo midió lo que
+// costaba la recta: un 30 % menos de kilómetros, la mitad de la velocidad real
+// en marcha, y un cuarto del dibujo atravesando manzanas. Ahora cada salto se
+// reconstruye por las calles (`caminoPorCarretera`) y solo si no hay un camino
+// creíble se usa la recta.
 //
-// Y un salto que implique una velocidad imposible tampoco cuenta: eso no es un
-// coche, es una fijación disparada, y sumarla mete kilómetros de la nada.
-function metrosDe(
+// El tiempo en marcha de un salto es el que se tarda en recorrer ese camino a
+// la velocidad típica de cada calle, sin pasar de lo que duró el salto. Es la
+// forma de separar, dentro de un minuto entre dos puntos, cuánto fue andar y
+// cuánto un semáforo — que antes contaba entero como volante.
+function andarPorCalles(
   tramo: Tramo, ruidoM: number, maximaKmh: number,
-): { metros: number; segundos: number } {
+): { metros: number; segundos: number; trazado: Tramo } {
   let metros = 0;
   let segundos = 0;
   let ancla = tramo[0];
+  const trazado: Tramo = [{ ...ancla }];
   for (let i = 1; i < tramo.length; i += 1) {
     const punto = tramo[i];
     const salto = distanciaMetros(ancla.lat, ancla.lng, punto.lat, punto.lng);
     if (salto < ruidoM) continue;
-    const hueco = (punto.en.getTime() - ancla.en.getTime()) / 1000;
+    const hueco = Math.max(0, (punto.en.getTime() - ancla.en.getTime()) / 1000);
     if (hueco > 0 && (salto / hueco) * 3.6 > maximaKmh) {
       // Descartada la fijación, pero el ancla avanza igual: si se quedara
       // atrás, el punto siguiente se mediría contra un sitio donde el coche ya
-      // no está y el error se arrastraría el resto del tramo.
+      // no está y el error se arrastraría el resto del tramo. Y no se dibuja:
+      // la vuelta desde el punto disparado también es imposible y cae aquí, así
+      // que el pico desaparece entero del mapa.
       ancla = punto;
       continue;
     }
-    metros += salto;
-    // Y ese trozo cuenta también como tiempo circulando. Contra el ancla, igual
-    // que la distancia: si el coche estuvo parado y luego arrancó, la espera
-    // cae dentro de este mismo salto y no es conducción. Se acota al corte de
-    // tramo para que un hueco largo no se cuele entero como volante.
-    segundos += Math.min(Math.max(0, hueco), CORTE_TRAMO_MS / 1000);
+
+    const camino = caminoPorCarretera(ancla, punto, salto, hueco, maximaKmh);
+    const tope = CORTE_TRAMO_MS / 1000;
+    if (camino !== null) {
+      metros += camino.distanciaM;
+      segundos += Math.min(hueco, camino.segundosTipicos, tope);
+      densificar(trazado, camino.puntos, ancla.en, punto.en);
+    } else {
+      metros += salto;
+      segundos += Math.min(hueco, tope);
+      densificar(trazado, [ancla, punto], ancla.en, punto.en);
+    }
     ancla = punto;
   }
-  return { metros, segundos };
+  return { metros, segundos, trazado };
+}
+
+// Añade un camino al trazado con un punto cada 15 m como mucho, repartiendo la
+// hora a lo largo de la distancia. Denso por el mapa de calor: sus celdas son
+// de 33 m, y una avenida recta del plano puede ser un solo tramo de trescientos
+// metros, que sin esto no pisaría las celdas de en medio.
+const PASO_TRAZADO_M = 15;
+function densificar(
+  trazado: Tramo, camino: Array<{ lat: number; lng: number }>, desde: Date, hasta: Date,
+): void {
+  const largos = [0];
+  for (let i = 1; i < camino.length; i += 1) {
+    largos.push(largos[i - 1] + distanciaMetros(camino[i - 1].lat, camino[i - 1].lng, camino[i].lat, camino[i].lng));
+  }
+  const total = largos[largos.length - 1];
+  const hora = (m: number) => new Date(
+    desde.getTime() + (total === 0 ? 0 : m / total) * (hasta.getTime() - desde.getTime()),
+  );
+  for (let i = 1; i < camino.length; i += 1) {
+    const a = camino[i - 1];
+    const b = camino[i];
+    const tramoM = largos[i] - largos[i - 1];
+    const pasos = Math.max(1, Math.ceil(tramoM / PASO_TRAZADO_M));
+    for (let k = 1; k <= pasos; k += 1) {
+      const f = k / pasos;
+      trazado.push({
+        lat: a.lat + (b.lat - a.lat) * f,
+        lng: a.lng + (b.lng - a.lng) * f,
+        en: hora(largos[i - 1] + tramoM * f),
+      });
+    }
+  }
 }
 
 // Rejilla de ~33 m. Más fina y el ruido del GPS parte en dos celdas distintas
@@ -362,18 +418,32 @@ const celdaDe = (p: { lat: number; lng: number }) =>
 // La diferencia es la funcionalidad entera. Un taxi esperando una hora en la
 // parada del mercado deja doce puntos de anclaje en la misma celda; contando
 // puntos, esa parada sería lo más «recorrido» del mes por goleada y todo lo
-// demás saldría azul. Contando pasadas —cada racha seguida de puntos en la
-// misma celda vale uno— esperar no cuenta como recorrer, que es lo que
-// cualquiera entiende al mirar el mapa.
+// demás saldría azul. Contando pasadas, esperar no cuenta como recorrer.
+//
+// Y una pasada es ENTRAR EN LA CELDA DESPUÉS DE HABER ESTADO LEJOS, no cambiar
+// de celda. Antes bastaba con salir y volver a entrar, y un camino que va por
+// el borde entre dos celdas —cualquier calle que no caiga justo en medio de la
+// rejilla— zigzaguea de una a otra cada pocos metros: el diagnóstico del 15/09
+// encontró un tercio del mapa con MÁS pasadas de las reales por eso. Ahora
+// hace falta haber recorrido `LEJOS_M` fuera de la celda para que volver
+// cuente como otra vez; una vuelta a la manzana sí la cumple, un zigzag no.
+const LEJOS_M = 80;
 function pasadasPorCelda(tramos: Tramo[]): Map<string, number> {
   const cuenta = new Map<string, number>();
   for (const tramo of tramos) {
-    let anterior = '';
-    for (const punto of tramo) {
+    const vistaEn = new Map<string, number>();
+    let andado = 0;
+    for (let i = 0; i < tramo.length; i += 1) {
+      const punto = tramo[i];
+      if (i > 0) {
+        andado += distanciaMetros(tramo[i - 1].lat, tramo[i - 1].lng, punto.lat, punto.lng);
+      }
       const celda = celdaDe(punto);
-      if (celda === anterior) continue;
-      cuenta.set(celda, (cuenta.get(celda) ?? 0) + 1);
-      anterior = celda;
+      const ultima = vistaEn.get(celda);
+      if (ultima === undefined || andado - ultima > LEJOS_M) {
+        cuenta.set(celda, (cuenta.get(celda) ?? 0) + 1);
+      }
+      vistaEn.set(celda, andado);
     }
   }
   return cuenta;

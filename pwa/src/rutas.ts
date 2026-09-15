@@ -416,3 +416,228 @@ export async function calcularRuta(desde: Punto, hasta: Punto): Promise<Ruta | n
   const aproximada = inicio.distanciaM > 25 || fin.distanciaM > 25;
   return { puntos, distanciaM, aproximada };
 }
+
+// --- Emparejar un recorrido con las calles ---------------------------------
+//
+// Diagnóstico del 15/09: el recorrido guardado es un punto cada ~60 s, unos
+// 300 m de calle entre dos puntos. Unirlos con una recta, como se hacía, corta
+// las esquinas de la cuadrícula. Medido contra una ruta verdadera por calles
+// de Malabo:
+//   - kilómetros un 30 % por debajo de lo recorrido;
+//   - velocidad en marcha la MITAD de la real;
+//   - uno de cada cuatro metros del mapa de calor pintado atravesando manzanas.
+//
+// Esto reconstruye, entre dos puntos guardados, el camino más probable por las
+// calles. No es `calcularRuta` por dos razones de escala: aquel recorre las
+// ~10.000 calles del plano para enganchar cada extremo y reserva memoria para
+// el grafo entero en cada llamada. Para UNA ruta da igual; para un mes de
+// recorrido son decenas de miles de llamadas. Aquí el enganche va por rejilla
+// y la búsqueda solo guarda los nodos que toca, con un tope.
+
+export interface Emparejado {
+  puntos: Punto[];
+  distanciaM: number;
+  // Lo que se tarda en recorrer ese camino a la velocidad típica de cada clase
+  // de calle. Sirve para separar, dentro de un salto de 60 s, cuánto fue ir
+  // andando y cuánto estar parado en un semáforo.
+  segundosTipicos: number;
+}
+
+const CELDA_INDICE = 0.002; // ~220 m
+const indices = new WeakMap<Grafo, Map<string, number[]>>();
+
+function indiceEspacial(g: Grafo): Map<string, number[]> {
+  let indice = indices.get(g);
+  if (indice) return indice;
+  indice = new Map();
+  for (let s = 0; s < g.segDesde.length; s += 1) {
+    const a = g.segDesde[s];
+    const b = g.segHasta[s];
+    const f0 = Math.floor(Math.min(g.lat[a], g.lat[b]) / CELDA_INDICE);
+    const f1 = Math.floor(Math.max(g.lat[a], g.lat[b]) / CELDA_INDICE);
+    const c0 = Math.floor(Math.min(g.lng[a], g.lng[b]) / CELDA_INDICE);
+    const c1 = Math.floor(Math.max(g.lng[a], g.lng[b]) / CELDA_INDICE);
+    for (let f = f0; f <= f1; f += 1) {
+      for (let c = c0; c <= c1; c += 1) {
+        const k = `${f}:${c}`;
+        const lista = indice.get(k);
+        if (lista) lista.push(s); else indice.set(k, [s]);
+      }
+    }
+  }
+  indices.set(g, indice);
+  return indice;
+}
+
+// Metros de castigo por engancharse a una calle de sentido único que va al
+// revés de la marcha. Lo bastante para que, entre las dos calzadas de una
+// avenida —a diez o quince metros una de otra—, gane siempre la del sentido en
+// que va el coche; y lo bastante poco para que una calle de verdad cercana siga
+// ganando a otra lejana aunque vaya a contramano.
+const CASTIGO_CONTRAMANO_M = 25;
+
+function engancharCerca(
+  g: Grafo, punto: Punto, radioM: number,
+  // Hacia dónde va el coche, en grados desde el norte. Sin él, la calle más
+  // cercana y ya está.
+  rumbo: number | null = null,
+): Enganche | null {
+  const indice = indiceEspacial(g);
+  const f = Math.floor(punto.lat / CELDA_INDICE);
+  const c = Math.floor(punto.lng / CELDA_INDICE);
+  let mejorSeg = -1;
+  let mejorT = 0;
+  let mejorD2 = Number.POSITIVE_INFINITY;
+  const vistos = new Set<number>();
+  for (let df = -1; df <= 1; df += 1) {
+    for (let dc = -1; dc <= 1; dc += 1) {
+      for (const s of indice.get(`${f + df}:${c + dc}`) ?? []) {
+        if (vistos.has(s)) continue;
+        vistos.add(s);
+        const a = g.segDesde[s];
+        const b = g.segHasta[s];
+        const ax = (g.lng[a] - punto.lng) * COS_LAT;
+        const ay = g.lat[a] - punto.lat;
+        const dx = (g.lng[b] - punto.lng) * COS_LAT - ax;
+        const dy = g.lat[b] - punto.lat - ay;
+        const largo2 = dx * dx + dy * dy;
+        const t = largo2 === 0 ? 0 : Math.max(0, Math.min(1, -(ax * dx + ay * dy) / largo2));
+        let d2 = (ax + t * dx) ** 2 + (ay + t * dy) ** 2;
+        // La calzada contraria de una avenida, a unos metros: es exactamente
+        // donde el ruido del GPS deja caer un punto. Engancharlo ahí obliga a
+        // un rodeo por la rotonda siguiente que nunca existió.
+        if (rumbo !== null && g.segUnico[s] === 1 && largo2 > 0) {
+          const suyo = (Math.atan2(dx, dy) * 180) / Math.PI;
+          const diferencia = Math.abs((((suyo - rumbo) % 360) + 540) % 360 - 180);
+          if (diferencia > 110) {
+            const d = Math.sqrt(d2) * 111_320 + CASTIGO_CONTRAMANO_M;
+            d2 = (d / 111_320) ** 2;
+          }
+        }
+        if (d2 < mejorD2) { mejorD2 = d2; mejorSeg = s; mejorT = t; }
+      }
+    }
+  }
+  if (mejorSeg < 0) return null;
+  const a = g.segDesde[mejorSeg];
+  const b = g.segHasta[mejorSeg];
+  const lat = g.lat[a] + (g.lat[b] - g.lat[a]) * mejorT;
+  const lng = g.lng[a] + (g.lng[b] - g.lng[a]) * mejorT;
+  const distanciaM = metros(lat, lng, punto.lat, punto.lng);
+  return distanciaM > radioM ? null : { segmento: mejorSeg, t: mejorT, lat, lng, distanciaM };
+}
+
+// El camino por calles entre dos puntos cercanos de un recorrido, o null si
+// no hay uno creíble (fuera del plano, calles sin conectar, o más nodos de los
+// que puede tener un salto de un minuto). Quien llama usa entonces la recta,
+// que es lo que había.
+//
+// Síncrona a propósito: requiere el plano ya cargado con `cargarPlano`. Quien
+// empareja miles de tramos no puede esperar una promesa por cada uno.
+export function emparejar(
+  desde: Punto,
+  hasta: Punto,
+  // `segundosMaximos`: si se sabe cuánto pasó entre los dos puntos, un camino
+  // que tarde más que eso no puede ser, y la búsqueda para ahí. Es el tope que
+  // tiene sentido; `nodosMaximos` queda solo como red de seguridad.
+  { radioEngancheM = 40, nodosMaximos = 50_000, segundosMaximos = Infinity } = {},
+): Emparejado | null {
+  const g = grafo;
+  if (!g) return null;
+  // El rumbo de la marcha, de un punto al otro. Solo si están lo bastante
+  // separados para que el ruido no invente la dirección.
+  const separacion = metros(desde.lat, desde.lng, hasta.lat, hasta.lng);
+  const rumbo = separacion >= 40
+    ? (Math.atan2((hasta.lng - desde.lng) * COS_LAT, hasta.lat - desde.lat) * 180) / Math.PI
+    : null;
+  const inicio = engancharCerca(g, desde, radioEngancheM, rumbo);
+  const fin = engancharCerca(g, hasta, radioEngancheM, rumbo);
+  if (!inicio || !fin) return null;
+
+  const n = g.lat.length;
+  const V_INICIO = n;
+  const V_FIN = n + 1;
+  const latDe = (i: number) => (i === V_INICIO ? inicio.lat : i === V_FIN ? fin.lat : g.lat[i]);
+  const lngDe = (i: number) => (i === V_INICIO ? inicio.lng : i === V_FIN ? fin.lng : g.lng[i]);
+
+  const buscar = (respetarSentido: boolean): { camino: number[]; segundos: number } | null => {
+    // Mapas y no arrays del tamaño del grafo: un salto de un minuto toca unos
+    // cientos de nodos de los cincuenta mil del plano.
+    const coste = new Map<number, number>();
+    const previo = new Map<number, number>();
+    const cerrado = new Set<number>();
+    const cola = new Monticulo();
+    const h = (i: number) => metros(latDe(i), lngDe(i), fin.lat, fin.lng) / VELOCIDAD_MAXIMA_MS;
+    const relajar = (a: number, b: number, peso: number) => {
+      if (cerrado.has(b)) return;
+      const nuevo = (coste.get(a) ?? Infinity) + peso;
+      if (nuevo < (coste.get(b) ?? Infinity)) {
+        coste.set(b, nuevo);
+        previo.set(b, a);
+        cola.meter(b, nuevo + h(b));
+      }
+    };
+    coste.set(V_INICIO, 0);
+    cola.meter(V_INICIO, h(V_INICIO));
+    while (!cola.vacio) {
+      const actual = cola.sacar();
+      if (cerrado.has(actual)) continue;
+      cerrado.add(actual);
+      if (actual === V_FIN) break;
+      if (cerrado.size > nodosMaximos) return null;
+      // Con heurística admisible, en cuanto lo más prometedor de la cola ya no
+      // cabe en el tiempo, no cabe nada.
+      if ((coste.get(actual) ?? 0) + h(actual) > segundosMaximos) return null;
+      if (actual === V_INICIO) {
+        const s = inicio.segmento;
+        const vel = g.segVelocidad[s];
+        const a = g.segDesde[s];
+        const b = g.segHasta[s];
+        relajar(V_INICIO, b, metros(inicio.lat, inicio.lng, g.lat[b], g.lng[b]) / vel);
+        if (!respetarSentido || g.segUnico[s] === 0) {
+          relajar(V_INICIO, a, metros(inicio.lat, inicio.lng, g.lat[a], g.lng[a]) / vel);
+        }
+        if (fin.segmento === s && (fin.t > inicio.t || !respetarSentido || g.segUnico[s] === 0)) {
+          relajar(V_INICIO, V_FIN, metros(inicio.lat, inicio.lng, fin.lat, fin.lng) / vel);
+        }
+        continue;
+      }
+      for (let arista = g.inicio[actual]; arista < g.inicio[actual + 1]; arista += 1) {
+        if (respetarSentido && g.legales[arista] === 0) continue;
+        relajar(actual, g.vecinos[arista], g.pesos[arista]);
+      }
+      const s = fin.segmento;
+      if (actual === g.segDesde[s]
+        || (actual === g.segHasta[s] && (!respetarSentido || g.segUnico[s] === 0))) {
+        relajar(actual, V_FIN, metros(g.lat[actual], g.lng[actual], fin.lat, fin.lng) / g.segVelocidad[s]);
+      }
+    }
+    if (!cerrado.has(V_FIN)) return null;
+    const camino: number[] = [];
+    for (let i: number | undefined = V_FIN; i !== undefined; i = previo.get(i)) {
+      camino.push(i);
+      if (i === V_INICIO) break;
+    }
+    return { camino: camino.reverse(), segundos: coste.get(V_FIN)! };
+  };
+
+  // Un camino que pasa DOS VECES por el mismo cruce dentro de un solo salto es
+  // casi siempre un artefacto, no una maniobra. El ruido del GPS deja un punto
+  // en el lado equivocado de un sentido único, y el camino legal más rápido va
+  // hasta el final de la calle y vuelve. Dentro de un minuto da tiempo, así que
+  // la regla física de quien llama no lo caza. El diagnóstico del 15/09 lo
+  // encontró duplicando pasadas en el mapa de calor en una de cada tres
+  // vueltas. Se prueba entonces sin sentidos únicos, y si tampoco sale limpio,
+  // no hay camino creíble.
+  const repite = (camino: number[]) => new Set(camino).size !== camino.length;
+  let hallado = buscar(true);
+  if (hallado && repite(hallado.camino)) hallado = null;
+  if (!hallado) hallado = buscar(false);
+  if (!hallado || repite(hallado.camino)) return null;
+  const puntos = hallado.camino.map((i) => ({ lat: latDe(i), lng: lngDe(i) }));
+  let distanciaM = 0;
+  for (let i = 1; i < puntos.length; i += 1) {
+    distanciaM += metros(puntos[i - 1].lat, puntos[i - 1].lng, puntos[i].lat, puntos[i].lng);
+  }
+  return { puntos, distanciaM, segundosTipicos: hallado.segundos };
+}

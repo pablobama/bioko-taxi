@@ -14,6 +14,7 @@
 //        andado DE VERDAD en los últimos minutos.
 
 import type pg from 'pg';
+import { caminoPorCarretera } from './carreteras.js';
 import { distanciaMetros } from './geo.js';
 import { leerParametroEntero } from './parametros.js';
 
@@ -77,7 +78,14 @@ export async function velocidadRecienteKmh(
     const hueco = (punto.en - ancla.en) / 1000;
     // Un salto imposible es una fijación disparada, no un coche. El ancla
     // avanza igual: dejarla atrás arrastraría el error el resto de la ventana.
-    if (hueco > 0 && (salto / hueco) * 3.6 <= topeKmh) metros += salto;
+    if (hueco > 0 && (salto / hueco) * 3.6 <= topeKmh) {
+      // Por las calles, no en recta: cada esquina que la recta se come es
+      // velocidad que se le quita al coche y minutos que se le suman a la
+      // llegada. Diagnóstico del 15/09: con rectas, la velocidad de la ETA salía
+      // un 14 % baja — y la ETA, un 14 % larga, a la vista del pasajero.
+      const camino = caminoPorCarretera(ancla, punto, salto, hueco, topeKmh);
+      metros += camino?.distanciaM ?? salto;
+    }
     ancla = punto;
   }
   if (metros < minimoM) return null;

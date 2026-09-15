@@ -53,7 +53,13 @@ async function crearConductor(estado = 'DISPONIBLE'): Promise<number> {
 const BASE = new Date('2026-08-05T08:00:00Z');
 const enSegundo = (s: number) => new Date(BASE.getTime() + s * 1000);
 // Un grado de latitud son ~111 km: esto son metros hacia el norte.
-const aMetros = (m: number) => ({ lat: 3.75 + m / 111_320, lng: 8.78 });
+// En el MAR, al norte de Malabo, a propósito. Desde el diagnóstico del 15/09 el
+// recorrido se reconstruye por las calles, y una recta inventada en pleno
+// centro se engancharía a calles de verdad y daría otros metros. Estas pruebas
+// no son sobre calles —son sobre el temblor, los huecos, los atascos—, así que
+// van donde no hay ninguna a la que engancharse. Lo de las calles lo prueba
+// carreteras.prueba.ts.
+const aMetros = (m: number) => ({ lat: 3.80 + m / 111_320, lng: 8.78 });
 
 const guardar = (id: number, m: number, seg: number) =>
   enTransaccion(pool, (c) => {
@@ -116,8 +122,11 @@ test('un hueco largo parte el recorrido en dos tramos, sin unirlos por el aire',
   const r = await recorridoDe(pool, id, enSegundo(-100), enSegundo(3000));
   assert.equal(r.puntos, 4);
   assert.equal(r.tramos.length, 2, 'dos tramos, no uno atravesando el hueco');
-  assert.equal(r.tramos[0].length, 2);
-  assert.equal(r.tramos[1].length, 2);
+  // Y cada uno se queda a su lado del hueco. No se cuentan sus puntos: el
+  // dibujo ahora va densificado por el camino, y lo que importa no es cuántos
+  // hay sino que ninguno cruce los 2,7 km que nadie recorrió.
+  assert.ok(r.tramos[0].every((p) => p.lat <= aMetros(400).lat), 'el primero no pasa del hueco');
+  assert.ok(r.tramos[1].every((p) => p.lat >= aMetros(2900).lat), 'el segundo empieza después');
 });
 
 test('los metros son los que anduvo de verdad, no los del salto entre tramos', async () => {
