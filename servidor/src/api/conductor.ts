@@ -23,6 +23,9 @@ import { estadoPorOcupacion, ocupacionDe, rutaDe } from '../dominio/ocupacion.js
 import { registrarPosicion } from '../dominio/proximidad.js';
 import { apuntarSenal, registrarRastro, registrarRastroDiferido } from '../dominio/rastro.js';
 import { llegadaDeViaje } from '../dominio/llegada.js';
+import {
+  borrarSuscripcion, clavesVapid, guardarSuscripcion,
+} from '../dominio/notificaciones.js';
 import { puntoDeRecogida } from '../dominio/recogida.js';
 import { recargasDe, solicitarRecarga } from '../dominio/recargas.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
@@ -344,6 +347,48 @@ export function registrarRutasConductor(
       }
       throw error;
     }
+  });
+
+  // --- Notificaciones web (migración 058) ---------------------------------
+  //
+  // Lo que suena con la aplicación cerrada. Tres llamadas: la clave con la que
+  // el navegador se suscribe, el alta del buzón y la baja.
+
+  // La clave pública del servidor. El navegador la necesita para suscribirse y
+  // no es un secreto: es la mitad pública de un par de firma.
+  app.get('/api/conductor/notificaciones/clave', async (req) => {
+    await sesionDesde(req);
+    const claves = await clavesVapid(pool);
+    return { clavePublica: claves.publica };
+  });
+
+  // El buzón que da el navegador al conceder el permiso.
+  app.post('/api/conductor/notificaciones', async (req) => {
+    const sesion = await sesionDesde(req);
+    const cuerpo = (req.body ?? {}) as {
+      endpoint?: unknown;
+      claves?: { p256dh?: unknown; auth?: unknown };
+    };
+    const endpoint = typeof cuerpo.endpoint === 'string' ? cuerpo.endpoint : '';
+    const p256dh = typeof cuerpo.claves?.p256dh === 'string' ? cuerpo.claves.p256dh : '';
+    const auth = typeof cuerpo.claves?.auth === 'string' ? cuerpo.claves.auth : '';
+    // Las tres partes o ninguna: un buzón sin sus claves no se puede cifrar, y
+    // guardarlo solo serviría para fallar en cada envío.
+    if (!endpoint.startsWith('https://') || p256dh === '' || auth === '') {
+      throw errorHttp(400, 'Suscripción incompleta: hacen falta endpoint y las dos claves.');
+    }
+    await guardarSuscripcion(pool, Number(sesion.dispositivoId), { endpoint, p256dh, auth });
+    return { guardada: true };
+  });
+
+  // Baja: al apagar el aviso, o cuando el navegador renueva la suscripción y
+  // la vieja deja de valer.
+  app.delete('/api/conductor/notificaciones', async (req) => {
+    await sesionDesde(req);
+    const cuerpo = (req.body ?? {}) as { endpoint?: unknown };
+    const endpoint = typeof cuerpo.endpoint === 'string' ? cuerpo.endpoint : '';
+    if (endpoint !== '') await borrarSuscripcion(pool, endpoint);
+    return { borrada: true };
   });
 
   // El recorrido que el móvil apuntó por su cuenta mientras no había red

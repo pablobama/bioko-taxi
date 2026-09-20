@@ -22,6 +22,7 @@ import Recarga from './Recarga';
 import MandosFlotantes from './MandosFlotantes';
 import { anotarRastro, olvidarRastro, pendientesRastro } from './rastroLocal';
 import { alternarGuia, guiaEncendida, proximoAviso } from './guia';
+import { activarAvisos } from './avisoPush';
 import {
   encolar, guardarUltimo, sincronizar, ultimoGuardado, usePendientes,
 } from './sinRed';
@@ -611,6 +612,16 @@ export default function PanelConductor({
     setAviso('');
     try {
       if (!enServicio) {
+        // Las notificaciones que suenan con la aplicación cerrada (migración
+        // 058), pedidas AQUÍ: el navegador solo deja pedir el permiso desde un
+        // gesto, y este es el gesto en el que la pregunta se entiende —«entro
+        // a trabajar»—. Se espera a que conteste, porque el cuadro del
+        // navegador es modal, pero no se juzga la respuesta: quien lo rechace
+        // sigue recibiendo las carreras con la aplicación delante, que es como
+        // funcionaba hasta hoy.
+        const avisos = await activarAvisos();
+        if (avisos === 'bloqueado') setAviso(t('avisos.bloqueados'));
+        else if (avisos === 'no_disponible') setAviso(t('avisos.noDisponibles'));
         // Se pide el GPS en el momento, no se reutiliza el último conocido:
         // entrar en servicio declara dónde estás AHORA, y una lectura de
         // hace media hora puede ser de otro barrio.

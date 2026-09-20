@@ -19,6 +19,7 @@ import { purgarRastro } from '../dominio/rastro.js';
 import { AdaptadorFcm } from '../eventos/adaptador-fcm.js';
 import { AdaptadorNoop } from '../eventos/adaptador-noop.js';
 import { AdaptadorSse, ConexionesSse } from '../eventos/adaptador-sse.js';
+import { AdaptadorWeb } from '../eventos/adaptador-web.js';
 import { DespachadorEventos, EmisorSalida, type Adaptador } from '../eventos/bus.js';
 import {
   ServicioVerificacionConsola,
@@ -109,6 +110,10 @@ async function principal(): Promise<void> {
 
   const adaptadores = new Map<string, Adaptador>([
     ['sse', new AdaptadorSse(conexionesSse)],
+    // Notificación web (migración 058): el canal 2 del taxista, el que suena
+    // con la aplicación cerrada. No necesita configurar nada —las claves las
+    // genera y guarda el propio servidor—, así que se registra siempre.
+    ['web', new AdaptadorWeb()],
     ['noop', new AdaptadorNoop()],
   ]);
   if (process.env.FCM_CREDENCIALES_RUTA) {

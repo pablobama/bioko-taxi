@@ -646,3 +646,35 @@ test('sin red: salir de servicio dos veces no es un error', async () => {
   assert.equal(dos.codigo, 200);
   assert.equal(dos.json.yaHecho, true);
 });
+
+// --- Notificaciones web (migración 058) -----------------------------------
+
+test('el buzón de avisos se guarda, y uno incompleto se rechaza', async () => {
+  const conductor = await darDeAlta();
+  await registrarYConectar(conductor);
+
+  const clave = await llamar('GET', '/api/conductor/notificaciones/clave', conductor.uuid);
+  assert.equal(clave.codigo, 200);
+  assert.ok(clave.json.clavePublica.length > 40, 'la clave pública viaja al navegador');
+
+  // Un buzón sin sus claves no se puede cifrar: guardarlo solo serviría para
+  // fallar en cada envío, así que se rechaza en la puerta.
+  const incompleto = await llamar('POST', '/api/conductor/notificaciones', conductor.uuid, {
+    endpoint: 'https://push.example/sin-claves',
+  });
+  assert.equal(incompleto.codigo, 400);
+
+  const bueno = await llamar('POST', '/api/conductor/notificaciones', conductor.uuid, {
+    endpoint: `https://push.example/${conductor.uuid}`,
+    claves: { p256dh: 'clave', auth: 'auth' },
+  });
+  assert.equal(bueno.codigo, 200, JSON.stringify(bueno.json));
+
+  const guardadas = await pool.query(
+    `SELECT count(*)::int AS n FROM suscripcion_web s
+     JOIN dispositivo d ON d.id = s.dispositivo_id
+     WHERE d.conductor_id = $1`,
+    [conductor.conductorId],
+  );
+  assert.equal(guardadas.rows[0].n, 1);
+});

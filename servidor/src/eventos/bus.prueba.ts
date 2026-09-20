@@ -64,11 +64,25 @@ async function crearRegla(canal1: string | null, canal2: string | null = null): 
   return tipo;
 }
 
-async function emitir(tipo: string, datos: Record<string, unknown> = {}): Promise<void> {
+async function emitir(
+  tipo: string,
+  datos: Record<string, unknown> = {},
+  rol: 'cliente' | 'conductor' = 'conductor',
+): Promise<void> {
   const emisor = new EmisorSalida();
   await enTransaccion(pool, (c) => emisor.emitir({
-    tipo, rol: 'conductor', solicitudId, dispositivoClienteId, datos,
+    tipo, rol, solicitudId, dispositivoClienteId, datos,
   }, c));
+}
+
+// La misma regla, para el rol del pasajero.
+async function crearReglaCliente(canal1: string | null): Promise<string> {
+  const tipo = `PRUEBA_${randomUUID().slice(0, 8)}`;
+  await pool.query(
+    `INSERT INTO enrutamiento (evento, rol, canal_1) VALUES ($1, 'cliente', $2)`,
+    [tipo, canal1],
+  );
+  return tipo;
 }
 
 async function filaEvento(tipo: string): Promise<{ intentos: number; ultimo_error: string | null; entregado_en: Date | null; canal_entregado: string | null }> {
@@ -173,17 +187,20 @@ test('sin regla de enrutamiento: reintentos con error explícito y abandono al a
   assert.notEqual(fila.entregado_en, null);
 });
 
-test('adaptador SSE: entrega a la conexión viva; sin conexión queda «sse_sin_conexion»', async () => {
+test('adaptador SSE: entrega a la conexión viva; al PASAJERO sin conexión no es fallo', async () => {
   const conexiones = new ConexionesSse();
   const despachador = new DespachadorEventos(pool, new Map<string, Adaptador>([
     ['sse', new AdaptadorSse(conexiones)],
   ]));
-  const tipo = await crearRegla('sse');
 
-  // Sin conexión: no es fallo, queda registrado como sin conexión.
-  await emitir(tipo, { aviso: 'primero' });
+  // Sin conexión y rol pasajero: no es fallo. Su pantalla pregunta el estado
+  // cada diez o veinte segundos, así que se enterará sola.
+  const tipoCliente = await crearReglaCliente('sse');
+  await emitir(tipoCliente, { aviso: 'primero' }, 'cliente');
   await despachador.procesarPendientes();
-  assert.equal((await filaEvento(tipo)).canal_entregado, 'sse_sin_conexion');
+  assert.equal((await filaEvento(tipoCliente)).canal_entregado, 'sse_sin_conexion');
+
+  const tipo = await crearRegla('sse');
 
   // Con conexión viva: el dispositivo recibe la carga JSON.
   const recibido: string[] = [];
@@ -221,4 +238,53 @@ test('conexiones SSE: da igual que el identificador venga como número o como ca
   baja();
   assert.equal(conexiones.entregarA(2067, 'tarde'), 0, 'tras la baja no queda nada');
   assert.equal(conexiones.tieneConexion('2067'), false);
+});
+
+// --- Migración 058: el aviso que suena con la aplicación cerrada -----------
+
+test('al TAXISTA sin conexión viva el evento se escala al canal 2', async () => {
+  // La regla que faltaba. Antes, un taxista con el navegador cerrado recibía
+  // «sse_sin_conexion» y el bus lo daba por entregado: la carrera le caducaba
+  // en veinte segundos sin que la viera nunca. Ahora falta la conexión, falla
+  // el canal 1, y el bus escala a la notificación web, que es lo único que
+  // suena con la aplicación cerrada.
+  const conexiones = new ConexionesSse();
+  const entregadosPorWeb: number[] = [];
+  const despachador = new DespachadorEventos(pool, new Map<string, Adaptador>([
+    ['sse', new AdaptadorSse(conexiones)],
+    ['web', {
+      async entregar(evento: EventoSalida): Promise<string> {
+        entregadosPorWeb.push(Number(evento.id));
+        return 'web';
+      },
+    }],
+  ]));
+  const tipo = await crearRegla('sse', 'web');
+
+  await emitir(tipo, { aviso: 'carrera' });
+  await despachador.procesarPendientes();
+
+  assert.equal(entregadosPorWeb.length, 1, 'la notificación web tenía que recibirlo');
+  assert.equal((await filaEvento(tipo)).canal_entregado, 'web');
+});
+
+test('con la aplicación abierta, el aviso NO sale por notificación web', async () => {
+  // La otra mitad: con la conexión viva no se despierta la pantalla de nadie.
+  // Es instantáneo y no gasta datos, y una notificación encima de la propia
+  // pantalla que ya lo enseña es ruido.
+  const conexiones = new ConexionesSse();
+  let porWeb = 0;
+  const despachador = new DespachadorEventos(pool, new Map<string, Adaptador>([
+    ['sse', new AdaptadorSse(conexiones)],
+    ['web', { async entregar(): Promise<string> { porWeb += 1; return 'web'; } }],
+  ]));
+  const tipo = await crearRegla('sse', 'web');
+
+  const baja = conexiones.suscribir(dispositivoClienteId, () => undefined);
+  await emitir(tipo, { aviso: 'carrera' });
+  await despachador.procesarPendientes();
+  baja();
+
+  assert.equal(porWeb, 0);
+  assert.equal((await filaEvento(tipo)).canal_entregado, 'sse');
 });

@@ -82,3 +82,65 @@ self.addEventListener('fetch', (evento) => {
     })),
   );
 });
+
+// --- Notificaciones web (migración 058) ------------------------------------
+//
+// Esto es lo único de la aplicación que funciona con la página CERRADA: el
+// navegador despierta al service worker para entregar el aviso. De ahí que
+// viva aquí y no en el código de React, que no existe hasta que alguien abre
+// la aplicación.
+//
+// Solo lo usa el taxista: una carrera caduca en veinte segundos y hasta ahora,
+// con el móvil bloqueado, se perdía sin que la viera.
+
+self.addEventListener('push', (evento) => {
+  // Sin datos no se enseña nada. Un servicio de push puede mandar un aviso
+  // vacío para comprobar que la suscripción vive, y «Taxi Malabo» a secas en
+  // la pantalla de bloqueo no informa de nada.
+  if (!evento.data) return;
+
+  let carga;
+  try {
+    carga = evento.data.json();
+  } catch {
+    return;
+  }
+  if (!carga || !carga.titulo) return;
+
+  evento.waitUntil(
+    self.registration.showNotification(carga.titulo, {
+      body: carga.cuerpo ?? '',
+      icon: '/icono-192.png',
+      badge: '/favicon-32.png',
+      // Vibración: es lo que se nota con el móvil en el soporte y la radio
+      // puesta. Dos toques cortos, el mismo patrón que el aviso de carrera
+      // dentro de la aplicación.
+      vibrate: [120, 80, 120],
+      // Que no se apile una notificación por oleada de la misma carrera: la
+      // segunda sustituye a la primera.
+      tag: carga.solicitudId ? `solicitud-${carga.solicitudId}` : carga.tipo,
+      renotify: true,
+      // Se queda en pantalla hasta que se toca. Una carrera que desaparece
+      // sola a los cinco segundos no sirve para nada.
+      requireInteraction: true,
+      data: carga,
+    }),
+  );
+});
+
+// Al tocarla, a la aplicación. Si ya estaba abierta en alguna pestaña se trae
+// esa al frente en lugar de abrir otra: dos paneles del mismo taxista mandando
+// latidos a la vez es justo lo que no se quiere.
+self.addEventListener('notificationclick', (evento) => {
+  evento.notification.close();
+  evento.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((ventanas) => {
+      for (const ventana of ventanas) {
+        if (new URL(ventana.url).origin === self.location.origin) {
+          return ventana.focus();
+        }
+      }
+      return self.clients.openWindow('/');
+    }),
+  );
+});

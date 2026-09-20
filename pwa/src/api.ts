@@ -633,6 +633,24 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ puntos }) },
     ),
 
+  // Notificaciones que suenan con la aplicación cerrada (migración 058).
+  clavePush: () =>
+    pedirJson<{ clavePublica: string }>('/api/conductor/notificaciones/clave'),
+
+  guardarPush: (suscripcion: {
+    endpoint: string; claves: { p256dh: string; auth: string };
+  }) =>
+    pedirJson<{ guardada: boolean }>('/api/conductor/notificaciones', {
+      method: 'POST',
+      body: JSON.stringify(suscripcion),
+    }),
+
+  borrarPush: (endpoint: string) =>
+    pedirJson<{ borrada: boolean }>('/api/conductor/notificaciones', {
+      method: 'DELETE',
+      body: JSON.stringify({ endpoint }),
+    }),
+
   recargas: () =>
     pedirJson<{
       minimoXaf: number;

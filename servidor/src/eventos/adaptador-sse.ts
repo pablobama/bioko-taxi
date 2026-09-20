@@ -88,6 +88,24 @@ export class AdaptadorSse implements Adaptador {
       datos: evento.datos,
     });
     const receptores = this.conexiones.entregarA(dispositivoId, carga);
-    return receptores > 0 ? 'sse' : 'sse_sin_conexion';
+    if (receptores > 0) return 'sse';
+
+    // Sin conexión viva. Para el PASAJERO no es un fallo y nunca lo fue: su
+    // pantalla pregunta el estado cada diez o veinte segundos, así que se
+    // enterará solo.
+    //
+    // Para el TAXISTA sí lo es, y hasta la migración 058 se daba por bueno.
+    // Su aplicación cerrada no pregunta nada, y la carrera caducaba en veinte
+    // segundos sin que la viera. Fallando aquí, el bus escala al canal 2 —la
+    // notificación web—, que es lo único que suena con la aplicación cerrada.
+    // Si no hay canal 2 configurado el evento queda como antes: sin entregar y
+    // con su motivo escrito.
+    if (evento.rol === 'conductor') {
+      throw new Error(
+        `El conductor ${evento.conductorId} no tiene la aplicación abierta `
+        + `(evento ${evento.id}, ${evento.tipo}).`,
+      );
+    }
+    return 'sse_sin_conexion';
   }
 }
