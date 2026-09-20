@@ -65,7 +65,40 @@ type Grafo = {
   segVelocidad: Float32Array;
   // 1 = solo se circula de segDesde a segHasta.
   segUnico: Uint8Array;
+  // 1 = el nodo pertenece a una rotonda (20/09). Ver `esRotonda`.
+  rotonda: Uint8Array;
+  // Coordenada → índice de nodo, para poder volver de los puntos de una ruta
+  // a los nodos del grafo sin buscar por distancia.
+  porCoordenada: Map<string, number>;
 };
+
+// ¿Es esta vía una rotonda?
+//
+// El plano compilado NO trae la etiqueta `junction=roundabout` de
+// OpenStreetMap: el compilador la usa para deducir el sentido único y la
+// descarta. Recompilar el plano para traerla costaría una descarga entera de
+// la isla, así que de momento se reconocen por su forma, que en una rotonda es
+// inconfundible: un anillo CERRADO —empieza y acaba en el mismo punto—, de
+// sentido único, y que cabe en un cuadrado de menos de 120 m. En el plano de
+// Bioko hay un centenar, y son las rotondas de Malabo.
+//
+// Lo que se descarta con cada condición: las manzanas y los callejones en
+// bucle no son de sentido único; las urbanizaciones con calle circular pasan
+// de los 120 m; y una calle normal no empieza donde acaba.
+function esRotonda(via: { p: number[]; s?: number }): boolean {
+  if (via.s !== 1) return false;
+  const n = via.p.length;
+  if (n < 8) return false;
+  if (via.p[0] !== via.p[n - 2] || via.p[1] !== via.p[n - 1]) return false;
+  let minLat = Infinity; let maxLat = -Infinity;
+  let minLng = Infinity; let maxLng = -Infinity;
+  for (let i = 0; i < n; i += 2) {
+    minLat = Math.min(minLat, via.p[i]); maxLat = Math.max(maxLat, via.p[i]);
+    minLng = Math.min(minLng, via.p[i + 1]); maxLng = Math.max(maxLng, via.p[i + 1]);
+  }
+  const ancho = Math.max((maxLat - minLat) * 111_320, (maxLng - minLng) * 111_000);
+  return ancho > 10 && ancho < 120;
+}
 
 const clave = (lat: number, lng: number): string => `${lat.toFixed(5)},${lng.toFixed(5)}`;
 
@@ -103,12 +136,15 @@ function construir(plano: Plano): Grafo {
     return i;
   };
 
+  const rotondaDe = new Set<number>();
   for (const via of plano.vias) {
     const unico = via.s === 1;
+    const enRotonda = esRotonda(via);
     const velocidad = VELOCIDAD_MS[via.c] ?? VELOCIDAD_MS[4];
     let anterior = -1;
     for (let i = 0; i < via.p.length; i += 2) {
       const actual = indiceDe(via.p[i], via.p[i + 1]);
+      if (enRotonda) rotondaDe.add(actual);
       if (anterior >= 0 && anterior !== actual) {
         const d = metros(lats[anterior], lngs[anterior], lats[actual], lngs[actual]);
         const coste = d / velocidad;
@@ -154,6 +190,12 @@ function construir(plano: Plano): Grafo {
     segHasta: Int32Array.from(segHasta),
     segVelocidad: Float32Array.from(segVelocidad),
     segUnico: Uint8Array.from(segUnico),
+    rotonda: (() => {
+      const marcas = new Uint8Array(lats.length);
+      for (const i of rotondaDe) marcas[i] = 1;
+      return marcas;
+    })(),
+    porCoordenada: indices,
   };
 }
 
@@ -640,4 +682,71 @@ export function emparejar(
     distanciaM += metros(puntos[i - 1].lat, puntos[i - 1].lng, puntos[i].lat, puntos[i].lng);
   }
   return { puntos, distanciaM, segundosTipicos: hallado.segundos };
+}
+
+// --- Rotondas (20/09) ------------------------------------------------------
+
+// Por qué salida hay que salir de cada rotonda de la ruta.
+//
+// Devuelve un mapa: índice del punto de la ruta donde se ENTRA en el anillo →
+// número de salida por la que se sale. La guía por voz lo convierte en «en la
+// rotonda, toma la segunda salida», que es la única instrucción que sirve en
+// una rotonda: decir «gira a la derecha» dentro de un anillo es no decir nada,
+// porque dentro de un anillo siempre se está girando.
+//
+// Se cuenta como cuenta quien conduce: desde que entra, cada calle por la que
+// PODRÍA salirse suma una, incluida aquella por la que sale. No se cuentan las
+// entradas —calles por las que solo se puede llegar al anillo, no dejarlo—,
+// porque nadie cuenta como salida una calle en la que no se puede entrar.
+export interface PasoPorRotonda {
+  // Por qué salida hay que salir, contando desde la entrada.
+  salida: number;
+  // Índice en la ruta del punto por donde se DEJA el anillo. Es la identidad
+  // de la maniobra para la guía: el punto de entrada cambia según desde dónde
+  // se recalcule la ruta —y dentro del anillo cambia en cada recálculo—, pero
+  // la salida es siempre la misma.
+  indiceSalida: number;
+}
+
+export function salidasDeRotonda(
+  ruta: Array<{ lat: number; lng: number }>,
+): Map<number, PasoPorRotonda> {
+  const salidas = new Map<number, PasoPorRotonda>();
+  const g = grafo;
+  if (!g || ruta.length < 3) return salidas;
+
+  // Los puntos de la ruta son nodos del grafo salvo los dos extremos, que son
+  // virtuales (el coche y el destino, colgados a mitad de su calle).
+  const nodos = ruta.map((p) => g.porCoordenada.get(clave(p.lat, p.lng)) ?? -1);
+  const enAnillo = (i: number) => nodos[i] >= 0 && g.rotonda[nodos[i]] === 1;
+
+  let i = 0;
+  while (i < ruta.length) {
+    if (!enAnillo(i)) { i += 1; continue; }
+    // Todo el tramo seguido que va por el anillo.
+    let fin = i;
+    while (fin + 1 < ruta.length && enAnillo(fin + 1)) fin += 1;
+
+    // Desde el primer nodo del anillo hasta el último, cada nodo con una
+    // salida cuenta. El de entrada no: por ahí se ha venido.
+    let numero = 0;
+    for (let j = i; j <= fin; j += 1) {
+      const nodo = nodos[j];
+      let tieneSalida = false;
+      for (let k = g.inicio[nodo]; k < g.inicio[nodo + 1]; k += 1) {
+        // Salida = se puede circular hacia un nodo que NO es del anillo.
+        if (g.legales[k] === 1 && g.rotonda[g.vecinos[k]] !== 1) {
+          tieneSalida = true;
+          break;
+        }
+      }
+      if (j > i && tieneSalida) numero += 1;
+    }
+    // Si la ruta sale del anillo por una calle, esa calle es la última contada
+    // y `numero` ya la incluye. Un anillo recorrido entero sin salir —no pasa
+    // en una ruta sana— quedaría en 0 y no se anuncia.
+    if (numero > 0) salidas.set(i, { salida: numero, indiceSalida: fin });
+    i = fin + 1;
+  }
+  return salidas;
 }

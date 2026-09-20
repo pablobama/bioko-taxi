@@ -104,3 +104,88 @@ test('la llegada se canta al final y una sola vez', () => {
   dichas.add(aviso!.clave);
   assert.equal(proximoAviso(puntos, punto(290, 0), dichas), null);
 });
+
+// --- Lo que encontró el diagnóstico del 20/09 ------------------------------
+
+test('rehacer la ruta desde el coche no vuelve a cantar el mismo giro', () => {
+  // Es el fallo que se oía: el plano recalcula la ruta cada veinte metros, y
+  // como la maniobra se identificaba por su distancia desde el principio —que
+  // cambia en cada recálculo—, el aviso parecía nuevo cada vez. Doce «en
+  // doscientos metros, gira a la izquierda» para un solo cruce.
+  const completa = [...recta(0, 300), ...Array.from({ length: 31 }, (_, i) => punto(300, i * 10))];
+  const dichas = new Set<string>();
+
+  const primero = proximoAviso(completa, punto(150, 0), dichas);
+  assert.ok(primero !== null);
+  dichas.add(primero!.clave);
+
+  // La aplicación rehace la ruta DESDE donde está el coche: los mismos cruces,
+  // pero cien metros menos por delante.
+  const rehecha = [...recta(160, 300), ...Array.from({ length: 31 }, (_, i) => punto(300, i * 10))];
+  assert.equal(proximoAviso(rehecha, punto(170, 0), dichas), null,
+    'el cruce es el mismo: no hay nada nuevo que decir');
+});
+
+test('el enganche a la calzada no inventa un giro nada más arrancar', () => {
+  // La ruta no empieza en el coche sino en el punto de la calzada más cercano,
+  // y ese primer tramo va de lado. El ángulo con el siguiente es enorme y se
+  // leía como un cruce: en la carretera del aeropuerto, recta entera, la voz
+  // pedía girar cada veinte metros.
+  const conEnganche = [
+    punto(0, -8), // el coche, a ocho metros de la calzada
+    ...recta(0, 600), // la avenida, recta
+  ];
+  const giros = maniobrasDeLaRuta(conEnganche).filter((m) => m.giro !== 'llegada');
+  assert.equal(giros.length, 0, `una avenida recta no tiene giros, y salieron ${giros.length}`);
+});
+
+test('la distancia que se dice es la que falta, no el escalón', () => {
+  // Antes decía «en doscientos metros» faltaran doscientos o treinta.
+  const puntos = [...recta(0, 300), ...Array.from({ length: 31 }, (_, i) => punto(300, i * 10))];
+  // A 190 m del cruce: el aviso de lejos entra, y tiene que decir 200.
+  const lejos = proximoAviso(puntos, punto(110, 0), new Set());
+  assert.equal(lejos!.metros, 200);
+
+  // Si el coche llega rápido y la primera lectura dentro del escalón lo pilla
+  // a 120 m, se dicen cien, no doscientos.
+  const cerca = proximoAviso(puntos, punto(180, 0), new Set());
+  assert.equal(cerca!.metros, 100);
+});
+
+test('en una rotonda se dice la salida, y se dice una sola vez', () => {
+  // La ruta: 300 m al norte, el anillo (cuatro puntos) y salida al este. Las
+  // salidas las cuenta rutas.ts con el grafo; aquí se le pasan hechas, que es
+  // como llegan.
+  const anillo = [punto(300, 0), punto(310, 10), punto(310, 25), punto(300, 35)];
+  const puntos = [
+    ...recta(0, 290),
+    ...anillo,
+    ...Array.from({ length: 20 }, (_, i) => punto(300, 45 + i * 10)),
+  ];
+  const entrada = puntos.length - 20 - anillo.length;
+  const rotondas = new Map([[entrada, { salida: 2, indiceSalida: entrada + 3 }]]);
+
+  const maniobras = maniobrasDeLaRuta(puntos, rotondas);
+  const rotonda = maniobras.find((m) => m.giro === 'rotonda');
+  assert.ok(rotonda, 'la rotonda tiene que salir como maniobra');
+  assert.equal(rotonda!.salida, 2);
+
+  // Y dentro del anillo no se sueltan giros sueltos: en una rotonda se gira
+  // todo el rato, decir «gira a la derecha» ahí no significa nada.
+  const dentro = maniobras.filter((m) => m.giro === 'derecha' || m.giro === 'izquierda');
+  assert.equal(dentro.length, 0, `no debería haber giros sueltos y hay ${dentro.length}`);
+
+  const dichas = new Set<string>();
+  const aviso = proximoAviso(puntos, punto(150, 0), dichas, rotondas);
+  assert.equal(aviso!.giro, 'rotonda');
+  assert.equal(aviso!.salida, 2);
+  dichas.add(aviso!.clave);
+
+  // Ya dentro del anillo, la ruta rehecha entra por otro punto y quedan menos
+  // salidas. No puede volver a cantarse: se identifica por LA SALIDA, que no
+  // se mueve.
+  const rehecha = [...anillo.slice(1), ...Array.from({ length: 20 }, (_, i) => punto(300, 45 + i * 10))];
+  const rotondasRehecha = new Map([[0, { salida: 1, indiceSalida: 2 }]]);
+  assert.equal(proximoAviso(rehecha, punto(310, 12), dichas, rotondasRehecha), null,
+    'es la misma rotonda: ya se dijo');
+});

@@ -1985,11 +1985,18 @@ button.importe.elegido-importe {
   margin: 0 5px;
 }
 
+/* El velocímetro va EN LA COLUMNA, delante de la hoja, no flotando sobre el
+   plano. Así la hoja lo empuja hacia arriba al desplegarse y lo suelta al
+   fondo al recogerse, sin que nadie calcule alturas.
+
+   Ha estado en dos sitios peores: abajo del todo —donde la hoja del viaje se
+   lo comía— y arriba en el centro, donde en un móvil queda debajo del
+   conmutador de papeles, que en 375 px ocupa de lado a lado. */
 .velocimetro {
-  position: absolute;
-  left: 12px;
-  bottom: 12px;
-  z-index: 1;
+  position: relative;
+  z-index: 5;
+  align-self: flex-start;
+  margin: 0 0 8px 12px;
   width: 62px;
   height: 62px;
   border-radius: 50%;
@@ -2001,28 +2008,6 @@ button.importe.elegido-importe {
   background: rgba(8, 8, 10, 0.82);
   border: 1px solid var(--borde);
   pointer-events: none;
-}
-
-/* Con la hoja desplegada, el velocímetro sube: pastilla centrada arriba, en
-   el único hueco del borde superior que no ocupan ni los mandos flotantes
-   (izquierda) ni la rosa y el conmutador de papeles (derecha). Tumbada y más
-   baja que el círculo, para no tapar plano. */
-.velocimetro-arriba {
-  top: calc(8px + env(safe-area-inset-top));
-  bottom: auto;
-  left: 50%;
-  transform: translateX(-50%);
-  flex-direction: row;
-  align-items: baseline;
-  gap: 5px;
-  width: auto;
-  height: auto;
-  padding: 6px 14px;
-  border-radius: 999px;
-}
-
-.velocimetro-arriba strong {
-  font-size: 1.25rem;
 }
 
 .velocimetro strong {

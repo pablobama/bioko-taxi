@@ -21,7 +21,8 @@ import PanelLlamada from './PanelLlamada';
 import Recarga from './Recarga';
 import MandosFlotantes from './MandosFlotantes';
 import { anotarRastro, olvidarRastro, pendientesRastro } from './rastroLocal';
-import { alternarGuia, guiaEncendida, proximoAviso } from './guia';
+import { alternarGuia, guiaEncendida, proximoAviso, type PasoPorRotonda } from './guia';
+import { salidasDeRotonda } from './rutas';
 import { activarAvisos } from './avisoPush';
 import {
   encolar, guardarUltimo, sincronizar, ultimoGuardado, usePendientes,
@@ -99,6 +100,10 @@ export default function PanelConductor({
   // La ruta que el plano ya calculó, y lo que ya se ha dicho de ella. En
   // referencias: cambian con cada lectura del GPS y no pintan nada.
   const rutaViva = useRef<Array<{ lat: number; lng: number }> | null>(null);
+  // Por qué salida se sale de cada rotonda de esa ruta. Lo calcula rutas.ts,
+  // que es quien tiene el grafo, y se guarda junto con la ruta para no volver
+  // a recorrer el anillo en cada lectura del GPS.
+  const rotondasVivas = useRef<Map<number, PasoPorRotonda>>(new Map());
   const yaDichas = useRef<Set<string>>(new Set());
   // A dónde se está guiando: cambiar de destino —de ir a recoger a llevar al
   // pasajero— es lo que borra lo ya dicho.
@@ -111,14 +116,25 @@ export default function PanelConductor({
     if (!conVozRef.current) return;
     const ruta = rutaViva.current;
     if (!ruta || ruta.length < 2) return;
-    const aviso = proximoAviso(ruta, donde, yaDichas.current);
+    const aviso = proximoAviso(ruta, donde, yaDichas.current, rotondasVivas.current);
     if (aviso === null) return;
     yaDichas.current.add(aviso.clave);
     const frase = aviso.giro === 'llegada'
       ? t('guia.llegando')
-      : aviso.metros > 0
-        ? t('guia.enMetros', { metros: String(aviso.metros), giro: t(`guia.${aviso.giro}`) })
-        : t('guia.ahora', { giro: t(`guia.${aviso.giro}`) });
+      : aviso.giro === 'rotonda'
+        // De lejos, el número de salida; encima del anillo, «sal aquí» y
+        // nada más. Dentro de una rotonda el número ya no es de fiar —se
+        // cuenta desde donde se entró y el plano rehace la ruta desde
+        // dentro— y decir un número equivocado en una rotonda es peor que
+        // no decir ninguno.
+        ? (aviso.metros > 0
+          ? t('guia.rotondaEn', {
+            metros: String(aviso.metros), salida: String(aviso.salida ?? 1),
+          })
+          : t('guia.rotondaAhora'))
+        : aviso.metros > 0
+          ? t('guia.enMetros', { metros: String(aviso.metros), giro: t(`guia.${aviso.giro}`) })
+          : t('guia.ahora', { giro: t(`guia.${aviso.giro}`) });
     hablar(frase, localeVoz(idioma));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idioma]);
@@ -750,6 +766,7 @@ export default function PanelConductor({
           origenEnVivo={recogidaEnVivo !== null}
           alCalcularRuta={(puntos) => {
             rutaViva.current = puntos;
+            rotondasVivas.current = puntos ? salidasDeRotonda(puntos) : new Map();
             // Ruta nueva, avisos nuevos: la anterior podía ir por otras calles
             // y lo ya dicho no vale. Se vacía solo cuando cambia de verdad el
             // número de puntos o el final, no en cada recálculo por avanzar
@@ -763,29 +780,31 @@ export default function PanelConductor({
             }
           }}
         />
-        {/* Velocidad en vivo. Solo en servicio: fuera del turno ni se mide ni
-            se enseña, por lo mismo que no se guarda el recorrido.
-
-            Dónde va depende de si la hoja está abierta. Abajo a la izquierda
-            —como en cualquier navegador— cuando el plano se ve entero; y
-            ARRIBA, en una pastilla centrada, cuando la hoja está desplegada.
-            Antes estaba siempre abajo y la hoja se lo comía: con el viaje en
-            pantalla, que es casi todo el turno, el taxista solo veía su
-            velocidad si escondía el panel. Un velocímetro que hay que
-            destapar no es un velocímetro.
-
-            `aria-live="off"`: un número que cambia cada segundo leído en voz
-            alta por el lector de pantalla sería insoportable. */}
-        {enServicio && velocidadKmh !== null && (
-          <div
-            className={panelPlegado ? 'velocimetro' : 'velocimetro velocimetro-arriba'}
-            aria-live="off"
-          >
-            <strong>{velocidadKmh}</strong>
-            <span>km/h</span>
-          </div>
-        )}
       </div>
+
+      {/* Velocidad en vivo, SIEMPRE a la izquierda y siempre justo encima de
+          la hoja. Solo en servicio: fuera del turno ni se mide ni se enseña,
+          por lo mismo que no se guarda el recorrido.
+
+          Ha estado en dos sitios malos antes de este. Abajo del todo, donde la
+          hoja del viaje se lo comía y solo se veía escondiendo el panel. Y
+          arriba en el centro, donde en un móvil se mete debajo del conmutador
+          de papeles —pasajero, taxista, operador—, que en 375 px ocupa de lado
+          a lado.
+
+          Aquí no flota: es un elemento más de la columna, colocado delante de
+          la hoja. Así sube y baja CON ella sin que nadie calcule alturas —con
+          la hoja desplegada queda sobre su borde, y al recogerla cae al fondo
+          del plano, que es donde lo espera quien conduce.
+
+          `aria-live="off"`: un número que cambia cada segundo leído en voz
+          alta por el lector de pantalla sería insoportable. */}
+      {enServicio && velocidadKmh !== null && !enRecarga && (
+        <div className="velocimetro" aria-live="off">
+          <strong>{velocidadKmh}</strong>
+          <span>km/h</span>
+        </div>
+      )}
 
 
       {enRecarga ? (
