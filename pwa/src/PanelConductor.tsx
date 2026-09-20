@@ -21,11 +21,14 @@ import PanelLlamada from './PanelLlamada';
 import Recarga from './Recarga';
 import MandosFlotantes from './MandosFlotantes';
 import { anotarRastro, olvidarRastro, pendientesRastro } from './rastroLocal';
+import { alternarGuia, guiaEncendida, proximoAviso } from './guia';
 import {
   encolar, guardarUltimo, sincronizar, ultimoGuardado, usePendientes,
 } from './sinRed';
 import VistaConductor from './VistaConductor';
-import { prepararSonido, sonarCarreraCancelada, sonarNuevaCarrera } from './sonidos';
+import {
+  hablar, prepararSonido, sonarCarreraCancelada, sonarNuevaCarrera,
+} from './sonidos';
 
 // Las acciones de un viaje que se pueden hacer sin red y mandar después. Son
 // hechos —ya ocurrieron en la calle—, así que apuntarlos tarde con su hora es
@@ -85,17 +88,52 @@ export default function PanelConductor({
   const [rumbo, setRumbo] = useState<number | null>(null);
   const ofertasAvisadas = useRef<Set<number>>(new Set());
 
+  // Guía por voz (20/09). Apagada de fábrica: ver guia.ts.
+  const [conVoz, setConVoz] = useState(guiaEncendida());
+  // El interruptor, también en una referencia: `guiar` se llama desde el
+  // vigilante del GPS, que se monta una sola vez, y sin esto se quedaría con
+  // el valor del primer renderizado — apagar la voz no la apagaría.
+  const conVozRef = useRef(conVoz);
+  conVozRef.current = conVoz;
+  // La ruta que el plano ya calculó, y lo que ya se ha dicho de ella. En
+  // referencias: cambian con cada lectura del GPS y no pintan nada.
+  const rutaViva = useRef<Array<{ lat: number; lng: number }> | null>(null);
+  const yaDichas = useRef<Set<string>>(new Set());
+  // A dónde se está guiando: cambiar de destino —de ir a recoger a llevar al
+  // pasajero— es lo que borra lo ya dicho.
+  const destinoGuiado = useRef('');
+
+  // Lo que toca decir estando aquí. Se llama con cada posición —en marcha, una
+  // o dos veces por segundo—; `proximoAviso` se encarga de que cada frase
+  // suene UNA vez.
+  const guiar = useCallback((donde: { lat: number; lng: number }) => {
+    if (!conVozRef.current) return;
+    const ruta = rutaViva.current;
+    if (!ruta || ruta.length < 2) return;
+    const aviso = proximoAviso(ruta, donde, yaDichas.current);
+    if (aviso === null) return;
+    yaDichas.current.add(aviso.clave);
+    const frase = aviso.giro === 'llegada'
+      ? t('guia.llegando')
+      : aviso.metros > 0
+        ? t('guia.enMetros', { metros: String(aviso.metros), giro: t(`guia.${aviso.giro}`) })
+        : t('guia.ahora', { giro: t(`guia.${aviso.giro}`) });
+    hablar(frase, localeVoz(idioma));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idioma]);
+
   // Cambia el estado solo si el coche se ha movido de verdad (~13 m): las
   // lecturas de GPS parado bailan unos metros y repintarían el mapa en balde.
   const moverCoche = useCallback((nueva: { lat: number; lng: number } | null) => {
     if (!nueva) return;
+    guiar(nueva);
     setPosicionCoche((previa) => {
       if (previa
         && Math.abs(previa.lat - nueva.lat) < 0.00012
         && Math.abs(previa.lng - nueva.lng) < 0.00012) return previa;
       return nueva;
     });
-  }, []);
+  }, [guiar]);
 
   // Hacia dónde va el coche. Dos fuentes, por este orden:
   //
@@ -427,10 +465,15 @@ export default function PanelConductor({
     // `enPruebasLocales`, así que en producción no existe.
     const parametros = new URLSearchParams(window.location.search);
     if (enPruebasLocales() && parametros.has('gps')) {
-      const inicio = coordenadas.current;
+      // Del propio `?gps=` y no de `coordenadas.current`: esta referencia la
+      // rellena OTRO efecto, y montándose los dos a la vez este llegaba antes
+      // y se encontraba un null, así que el coche fingido no arrancaba nunca
+      // y el modo de pruebas no servía para lo único para lo que existe.
+      const [latTexto, lngTexto] = (parametros.get('gps') ?? '').split(',');
+      const inicio = { lat: Number(latTexto), lng: Number(lngTexto) };
       const rumboFingido = Number(parametros.get('rumbo') ?? '0');
       const kmh = Number(parametros.get('kmh') ?? '0');
-      if (inicio === null || kmh <= 0) return;
+      if (!Number.isFinite(inicio.lat) || !Number.isFinite(inicio.lng) || kmh <= 0) return;
       const rad = (rumboFingido * Math.PI) / 180;
       let metros = 0;
       const reloj = setInterval(() => {
@@ -694,14 +737,39 @@ export default function PanelConductor({
           rumbo={rumbo}
           rumboCoche={rumboCoche}
           origenEnVivo={recogidaEnVivo !== null}
+          alCalcularRuta={(puntos) => {
+            rutaViva.current = puntos;
+            // Ruta nueva, avisos nuevos: la anterior podía ir por otras calles
+            // y lo ya dicho no vale. Se vacía solo cuando cambia de verdad el
+            // número de puntos o el final, no en cada recálculo por avanzar
+            // veinte metros: si no, «en doscientos metros gire» se repetiría
+            // cada vez que el coche se mueve.
+            const fin = puntos && puntos.length > 0 ? puntos[puntos.length - 1] : null;
+            const clave = fin ? `${fin.lat.toFixed(5)},${fin.lng.toFixed(5)}` : '';
+            if (clave !== destinoGuiado.current) {
+              destinoGuiado.current = clave;
+              yaDichas.current = new Set();
+            }
+          }}
         />
-        {/* Velocidad en vivo, abajo a la izquierda como en cualquier
-            navegador. Solo en servicio: fuera del turno ni se mide ni se
-            enseña, por lo mismo que no se guarda el recorrido.
+        {/* Velocidad en vivo. Solo en servicio: fuera del turno ni se mide ni
+            se enseña, por lo mismo que no se guarda el recorrido.
+
+            Dónde va depende de si la hoja está abierta. Abajo a la izquierda
+            —como en cualquier navegador— cuando el plano se ve entero; y
+            ARRIBA, en una pastilla centrada, cuando la hoja está desplegada.
+            Antes estaba siempre abajo y la hoja se lo comía: con el viaje en
+            pantalla, que es casi todo el turno, el taxista solo veía su
+            velocidad si escondía el panel. Un velocímetro que hay que
+            destapar no es un velocímetro.
+
             `aria-live="off"`: un número que cambia cada segundo leído en voz
             alta por el lector de pantalla sería insoportable. */}
         {enServicio && velocidadKmh !== null && (
-          <div className="velocimetro" aria-live="off">
+          <div
+            className={panelPlegado ? 'velocimetro' : 'velocimetro velocimetro-arriba'}
+            aria-live="off"
+          >
             <strong>{velocidadKmh}</strong>
             <span>km/h</span>
           </div>
@@ -762,6 +830,19 @@ export default function PanelConductor({
             ...(conductor.agente && alAbrirCampo
               ? [{ icono: '🗺', etiqueta: t('campo.abrir'), alPulsar: alAbrirCampo }]
               : []),
+            // La guía por voz, a un toque y en el plano: se enciende y se
+            // apaga conduciendo, que es cuando se sabe si hace falta. Metida
+            // en los ajustes habría que pararse para tocarla.
+            {
+              icono: conVoz ? '🔊' : '🔈',
+              etiqueta: t(conVoz ? 'guia.apagar' : 'guia.encender'),
+              alPulsar: () => {
+                const nueva = alternarGuia();
+                setConVoz(nueva);
+                yaDichas.current = new Set();
+                if (nueva) hablar(t('guia.encendida'), localeVoz(idioma));
+              },
+            },
             { icono: '▤', etiqueta: t('cabecera.tusNumeros'), alPulsar: alAbrirEstadisticas },
             { icono: '⚙', etiqueta: t('cabecera.tusDatos'), alPulsar: alAbrirAjustes },
           ]}

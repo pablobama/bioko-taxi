@@ -80,6 +80,11 @@ export interface PropiedadesMapa {
   // encarado. En marcha las dos cosas coinciden. Sin valor, se deduce como
   // siempre del siguiente punto de la ruta.
   rumboCoche?: number | null;
+  // La ruta que el plano acaba de calcular, para quien la necesite fuera: hoy
+  // la guía por voz del taxista. Se pasa desde aquí y no se vuelve a calcular
+  // en el panel porque cada cálculo recorre el grafo entero: hacerlo dos veces
+  // por cada movimiento del coche sería pagar dos veces lo mismo.
+  alCalcularRuta?: (puntos: Array<{ lat: number; lng: number }> | null) => void;
   // Dónde está QUIEN MIRA el mapa. Solo lo usa el pasajero mientras va dentro
   // del taxi: hasta ahora, al subirse, se le quitaba el coche de la pantalla
   // —su posición no es asunto suyo— y con él se iba lo único que se movía. Le
@@ -119,7 +124,7 @@ const PRIORIDAD: Record<string, number> = {
 export default function Mapa({
   puntos, origen, destino, taxi, buscando, encuadre = 'persona', paradas, recorrido,
   origenEnVivo = false,
-  maxPasadas = 1, rumbo = null, rumboCoche = null, yo = null,
+  maxPasadas = 1, rumbo = null, rumboCoche = null, yo = null, alCalcularRuta,
 }: PropiedadesMapa) {
   const contenedor = useRef<HTMLDivElement>(null);
   const [caja, setCaja] = useState({ ancho: 0, alto: 0 });
@@ -200,7 +205,9 @@ export default function Mapa({
 
     let vivo = true;
     void calcularRuta(taxi, origen).then((ruta) => {
-      if (vivo) setRutaTaxi(ruta ? ruta.puntos : null);
+      if (!vivo) return;
+      setRutaTaxi(ruta ? ruta.puntos : null);
+      alCalcularRuta?.(ruta ? ruta.puntos : null);
     });
     return () => { vivo = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -769,22 +776,27 @@ export default function Mapa({
                         es el escorzo del morro visto desde atrás. */}
                     <path d={CARROCERIA} fill="url(#coche-chapa)" />
 
-                    {/* El montante y el techo: la U azulada que en la foto
-                        rodea el cristal por los lados y por delante. Es el
-                        rasgo que hace que se reconozca al instante. */}
-                    <path d="M-6.75 3 L-6.75 -7 Q-6.75 -9 -4.75 -9 L4.75 -9
-                             Q6.75 -9 6.75 -7 L6.75 3"
-                      fill="none" stroke="#6b88a6" strokeWidth={1.3}
-                      strokeLinecap="round" opacity={0.92} />
-                    {/* Techo: la chapa clara entre el montante y la luneta. */}
-                    <path d="M-6 -3 L-6 -7 Q-6 -8.2 -4.8 -8.2 L4.8 -8.2
-                             Q6 -8.2 6 -7 L6 -3 Z"
-                      fill="#eceff4" />
-                    {/* Luneta trasera. Las esquinas de abajo, muy redondeadas:
-                        es lo que la separa de una pegatina rectangular. */}
-                    <path d="M-5 -3 L5 -3 L5 1 Q5 3 3.2 3
-                             L-3.2 3 Q-5 3 -5 1 Z"
+                    {/* El techo NO se dibuja como una pieza aparte, y ese es
+                        el arreglo de hoy. Antes llevaba una chapa blanca con
+                        su montante alrededor, y a tamaño de plano —el coche
+                        mide unos treinta píxeles— esa caja blanca con borde
+                        dentro de otra caja blanca se leía como un segundo
+                        coche pequeño montado encima del grande. Se vio
+                        ampliando el dibujo: dos siluetas, una dentro de otra.
+                        Ahora el techo es la misma chapa que el resto y solo se
+                        insinúa con luz, así que la silueta es UNA.
+
+                        Y la luneta pasa a ocupar casi todo el ancho, como en
+                        la foto: un cristal ancho y bajo es lo que dice «esto
+                        es la parte de atrás de un coche» de un solo vistazo. */}
+                    <path d="M-5.9 -2.6 L5.9 -2.6 L5.5 2.2 Q5.4 3.4 4 3.4
+                             L-4 3.4 Q-5.4 3.4 -5.5 2.2 Z"
                       fill="url(#coche-luneta)" />
+                    {/* El canto del techo sobre la luneta: una sombra fina, no
+                        un contorno cerrado. Da el escalón de altura sin
+                        recortar una figura nueva. */}
+                    <path d="M-6 -3.1 L6 -3.1" stroke="#b9c0cc" strokeWidth={0.7}
+                      strokeLinecap="round" opacity={0.8} />
                     {/* Maletero: dos pliegues que bajan abriéndose desde las
                         esquinas de la luneta. Sin ellos, de la luneta al
                         paragolpes hay un vacío blanco que no dice nada. */}

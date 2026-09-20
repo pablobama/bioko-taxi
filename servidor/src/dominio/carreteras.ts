@@ -48,6 +48,30 @@ const MEMORIA_MAXIMA = 20_000;
 const FACTOR_TIEMPO = 2;
 const memoria = new Map<string, Emparejado | null>();
 
+// El camino por calles entre dos puntos, SIN juzgar si dio tiempo (20/09).
+// Es el otro uso del mismo grafo: aquí no se reconstruye un trayecto ya
+// ocurrido sino uno que está por ocurrir —lo que le queda al taxi para
+// llegar—, y por eso no hay ningún «pasaron N segundos» contra el que medir.
+//
+// Sirve para no seguir estimando la distancia como «la recta por 1,3». Ese 1,3
+// es la media de una ciudad entera: en un tramo recto de la avenida sobra, y
+// cruzando la cuadrícula del centro con sus sentidos únicos se queda corto. El
+// grafo sabe por dónde se va de verdad.
+export function rutaParaLlegar(
+  desde: { lat: number; lng: number },
+  hasta: { lat: number; lng: number },
+): Emparejado | null {
+  if (!asegurarPlano()) return null;
+  const clave = `eta|${desde.lat},${desde.lng}|${hasta.lat},${hasta.lng}`;
+  let camino = memoria.get(clave);
+  if (camino === undefined) {
+    camino = emparejar(desde, hasta);
+    if (memoria.size >= MEMORIA_MAXIMA) memoria.delete(memoria.keys().next().value!);
+    memoria.set(clave, camino);
+  }
+  return camino;
+}
+
 // El camino por calles entre dos puntos seguidos del recorrido, o null si no
 // hay uno CREÍBLE. Dos cosas lo hacen increíble, y en las dos manda la recta:
 //   - No hay calle cerca: fuera del plano, o el GPS muy desviado.

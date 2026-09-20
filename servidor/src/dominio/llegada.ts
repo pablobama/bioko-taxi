@@ -12,9 +12,13 @@
 //        142 minutos para un trayecto de unos cuarenta.
 //   053: la urbana ya no es una constante de tabla sino lo que el coche ha
 //        andado DE VERDAD en los últimos minutos.
+//   20/09: la distancia deja de ser una recta corregida y pasa a ser el camino
+//        por las calles; y la velocidad medida se busca también en el rastro
+//        del TURNO, no solo en las posiciones del viaje, porque al empezar un
+//        viaje todavía no hay ninguna y el tiempo salía siempre el mismo.
 
 import type pg from 'pg';
-import { caminoPorCarretera } from './carreteras.js';
+import { caminoPorCarretera, rutaParaLlegar } from './carreteras.js';
 import { distanciaMetros } from './geo.js';
 import { leerParametroEntero } from './parametros.js';
 
@@ -43,7 +47,51 @@ export async function velocidadRecienteKmh(
   viajeId: number,
   ahora: Date = new Date(),
 ): Promise<number | null> {
-  const ventanaMin = await leerParametroEntero(cliente, 'eta_ventana_min');
+  const res = await cliente.query(
+    `SELECT lat, lng, creado_en FROM posicion
+     WHERE viaje_id = $1 AND actor = 'conductor'
+       AND creado_en >= $2::timestamptz - make_interval(mins => (
+         SELECT valor::int FROM parametro WHERE clave = 'eta_ventana_min'))
+     ORDER BY creado_en`,
+    [viajeId, ahora],
+  );
+  return velocidadDeLosPuntos(cliente, res.rows);
+}
+
+// Lo mismo, pero del RASTRO del turno en vez de las posiciones del viaje
+// (20/09).
+//
+// Es el arreglo del «siempre pone diecisiete minutos». Al empezar un viaje no
+// hay todavía dos posiciones suyas con noventa segundos entre medias, así que
+// no había velocidad medida y mandaba la de la tabla: 18 km/h fijos para todo
+// el mundo. Con una distancia parecida —cruzar Malabo— el resultado salía
+// clavado una y otra vez, y el primer número que ve el pasajero es justo el
+// que más se recuerda.
+//
+// Pero el coche SÍ se había movido: llevaba el turno entero mandando rastro
+// cada quince segundos. Esa es la velocidad a la que va este taxista hoy, por
+// estas calles y con este tráfico, y ya está medida antes de que el viaje
+// empiece.
+export async function velocidadDelTurnoKmh(
+  cliente: pg.ClientBase | pg.Pool,
+  conductorId: number,
+  ahora: Date = new Date(),
+): Promise<number | null> {
+  const res = await cliente.query(
+    `SELECT lat, lng, creado_en FROM rastro
+     WHERE conductor_id = $1
+       AND creado_en >= $2::timestamptz - make_interval(mins => (
+         SELECT valor::int FROM parametro WHERE clave = 'eta_ventana_min'))
+     ORDER BY creado_en`,
+    [conductorId, ahora],
+  );
+  return velocidadDeLosPuntos(cliente, res.rows);
+}
+
+async function velocidadDeLosPuntos(
+  cliente: pg.ClientBase | pg.Pool,
+  filas: Array<{ lat: number; lng: number; creado_en: Date }>,
+): Promise<number | null> {
   const minimoSeg = await leerParametroEntero(cliente, 'eta_muestra_minima_seg');
   const minimoM = await leerParametroEntero(cliente, 'eta_muestra_minima_m');
   const minimaKmh = await leerParametroEntero(cliente, 'eta_velocidad_minima_kmh');
@@ -51,14 +99,7 @@ export async function velocidadRecienteKmh(
   const ruidoM = await leerParametroEntero(cliente, 'rastro_ruido_m');
   const topeKmh = await leerParametroEntero(cliente, 'rastro_velocidad_maxima_kmh');
 
-  const res = await cliente.query(
-    `SELECT lat, lng, creado_en FROM posicion
-     WHERE viaje_id = $1 AND actor = 'conductor'
-       AND creado_en >= $2::timestamptz - make_interval(mins => $3::int)
-     ORDER BY creado_en`,
-    [viajeId, ahora, ventanaMin],
-  );
-  const puntos = res.rows.map((f: { lat: number; lng: number; creado_en: Date }) => ({
+  const puntos = filas.map((f) => ({
     lat: Number(f.lat), lng: Number(f.lng), en: new Date(f.creado_en).getTime(),
   }));
   if (puntos.length < 2) return null;
@@ -116,8 +157,22 @@ export async function estimarLlegada(
 
   const urbanaKmh = velocidadMedidaKmh ?? urbanaTabla;
 
+  // Los metros que le quedan, por las calles por las que se va (20/09).
+  // Antes era la recta multiplicada por 1,3 —un promedio de ciudad— y
+  // eso sobra en la avenida y se queda corto cruzando el centro, donde los
+  // sentidos únicos obligan a rodear manzanas enteras.
+  //
+  // La recta sigue de red: si el grafo devuelve un rodeo disparatado —el
+  // enganche cayó en la calzada equivocada y salió media vuelta a la
+  // ciudad—, más vale el promedio de siempre que un número absurdo.
   const rectaM = distanciaMetros(desde.lat, desde.lng, hasta.lat, hasta.lng);
-  const recorridoKm = (rectaM * (factorDecimas / 10)) / 1000;
+  const porCalles = rutaParaLlegar(desde, hasta);
+  const creible = porCalles !== null
+    && porCalles.distanciaM <= rectaM * 3 + 500
+    && porCalles.distanciaM >= rectaM;
+  const recorridoKm = creible
+    ? porCalles!.distanciaM / 1000
+    : (rectaM * (factorDecimas / 10)) / 1000;
 
   const enCiudadKm = Math.min(recorridoKm, tramoUrbanoKm);
   const enCarreteraKm = Math.max(0, recorridoKm - tramoUrbanoKm);
@@ -141,6 +196,17 @@ export async function llegadaDeViaje(
   hasta: { lat: number; lng: number },
   ahora: Date = new Date(),
 ): Promise<Estimacion> {
-  const medida = await velocidadRecienteKmh(cliente, viajeId, ahora);
+  let medida = await velocidadRecienteKmh(cliente, viajeId, ahora);
+  // Al principio del viaje todavía no hay dos posiciones suyas separadas por
+  // minuto y medio, y ahí es donde el tiempo salía siempre igual. El turno sí
+  // tiene rastro: se mira eso antes de caer en la velocidad de la tabla.
+  if (medida === null) {
+    const dueno = await cliente.query(
+      'SELECT conductor_id FROM viaje WHERE id = $1', [viajeId],
+    );
+    if ((dueno.rowCount ?? 0) > 0 && dueno.rows[0].conductor_id !== null) {
+      medida = await velocidadDelTurnoKmh(cliente, Number(dueno.rows[0].conductor_id), ahora);
+    }
+  }
   return estimarLlegada(cliente, desde, hasta, medida);
 }

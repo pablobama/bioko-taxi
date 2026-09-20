@@ -30,6 +30,9 @@ export interface PropiedadesVistaCliente {
   fase: FaseCliente;
   detalle: DetalleSolicitud | null;
   origen: ReferenciaSugerida | null;
+  // Si el taxi va al punto exacto del GPS (y el sitio conocido es solo el
+  // nombre) o si no hay GPS fino y se recoge en el sitio conocido.
+  origenEnGps?: boolean;
   destino: ReferenciaSugerida | null;
   // Si el GPS ya respondió (aunque sea negándose) y si dio coordenadas.
   gpsResuelto: boolean;
@@ -73,7 +76,7 @@ function Estrellas({ media, valoraciones, t }: { media: number | null; valoracio
 }
 
 export default function VistaCliente({
-  fase, detalle, origen, destino, gpsResuelto, hayCoordenadas, taxisCerca,
+  fase, detalle, origen, destino, gpsResuelto, origenEnGps = false, hayCoordenadas, taxisCerca,
   valorada, aviso, t, sugeridos, escribiendo, puedeDeshacer, segundosGracia,
   buscadorDestino, buscadorOrigen, plegada = false, sinRed = null, acciones,
 }: PropiedadesVistaCliente & { acciones: AccionesCliente }) {
@@ -122,7 +125,14 @@ export default function VistaCliente({
           {origen ? (
             <p className="ubicacion-ok">
               <span className="punto-verde" />
-              {t('origen.salesDe')} <strong>{origen.nombre}</strong>
+              {origenEnGps ? (
+                <>
+                  {t('origen.salesDe')} <strong>{t('origen.dondeEstas')}</strong>
+                  <span className="tenue-linea">{t('origen.junto', { sitio: origen.nombre })}</span>
+                </>
+              ) : (
+                <>{t('origen.salesDe')} <strong>{origen.nombre}</strong></>
+              )}
               <button type="button" className="enlace" onClick={acciones.alQuitarOrigen}>
                 {t('origen.cambiar')}
               </button>

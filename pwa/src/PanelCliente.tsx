@@ -218,7 +218,9 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
   const [destino, setDestino] = useState<ReferenciaSugerida | null>(null);
   const [detalle, setDetalle] = useState<DetalleSolicitud | null>(null);
   const [aviso, setAviso] = useState('');
-  const [coordenadas, setCoordenadas] = useState<{ lat: number; lng: number } | null>(null);
+  const [coordenadas, setCoordenadas] = useState<
+    { lat: number; lng: number; precision?: number | null } | null
+  >(null);
   // Hoja recogida: el plano se ve entero. Lo manda el botón flotante.
   const [panelPlegado, setPanelPlegado] = useState(false);
   // Sin red (migración 057): de cuándo es el viaje que se está enseñando si no
@@ -647,13 +649,32 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
 
   // --- Pantalla -----------------------------------------------------------
 
+  // El punto exacto de la persona, si el GPS es lo bastante fino. El mismo
+  // umbral que usa el servidor para decidir el punto de recogida
+  // (`recogida_precision_maxima_m`): por encima de eso una coordenada no es un
+  // punto, es un barrio, y entonces el sitio conocido dice más.
+  const PRECISION_MAXIMA_M = 120;
+  const gpsFino = coordenadas !== null
+    && (coordenadas.precision == null || coordenadas.precision <= PRECISION_MAXIMA_M);
+
+  // Dónde se planta el pin ANTES de pedir. Ya no en el sitio conocido más
+  // cercano: ahí es donde la aplicación mentía. El taxi se manda a donde está
+  // la persona —el servidor ya lo hacía desde la migración 046— pero el mapa
+  // seguía enseñando el pin sobre «Mercado Central», a veces a doscientos
+  // metros, y quien lo veía se creía que el taxi iba al mercado.
+  //
+  // El sitio conocido sigue, pero en su papel: el NOMBRE con el que se
+  // entienden un taxista y un pasajero en una ciudad sin direcciones. Punto
+  // donde estás, nombre de al lado.
   const marcaOrigen = detalle
     ? { lat: detalle.origenLat, lng: detalle.origenLng, nombre: detalle.origen }
-    : origen
-      ? { lat: origen.lat, lng: origen.lng, nombre: origen.nombre }
-      : coordenadas
-        ? { ...coordenadas, nombre: 'Estás aquí' }
-        : null;
+    : gpsFino
+      ? { lat: coordenadas!.lat, lng: coordenadas!.lng, nombre: origen?.nombre ?? 'Estás aquí' }
+      : origen
+        ? { lat: origen.lat, lng: origen.lng, nombre: origen.nombre }
+        : coordenadas
+          ? { lat: coordenadas.lat, lng: coordenadas.lng, nombre: 'Estás aquí' }
+          : null;
   const marcaDestino = detalle
     ? { lat: detalle.destinoLat, lng: detalle.destinoLng, nombre: detalle.destino }
     : destino
@@ -767,6 +788,7 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
           origen={origen}
           destino={destino}
           gpsResuelto={gpsResuelto}
+          origenEnGps={gpsFino}
           taxisCerca={taxisCerca}
           hayCoordenadas={coordenadas !== null}
           valorada={valorada}

@@ -1972,6 +1972,19 @@ button.importe.elegido-importe {
    en cualquier navegador: es donde la vista ya va a buscarlo, y no tapa la
    ruta, que va por el centro. Redondo y opaco para que se lea con el sol de
    frente y de reojo, que es como se mira conduciendo. */
+/* El sitio conocido cuando NO es el punto de recogida sino solo el nombre de
+   la zona: «sales de donde estás · junto al Mercado Central». En gris y
+   pequeño, porque lo que manda es el punto. */
+.tenue-linea {
+  color: var(--humo);
+  font-size: 0.82rem;
+}
+
+.tenue-linea::before {
+  content: '·';
+  margin: 0 5px;
+}
+
 .velocimetro {
   position: absolute;
   left: 12px;
@@ -1988,6 +2001,28 @@ button.importe.elegido-importe {
   background: rgba(8, 8, 10, 0.82);
   border: 1px solid var(--borde);
   pointer-events: none;
+}
+
+/* Con la hoja desplegada, el velocímetro sube: pastilla centrada arriba, en
+   el único hueco del borde superior que no ocupan ni los mandos flotantes
+   (izquierda) ni la rosa y el conmutador de papeles (derecha). Tumbada y más
+   baja que el círculo, para no tapar plano. */
+.velocimetro-arriba {
+  top: calc(8px + env(safe-area-inset-top));
+  bottom: auto;
+  left: 50%;
+  transform: translateX(-50%);
+  flex-direction: row;
+  align-items: baseline;
+  gap: 5px;
+  width: auto;
+  height: auto;
+  padding: 6px 14px;
+  border-radius: 999px;
+}
+
+.velocimetro-arriba strong {
+  font-size: 1.25rem;
 }
 
 .velocimetro strong {

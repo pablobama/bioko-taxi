@@ -89,7 +89,10 @@ function vibrar(patron: number[]): void {
 // No siempre hay voz en español instalada. Si no la hay, se usa la que haya; si
 // no hay ninguna, no se dice nada. Por eso el tono suena SIEMPRE antes de
 // hablar: el aviso no puede depender de que el teléfono sepa hablar español.
-function hablar(texto: string, locale: string): void {
+// Exportada desde la guía por voz (20/09): las instrucciones de giro
+// son texto sin tono previo —un «gire a la derecha» no necesita anunciarse— y
+// necesitan este mismo trato con las voces que falten.
+export function hablar(texto: string, locale: string): void {
   if (silenciado) return;
   try {
     const sintesis = window.speechSynthesis;

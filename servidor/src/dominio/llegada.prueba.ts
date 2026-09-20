@@ -8,6 +8,8 @@ import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import { crearPool, enTransaccion } from '../bd/conexion.js';
 import { estimarLlegada, llegadaDeViaje, velocidadRecienteKmh } from './llegada.js';
+import { rutaParaLlegar } from './carreteras.js';
+import { distanciaMetros } from './geo.js';
 
 let pool: pg.Pool;
 
@@ -26,7 +28,10 @@ async function viajeDesnudo(): Promise<number> {
   return enTransaccion(pool, async (c) => {
     const conductor = await c.query(
       `INSERT INTO conductor (telefono, nombre) VALUES ($1, 'Taxi ETA') RETURNING id`,
-      [`+2406${String(Math.floor(Math.random() * 100_000_000)).padStart(8, '0')}`],
+      // Del uuid y no de Math.random: con la base de desarrollo llena de
+      // taxistas de pruebas, ocho dígitos al azar chocan de vez en cuando y la
+      // prueba falla por el teléfono repetido, no por lo que mide.
+      [`+2406${BigInt(`0x${randomUUID().replace(/-/g, '').slice(0, 12)}`) % 100_000_000n}`.padEnd(13, '0')],
     );
     const dispositivo = await c.query(
       `INSERT INTO dispositivo (uuid_persistente, tipo) VALUES (gen_random_uuid(), 'cliente') RETURNING id`,
@@ -143,4 +148,68 @@ test('una fijación disparada no acelera el coche', async () => {
   );
   const kmh = await velocidadRecienteKmh(pool, viajeId, ahora);
   assert.ok(kmh !== null && kmh < 60, `la fijación no puede contar; salieron ${kmh}`);
+});
+
+// --- 20/09: el tiempo deja de empezar siempre en el mismo número ---
+
+// El rastro del TURNO del conductor de un viaje: lo que manda el móvil cada
+// quince segundos mientras está en servicio, exista o no un viaje.
+async function rastroDelTurno(viajeId: number, kmh: number, minutos: number, ahora: Date) {
+  const dueno = await pool.query('SELECT conductor_id FROM viaje WHERE id = $1', [viajeId]);
+  const conductorId = Number(dueno.rows[0].conductor_id);
+  const pasos = minutos * 4; // uno cada 15 s
+  for (let i = 0; i <= pasos; i += 1) {
+    const metros = (kmh / 3.6) * i * 15;
+    await pool.query(
+      `INSERT INTO rastro (conductor_id, lat, lng, creado_en)
+       VALUES ($1, $2, 8.78, $3)`,
+      [conductorId, 3.75 + metros / 111_320, new Date(ahora.getTime() - (pasos - i) * 15_000)],
+    );
+  }
+}
+
+test('al empezar el viaje, la velocidad sale del turno y no de la tabla', async () => {
+  // Este es el «siempre pone diecisiete minutos»: viaje recién aceptado, sin
+  // ninguna posición propia todavía, pero con el taxista llevando rato
+  // circulando. Antes caía en los 18 km/h de la tabla y el número salía
+  // clavado para todo el mundo.
+  const viajeId = await viajeDesnudo();
+  const ahora = new Date();
+  await rastroDelTurno(viajeId, 45, 5, ahora);
+
+  assert.equal(await velocidadRecienteKmh(pool, viajeId, ahora), null,
+    'del viaje no hay nada que medir: acaba de empezar');
+  const e = await llegadaDeViaje(pool, viajeId, MALABO, CERCA, ahora);
+  assert.equal(e.medida, true, 'el turno sí tenía rastro');
+  assert.ok(e.velocidadUsadaKmh > 30,
+    `iba a 45 km/h y la estimación usó ${e.velocidadUsadaKmh}`);
+});
+
+test('dos taxistas con la misma distancia y distinta marcha no dan el mismo tiempo', async () => {
+  const atascado = await viajeDesnudo();
+  const suelto = await viajeDesnudo();
+  const ahora = new Date();
+  await rastroDelTurno(atascado, 9, 5, ahora);
+  await rastroDelTurno(suelto, 45, 5, ahora);
+
+  const lento = await llegadaDeViaje(pool, atascado, MALABO, CERCA, ahora);
+  const rapido = await llegadaDeViaje(pool, suelto, MALABO, CERCA, ahora);
+  assert.ok(lento.minutos > rapido.minutos,
+    `el atascado tiene que tardar más (${lento.minutos} vs ${rapido.minutos})`);
+});
+
+// Dos puntos SOBRE calle de Malabo, sacados del propio plano: MALABO y CERCA
+// están a ojo de mapa y caen fuera de la calzada, que es justo lo que este
+// caso no puede tener.
+const EN_CALLE_A = { lat: 3.75299, lng: 8.76699 };
+const EN_CALLE_B = { lat: 3.75278, lng: 8.78346 };
+
+test('la distancia que se anuncia es la de las calles, no la recta por 1,3', async () => {
+  const e = await estimarLlegada(pool, EN_CALLE_A, EN_CALLE_B);
+  const recta = distanciaMetros(EN_CALLE_A.lat, EN_CALLE_A.lng, EN_CALLE_B.lat, EN_CALLE_B.lng);
+  const porCalles = rutaParaLlegar(EN_CALLE_A, EN_CALLE_B);
+  assert.ok(porCalles !== null, 'este par está dentro del plano de Malabo');
+  assert.equal(e.distanciaM, Math.round(porCalles!.distanciaM));
+  assert.ok(e.distanciaM >= Math.round(recta),
+    'por calles nunca se anda menos que en línea recta');
 });

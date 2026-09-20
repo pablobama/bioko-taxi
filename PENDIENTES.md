@@ -4,6 +4,22 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
 
 ## Abiertos
 
+- **[P58-01] Ningún taxista recibe aviso con la aplicación cerrada en la PWA.**
+  Las carreras se avisan por SSE (conexión abierta) y, en la app Android, por
+  FCM. Un taxista que usa la PWA y cierra el navegador no se entera de nada:
+  la oferta le caduca sin que la vea. Hay dos piezas por decidir y ninguna es
+  gratis: notificaciones web (VAPID + suscripción en el service worker, que ya
+  existe) para la PWA, y si el aviso debe ir SOLO a los de la oleada —como
+  ahora— o a todos los taxistas en servicio de la ciudad. Lo segundo es un
+  cambio de reparto, no un cambio técnico: ver la nota del 20/09 más abajo.
+
+- **[P58-02] La guía por voz no dice nombres de calle.** Dice el giro y la
+  distancia («en doscientos metros, gira a la derecha») porque el plano guarda
+  geometría y clase de vía, no rótulos. El nombre está en OSM y se podría
+  meter al compilar el plano, a costa de tamaño: el fichero son ya 513 KB y
+  los nombres no comprimen tan bien como las coordenadas. Antes de pagarlo,
+  merece la pena preguntar a un taxista si le sirve de algo.
+
 - **[P57-01] La app nativa Android todavía no guarda acciones sin red.** La
   PWA sí (migración 057): los botones del viaje y entrar o salir de servicio
   se guardan con su hora y salen al volver la cobertura. La app Android graba
