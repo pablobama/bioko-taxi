@@ -230,7 +230,15 @@ async function ofertarA(
 
 // Para el corte de R1 cuenta como vivo también el conductor OFERTADO: está
 // conectado y puede quedar libre dentro de la ventana de 90 s. Solo se corta
-// si no hay literalmente nadie conectado y cobrable en la zona ni adyacentes.
+// si no hay literalmente nadie conectado y cobrable en la zona ni adyacentes…
+//
+// …ni en toda la isla entre los que reciben de cualquier zona (21/09). Sin esto
+// la oleada 4 de la migración 048 no servía para lo único que prometía: «una
+// solicitud que iba a morir sin oferta todavía tiene una posibilidad». Si el
+// barrio y los vecinos estaban vacíos, este corte cerraba la carrera con «no
+// hay taxi» en el acto, y la oleada 4 —que llega a los 60 s— no llegaba a
+// existir. Justo el caso de quien opera esto probando desde su oficina, siendo
+// el único taxi en servicio.
 async function hayConductoresVivos(
   cliente: pg.ClientBase,
   zonaIds: number[],
@@ -246,7 +254,7 @@ async function hayConductoresVivos(
      JOIN conductor c ON c.id = p.conductor_id
      JOIN vehiculo v ON v.conductor_id = c.id
      WHERE p.estado IN ('DISPONIBLE', 'OFERTADO')
-       AND p.zona_id = ANY($1)
+       AND (p.zona_id = ANY($1) OR c.recibe_en_cualquier_zona)
        AND p.ultimo_heartbeat IS NOT NULL
        AND p.ultimo_heartbeat >= $2::timestamptz - make_interval(secs => $3)
        AND c.estado_verificacion = 'verificado'

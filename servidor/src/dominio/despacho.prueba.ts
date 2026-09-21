@@ -561,8 +561,9 @@ test('cualquier zona: le llega la carrera, pero DESPUÉS de los que están cerca
     'mientras les toca a los de cerca, el de toda la isla espera',
   );
 
-  // t+45 en adelante: la oleada 4, cuando los de cerca ya han tenido su turno.
-  await avanzarDespachos(pool, emisor, despues(t0, 46));
+  // t+60 en adelante: la oleada 4, cuando los de cerca —y los de los barrios
+  // vecinos, a los 45— ya han tenido su turno (migración 060).
+  await avanzarDespachos(pool, emisor, despues(t0, 61));
   ofertas = await ofertasDe(solicitudId);
   const suya = ofertas.find((o) => o.conductorId === lejano);
   assert.ok(suya, 'el de toda la isla tiene que acabar recibiéndola');
@@ -595,4 +596,72 @@ test('cualquier zona: sin el interruptor, nadie recibe fuera de su barrio', asyn
     ofertas.some((o) => o.conductorId === lejano), false,
     'el reparto por barrio sigue siendo la regla para todos los demás',
   );
+});
+
+// --- 21/09: diagnóstico de los taxistas «de toda la isla» ------------------
+
+async function conductorDeTodaLaIsla(): Promise<number> {
+  const { zonaId } = await enTransaccion(pool, (c) => crearZona(c, `Zona LEJOS ${randomUUID()}`, 3.46, 8.55));
+  const id = await crearConductorEnZona(zonaId);
+  await pool.query('UPDATE conductor SET recibe_en_cualquier_zona = true WHERE id = $1', [id]);
+  return id;
+}
+
+test('cualquier zona: si es el ÚNICO taxi en servicio, la carrera no muere al pedirla', async () => {
+  // El caso para el que existe la oleada 4 —«una solicitud que iba a morir sin
+  // oferta todavía tiene una posibilidad»— y el único que no estaba probado.
+  // El corte R1 de `iniciarDespacho` mira si hay alguien vivo en el barrio o
+  // en los vecinos; si no hay nadie, cierra con SIN_OFERTA en el acto. El de
+  // toda la isla no está en ninguno de los dos, así que la carrera moría
+  // antes de que su oleada llegara a existir.
+  await cerrarSolicitudesSueltas();
+  const escenario = await montarEscenario();
+  const lejano = await conductorDeTodaLaIsla();
+  try {
+    const solicitudId = await crearSolicitudEn(escenario);
+    const emisor = new EmisorRegistro();
+    const t0 = new Date();
+
+    const inicio = await iniciarDespacho(pool, emisor, solicitudId, t0);
+    assert.equal(inicio.resultado, 'EMITIDO',
+      'hay un taxi que puede recibirla: no se puede cortar con «no hay taxi»');
+
+    await avanzarDespachos(pool, emisor, despues(t0, 70));
+    const ofertas = await ofertasDe(solicitudId);
+    assert.ok(ofertas.some((o) => o.conductorId === lejano && o.oleada === 4),
+      'tiene que acabar recibiéndola en la oleada 4');
+  } finally {
+    await pool.query('UPDATE conductor SET recibe_en_cualquier_zona = false WHERE id = $1', [lejano]);
+  }
+});
+
+test('cualquier zona: la oleada 4 llega DESPUÉS de la de los barrios vecinos, no a la vez', async () => {
+  // La 048 promete que el de toda la isla no le quita nunca la carrera a quien
+  // está al lado. Pero la oleada 3 (barrios vecinos) y la 4 salían en el mismo
+  // segundo —las dos a los 45—, así que el de la oficina y el del barrio de al
+  // lado recibían la oferta a la vez y ganaba quien pulsara primero.
+  await cerrarSolicitudesSueltas();
+  const escenario = await montarEscenario();
+  const vecino = await crearConductorEnZona(escenario.zonaB);
+  const lejano = await conductorDeTodaLaIsla();
+  try {
+    const solicitudId = await crearSolicitudEn(escenario);
+    const emisor = new EmisorRegistro();
+    const t0 = new Date();
+    await iniciarDespacho(pool, emisor, solicitudId, t0);
+
+    // Justo pasada la oleada 3: al vecino sí, al de toda la isla todavía no.
+    await avanzarDespachos(pool, emisor, despues(t0, 46));
+    let ofertas = await ofertasDe(solicitudId);
+    assert.ok(ofertas.some((o) => o.conductorId === vecino), 'el del barrio de al lado, en la oleada 3');
+    assert.equal(ofertas.some((o) => o.conductorId === lejano), false,
+      'el de toda la isla tiene que esperar a que el vecino haya tenido su turno');
+
+    // Y después, sí.
+    await avanzarDespachos(pool, emisor, despues(t0, 75));
+    ofertas = await ofertasDe(solicitudId);
+    assert.ok(ofertas.some((o) => o.conductorId === lejano && o.oleada === 4));
+  } finally {
+    await pool.query('UPDATE conductor SET recibe_en_cualquier_zona = false WHERE id = $1', [lejano]);
+  }
 });
