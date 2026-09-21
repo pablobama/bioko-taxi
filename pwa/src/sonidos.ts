@@ -92,6 +92,40 @@ function vibrar(patron: number[]): void {
 // Exportada desde la guía por voz (20/09): las instrucciones de giro
 // son texto sin tono previo —un «gire a la derecha» no necesita anunciarse— y
 // necesitan este mismo trato con las voces que falten.
+// Nombres de voz masculina de los motores que se ven en la calle: Android
+// (Google), iOS/macOS (Apple) y Windows (Microsoft). No hay forma estándar de
+// preguntarle a una voz si es de hombre o de mujer —`SpeechSynthesisVoice` no
+// lo dice—, así que se va por el nombre, que es lo único que hay.
+//
+// Y se mira el nombre ENTERO en minúsculas: en Android las voces se llaman
+// «español de España» sin más, y ahí no hay nada que elegir; en iOS sí hay
+// «Jorge» y «Diego», y en Windows «Pablo» y «Raul».
+const VOCES_DE_HOMBRE = [
+  'jorge', 'diego', 'carlos', 'juan', 'pablo', 'raul', 'raúl', 'miguel', 'enrique',
+  'thomas', 'nicolas', 'daniel', 'male', 'hombre', 'masculin',
+];
+
+// Elige la mejor voz para un idioma: del idioma pedido, de hombre si la hay y
+// preferiblemente instalada en el teléfono (`localService`), que es la que
+// suena sin red y sin retraso.
+function mejorVoz(voces: SpeechSynthesisVoice[], locale: string): SpeechSynthesisVoice | null {
+  const prefijo = locale.split('-')[0].toLowerCase();
+  const delIdioma = voces.filter((v) => v.lang.toLowerCase().startsWith(prefijo));
+  if (delIdioma.length === 0) return null;
+  const puntos = (v: SpeechSynthesisVoice): number => {
+    const nombre = v.name.toLowerCase();
+    let total = 0;
+    if (VOCES_DE_HOMBRE.some((n) => nombre.includes(n))) total += 4;
+    // Las «neural», «natural» o «enhanced» son las que no suenan a robot.
+    if (/neural|natural|enhanced|premium/.test(nombre)) total += 2;
+    if (v.localService) total += 1;
+    // Exactamente el locale pedido antes que otro español cualquiera.
+    if (v.lang.toLowerCase().replace('_', '-') === locale.toLowerCase()) total += 1;
+    return total;
+  };
+  return delIdioma.reduce((mejor, v) => (puntos(v) > puntos(mejor) ? v : mejor), delIdioma[0]);
+}
+
 export function hablar(texto: string, locale: string): void {
   if (silenciado) return;
   try {
@@ -101,11 +135,15 @@ export function hablar(texto: string, locale: string): void {
     sintesis.cancel();
     const frase = new SpeechSynthesisUtterance(texto);
     frase.lang = locale;
-    frase.rate = 0.95;
-    const voces = sintesis.getVoices();
-    const prefijo = locale.split('-')[0].toLowerCase();
-    const enElIdioma = voces.find((v) => v.lang.toLowerCase().startsWith(prefijo));
-    if (enElIdioma) frase.voice = enElIdioma;
+    // Más despacio y más grave que la voz de fábrica. Probado conduciendo: a
+    // velocidad normal (1) y tono normal la frase se atropella con el ruido
+    // del coche y hay que adivinar si dijo «derecha» o «izquierda», que son
+    // las dos palabras que importan. 0,85 en las dos cosas es lo que hace que
+    // se entienda a la primera sin sonar a cámara lenta.
+    frase.rate = 0.85;
+    frase.pitch = 0.85;
+    const elegida = mejorVoz(sintesis.getVoices(), locale);
+    if (elegida) frase.voice = elegida;
     sintesis.speak(frase);
   } catch {
     // Sin voz: queda el tono y la vibración.

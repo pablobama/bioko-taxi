@@ -288,3 +288,20 @@ test('con la aplicación abierta, el aviso NO sale por notificación web', async
   assert.equal(porWeb, 0);
   assert.equal((await filaEvento(tipo)).canal_entregado, 'sse');
 });
+
+test('sin canal 2, al taxista desconectado no se le reintenta diez veces', async () => {
+  // El saldo bajo o el viaje cerrado no tienen a dónde escalar. Con la
+  // aplicación cerrada, no llegar no es un fallo: se verán al abrirla. La
+  // primera versión de la escalada los reintentaba y los dejaba «abandonado».
+  const conexiones = new ConexionesSse();
+  const despachador = new DespachadorEventos(pool, new Map<string, Adaptador>([
+    ['sse', new AdaptadorSse(conexiones)],
+  ]));
+  const tipo = await crearRegla('sse');
+
+  await emitir(tipo, { aviso: 'saldo' });
+  await despachador.procesarPendientes();
+  const fila = await filaEvento(tipo);
+  assert.equal(fila.canal_entregado, 'sse_sin_conexion');
+  assert.equal(fila.ultimo_error, null);
+});

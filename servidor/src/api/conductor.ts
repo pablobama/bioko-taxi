@@ -149,6 +149,41 @@ export function registrarRutasConductor(
       : leerParametroEntero(cliente, 'reloj_espera_cliente_seg');
   }
 
+  // Un empujón a la pantalla del pasajero para que se entere AHORA (21/09).
+  //
+  // Hasta hoy, lo único que el pasajero recibía por la conexión abierta era
+  // «te han asignado un taxi». Todo lo demás —voy de camino, he llegado, te he
+  // recogido, viaje terminado— lo descubría en el siguiente sondeo, cada diez
+  // o veinte segundos. Eso es el retraso que se notaba al subirse: el taxista
+  // pulsa «recogido» y la pantalla del pasajero tarda en enterarse.
+  //
+  // No pasa por la bandeja de eventos a propósito. No es un hecho que haya que
+  // entregar sí o sí —el estado de verdad está en la base de datos y el sondeo
+  // lo trae igual—: es un «mira otra vez», y si el pasajero no tiene la
+  // conexión abierta en ese instante no pasa nada.
+  async function avisarAlPasajero(solicitudId: number): Promise<void> {
+    try {
+      const res = await pool.query(
+        'SELECT dispositivo_cliente_id FROM solicitud WHERE id = $1',
+        [solicitudId],
+      );
+      const dispositivo = res.rows[0]?.dispositivo_cliente_id;
+      if (dispositivo === undefined || dispositivo === null) return;
+      conexionesSse.entregarA(dispositivo, JSON.stringify({ tipo: 'cambio_estado' }));
+    } catch {
+      // El empujón es un lujo: si falla, el sondeo del pasajero sigue ahí.
+    }
+  }
+
+  // Envuelve una acción del viaje para empujar al pasajero en cuanto la
+  // transacción ha confirmado. Después, nunca dentro: si se empuja antes del
+  // commit, el pasajero pregunta y se encuentra el estado viejo.
+  async function conEmpujon<T>(solicitudId: number, accion: () => Promise<T>): Promise<T> {
+    const resultado = await accion();
+    await avisarAlPasajero(solicitudId);
+    return resultado;
+  }
+
   async function saldoDe(conductorId: number): Promise<number> {
     const res = await pool.query(
       'SELECT saldo_xaf FROM saldo_monedero WHERE conductor_id = $1',
@@ -820,6 +855,7 @@ export function registrarRutasConductor(
   app.post('/api/conductor/solicitudes/:id/salir', async (req) => {
     const sesion = await sesionDesde(req);
     const solicitudId = Number((req.params as { id: string }).id);
+    return conEmpujon(solicitudId, async () => {
     const cuerpo = (req.body ?? {}) as { ocurridoEn?: string };
     return enTransaccion(pool, async (cliente) => {
       const solicitud = await solicitudDelConductor(
@@ -833,11 +869,13 @@ export function registrarRutasConductor(
       // Este es el momento de la revelación del teléfono (R3).
       return { telefonoCliente: solicitud.telefonoCliente };
     });
+    });
   });
 
   app.post('/api/conductor/solicitudes/:id/he-llegado', async (req) => {
     const sesion = await sesionDesde(req);
     const solicitudId = Number((req.params as { id: string }).id);
+    return conEmpujon(solicitudId, async () => {
     const cuerpo = (req.body ?? {}) as { lat?: number; lng?: number; ocurridoEn?: string };
     return enTransaccion(pool, async (cliente) => {
       const solicitud = await solicitudDelConductor(
@@ -862,11 +900,13 @@ export function registrarRutasConductor(
       const relojSeg = await relojEsperaSeg(cliente, sesion.conductorId);
       return { llegadoEn: res.rows[0].llegado_en, relojEsperaSeg: relojSeg };
     });
+    });
   });
 
   app.post('/api/conductor/solicitudes/:id/cliente-ausente', async (req) => {
     const sesion = await sesionDesde(req);
     const solicitudId = Number((req.params as { id: string }).id);
+    return conEmpujon(solicitudId, async () => {
     const cuerpo = (req.body ?? {}) as { ocurridoEn?: string };
     return enTransaccion(pool, async (cliente) => {
       const solicitud = await solicitudDelConductor(
@@ -903,11 +943,13 @@ export function registrarRutasConductor(
       await ajustarPresencia(cliente, sesion.conductorId, 'sistema', 'cliente_ausente', momento);
       return { revisionManual: !resultado.strikeAplicado };
     });
+    });
   });
 
   app.post('/api/conductor/solicitudes/:id/recoger', async (req) => {
     const sesion = await sesionDesde(req);
     const solicitudId = Number((req.params as { id: string }).id);
+    return conEmpujon(solicitudId, async () => {
     const cuerpo = (req.body ?? {}) as { pin?: string; lat?: number; lng?: number; ocurridoEn?: string };
     // Validación manual sin PIN (estilo Cabify): el PIN es opcional; si la
     // app lo envía, debe coincidir. La recogida también puede marcarla sola
@@ -963,6 +1005,7 @@ export function registrarRutasConductor(
       );
       return { recogido: true, distanciaValidacionM: distanciaM };
     });
+    });
   });
 
   // Cierre del viaje. Sin precio: la plataforma no registra cuánto se pagó
@@ -971,6 +1014,7 @@ export function registrarRutasConductor(
   app.post('/api/conductor/solicitudes/:id/completar', async (req) => {
     const sesion = await sesionDesde(req);
     const solicitudId = Number((req.params as { id: string }).id);
+    return conEmpujon(solicitudId, async () => {
     const cuerpo = (req.body ?? {}) as { ocurridoEn?: string };
     return enTransaccion(pool, async (cliente) => {
       // Si la separación GPS ya cerró el viaje (COMPLETADO), aquí solo se
@@ -1004,6 +1048,7 @@ export function registrarRutasConductor(
         }, cliente);
       }
       return { saldoXaf: saldo };
+    });
     });
   });
 }

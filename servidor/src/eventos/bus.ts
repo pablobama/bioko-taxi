@@ -24,11 +24,22 @@ export interface EventoSalida {
   datos: Record<string, unknown>;
 }
 
+export interface OpcionesEntrega {
+  // Si la regla tiene un canal 2 al que escalar. Un adaptador puede decidir
+  // según esto si «no llegó» es un fallo —hay otra vía, que la use— o solo un
+  // dato —no la hay, reintentar no arregla nada—.
+  hayAlternativa: boolean;
+}
+
 export interface Adaptador {
   // Entrega el evento o lanza un error explicando por qué no pudo. Puede
   // devolver un detalle de canal (p. ej. 'sse_sin_conexion') que se guarda
   // en canal_entregado en lugar del nombre del canal.
-  entregar(evento: EventoSalida, cliente: pg.ClientBase): Promise<string | void>;
+  entregar(
+    evento: EventoSalida,
+    cliente: pg.ClientBase,
+    opciones?: OpcionesEntrega,
+  ): Promise<string | void>;
 }
 
 export class EmisorSalida implements EmisorEventos {
@@ -105,14 +116,14 @@ export class DespachadorEventos {
           }
 
           try {
-            const detalle = await this.entregarPor(canal1, evento, cliente);
+            const detalle = await this.entregarPor(canal1, evento, cliente, canal2 !== null);
             await this.marcarEntregado(cliente, evento.id, detalle ?? canal1);
           } catch (errorCanal1) {
             if (canal2 === null) {
               throw errorCanal1;
             }
             // Escalada al canal 2 (p. ej. D6: fcm → llamada del operador).
-            const detalle = await this.entregarPor(canal2, evento, cliente);
+            const detalle = await this.entregarPor(canal2, evento, cliente, false);
             await this.marcarEntregado(cliente, evento.id, detalle ?? canal2);
           }
           entregados += 1;
@@ -146,6 +157,7 @@ export class DespachadorEventos {
     canal: string,
     evento: EventoSalida,
     cliente: pg.ClientBase,
+    hayAlternativa: boolean,
   ): Promise<string | void> {
     const adaptador = this.adaptadores.get(canal);
     if (!adaptador) {
@@ -154,7 +166,7 @@ export class DespachadorEventos {
         + `Registrados: ${[...this.adaptadores.keys()].join(', ') || 'ninguno'}.`,
       );
     }
-    return adaptador.entregar(evento, cliente);
+    return adaptador.entregar(evento, cliente, { hayAlternativa });
   }
 
   private async marcarEntregado(

@@ -24,6 +24,7 @@ import { anotarRastro, olvidarRastro, pendientesRastro } from './rastroLocal';
 import { alternarGuia, guiaEncendida, proximoAviso, type PasoPorRotonda } from './guia';
 import { salidasDeRotonda } from './rutas';
 import { activarAvisos } from './avisoPush';
+import { mantenerVivo } from './seguirDespierto';
 import {
   encolar, guardarUltimo, sincronizar, ultimoGuardado, usePendientes,
 } from './sinRed';
@@ -167,6 +168,9 @@ export default function PanelConductor({
   const VELOCIDAD_MINIMA_MS = 2;
   const DISTANCIA_MINIMA_M = 25;
   const ultimaParaRumbo = useRef<{ lat: number; lng: number } | null>(null);
+  // Hacia dónde iba el coche la última vez que se movió de verdad. Mientras
+  // haya uno, la brújula no pinta nada: ver el escuchador de la brújula.
+  const rumboDeMarcha = useRef<number | null>(null);
   // Velocidad en tiempo real, para el marcador del panel.
   const [velocidadKmh, setVelocidadKmh] = useState<number | null>(null);
   // Última velocidad conocida en m/s, para decidir quién manda en el rumbo: la
@@ -219,6 +223,7 @@ export default function PanelConductor({
       const grados = ((delGps % 360) + 360) % 360;
       setRumbo(grados);
       setRumboCoche(grados);
+      rumboDeMarcha.current = grados;
       ultimaParaRumbo.current = donde;
       return;
     }
@@ -231,6 +236,7 @@ export default function PanelConductor({
     const entrePosiciones = rumboEntre(previa, donde);
     setRumbo(entrePosiciones);
     setRumboCoche(entrePosiciones);
+    rumboDeMarcha.current = entrePosiciones;
     ultimaParaRumbo.current = donde;
   }, []);
 
@@ -257,7 +263,24 @@ export default function PanelConductor({
       void pedirPermisoBrujula().then((concedido) => {
         if (!concedido || !vivo || parar) return;
         parar = escucharBrujula((grados) => {
-          // En marcha manda el GPS: dentro de un coche la brújula miente.
+          // La brújula solo manda MIENTRAS NO SE HAYA MOVIDO NUNCA, y esto es
+          // un arreglo del 21/09: «el vehículo pintado no está bien orientado
+          // en el mapa».
+          //
+          // La regla de antes era «manda el GPS en marcha y la brújula
+          // parado». Suena razonable y es mala: parado en un semáforo, el
+          // coche del plano se ponía a mirar hacia donde apuntara el TELÉFONO
+          // —el soporte torcido, el móvil boca abajo en el asiento— o hacia
+          // donde la chapa y los altavoces del coche despistaran al
+          // magnetómetro, que es a lo que se dedican. El propio código ya
+          // decía que dentro de un coche la brújula miente; lo que faltaba era
+          // sacar la consecuencia entera.
+          //
+          // Parado, lo que hace cualquier navegador es quedarse mirando por
+          // donde se venía. Y para lo único que la brújula sirve de verdad es
+          // para el primer momento: en servicio, sin haber arrancado todavía,
+          // cuando no hay ningún rumbo que conservar.
+          if (rumboDeMarcha.current !== null) return;
           if (velocidadMs.current >= VELOCIDAD_MINIMA_MS) return;
           setRumboCoche(grados);
         });
@@ -410,6 +433,14 @@ export default function PanelConductor({
       if (pendientes.length < 100) return;
     }
   };
+
+  // Con la guía encendida y en servicio, la página tiene que seguir viva
+  // aunque el taxista abra otra aplicación: si el navegador la congela, se
+  // calla la voz y se para el GPS. Ver seguirDespierto.ts.
+  useEffect(() => {
+    mantenerVivo(conVoz && enServicio);
+    return () => mantenerVivo(false);
+  }, [conVoz, enServicio]);
 
   // En cuanto vuelve la red, lo pendiente sale y el estado se pone al día. No
   // se espera al siguiente latido: pueden ser veinte segundos con el pasajero

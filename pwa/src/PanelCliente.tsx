@@ -572,6 +572,48 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
     return () => clearInterval(temporizador);
   }, [fase, aplicarEstado]);
 
+  // «Ya me bajé». Cierra el viaje DE VERDAD —antes el botón solo limpiaba
+  // esta pantalla y el taxista seguía con el pasajero a bordo, la plaza
+  // ocupada y, con el coche lleno, sin recibir carreras— y después pasa a la
+  // valoración, como cuando el taxista lo da por terminado.
+  //
+  // Sin red se guarda y sale sola al volver la cobertura: es un hecho que ya
+  // ocurrió, igual que «pasajero recogido» del lado del taxista.
+  async function heBajado() {
+    const activa = solicitudActiva();
+    if (!activa) {
+      limpiar();
+      return;
+    }
+    try {
+      await api.heBajado(activa);
+    } catch (error) {
+      if (error instanceof ErrorDelServidor && error.estado === 409) {
+        // El servidor dice que no hay viaje en curso que cerrar: o ya lo cerró
+        // el taxista, o nunca llegó a empezar. En los dos casos, esta pantalla
+        // sobra.
+        limpiar();
+        return;
+      }
+      if (!(error instanceof ErrorDeRed)) {
+        // Cualquier otro fallo NO borra el viaje: borrarlo aquí era justo el
+        // error de antes —la pantalla decía «terminado» y el servidor no—.
+        setAviso(mensajeDeError(error, t('aviso.noSePudo')));
+        return;
+      }
+      await encolar({
+        ruta: `/api/solicitudes/${activa}/he-bajado`,
+        cuerpo: {},
+        descripcion: t('accion.yaMeBaje'),
+      });
+    }
+    // A la valoración, con los datos del viaje que se acaba de hacer.
+    api.estado(activa).then(aplicarEstado).catch(() => {
+      setDetalle((d) => (d ? { ...d, estado: 'COMPLETADO' } : d));
+      setFase('gracias');
+    });
+  }
+
   async function pedir() {
     if (!origen || !destino) {
       setAviso(t('aviso.faltaOrigenDestino'));
@@ -810,6 +852,7 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
             alPedir: pedir,
             alCancelar: cancelar,
             alLimpiar: limpiar,
+            alBajar: () => { void heBajado(); },
             alValorar: valorar,
             alQuitarOrigen: () => { origenQuitadoAMano.current = true; setOrigen(null); },
             alElegirDestino: (elegido) => { setDestino(elegido); setAviso(''); },

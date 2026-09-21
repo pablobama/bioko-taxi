@@ -678,3 +678,78 @@ test('el buzón de avisos se guarda, y uno incompleto se rechaza', async () => {
   );
   assert.equal(guardadas.rows[0].n, 1);
 });
+
+// --- 21/09: lo que vio el taxista que lo probó -----------------------------
+
+async function dispositivoDelPasajero(uuid: string): Promise<number> {
+  const res = await pool.query('SELECT id FROM dispositivo WHERE uuid_persistente = $1', [uuid]);
+  return Number(res.rows[0].id);
+}
+
+test('«ya me bajé» cierra el viaje de verdad y libera la plaza', async () => {
+  // Antes el botón solo limpiaba la pantalla del pasajero: el taxista seguía
+  // con él a bordo, y con el coche lleno no le llegaban carreras.
+  const { conductor, solicitudId, uuidCliente } = await viajeEnCamino();
+  const recoger = await llamar('POST', `/api/conductor/solicitudes/${solicitudId}/recoger`, conductor.uuid);
+  assert.equal(recoger.codigo, 200, JSON.stringify(recoger.json));
+
+  const bajar = await app.inject({
+    method: 'POST',
+    url: `/api/solicitudes/${solicitudId}/he-bajado`,
+    headers: cabeceras(uuidCliente),
+    payload: {},
+  });
+  assert.equal(bajar.statusCode, 200, bajar.body);
+
+  const estado = await pool.query('SELECT estado FROM solicitud WHERE id = $1', [solicitudId]);
+  assert.equal(estado.rows[0].estado, 'COMPLETADO');
+  const quien = await pool.query(
+    `SELECT actor, origen_evento FROM transicion
+     WHERE solicitud_id = $1 AND estado_nuevo = 'COMPLETADO'`,
+    [solicitudId],
+  );
+  assert.equal(quien.rows[0].actor, 'cliente', 'tiene que quedar escrito quién lo cerró');
+  const presencia = await pool.query('SELECT estado FROM presencia WHERE conductor_id = $1', [conductor.conductorId]);
+  assert.equal(presencia.rows[0].estado, 'DISPONIBLE', 'la plaza vuelve a estar libre');
+
+  // Pulsarlo dos veces —o que llegue tarde desde la bandeja sin red— no es un
+  // error: el viaje ya está cerrado.
+  const otraVez = await app.inject({
+    method: 'POST',
+    url: `/api/solicitudes/${solicitudId}/he-bajado`,
+    headers: cabeceras(uuidCliente),
+    payload: {},
+  });
+  assert.equal(otraVez.statusCode, 200);
+});
+
+test('«ya me bajé» no cierra un viaje que no ha empezado', async () => {
+  // Un pasajero que todavía espera en la acera no puede terminar nada: sería
+  // una forma rara de cancelar, saltándose la gracia de la cancelación.
+  const { solicitudId, uuidCliente } = await viajeEnCamino();
+  const bajar = await app.inject({
+    method: 'POST',
+    url: `/api/solicitudes/${solicitudId}/he-bajado`,
+    headers: cabeceras(uuidCliente),
+    payload: {},
+  });
+  assert.equal(bajar.statusCode, 409);
+});
+
+test('la pantalla del pasajero se entera AL MOMENTO de que lo han recogido', async () => {
+  // El retraso que se notaba: el taxista pulsa «recogido» y el pasajero lo veía
+  // en el siguiente sondeo, diez o veinte segundos después. Ahora le llega un
+  // empujón por la conexión que ya tiene abierta.
+  const { conductor, solicitudId, uuidCliente } = await viajeEnCamino();
+  const recibidos: string[] = [];
+  const baja = conexionesSse.suscribir(await dispositivoDelPasajero(uuidCliente), (c) => recibidos.push(c));
+  try {
+    await llamar('POST', `/api/conductor/solicitudes/${solicitudId}/recoger`, conductor.uuid);
+  } finally {
+    baja();
+  }
+  assert.ok(
+    recibidos.some((c) => JSON.parse(c).tipo === 'cambio_estado'),
+    'el pasajero tenía que recibir el aviso de cambio en cuanto se recogió',
+  );
+});

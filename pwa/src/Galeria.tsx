@@ -31,7 +31,7 @@ const t = crearT('es');
 const NADA = () => undefined;
 
 const accionesCliente: AccionesCliente = {
-  alAbrirAjustes: NADA, alAbrirEstadisticas: NADA, alPedir: NADA,
+  alAbrirAjustes: NADA, alAbrirEstadisticas: NADA, alPedir: NADA, alBajar: NADA,
   alCancelar: NADA, alLimpiar: NADA, alValorar: NADA, alQuitarOrigen: NADA, alLlamar: NADA, alElegirDestino: NADA, alEscribirDestino: NADA,
 };
 

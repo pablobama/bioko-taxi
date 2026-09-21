@@ -699,6 +699,74 @@ export function crearServidor(
     return reply; // la respuesta queda abierta
   });
 
+  // «Ya me bajé» (21/09).
+  //
+  // El botón existía desde el principio y no hacía NADA: solo limpiaba la
+  // pantalla del pasajero. Desde fuera parecía que el viaje había terminado, y
+  // por dentro el taxista seguía con él a bordo —la plaza ocupada y, si el
+  // coche iba lleno, sin recibir carreras— hasta que se acordaba de pulsar
+  // «viaje terminado» o hasta que el GPS notaba la separación, que tarda un
+  // par de minutos y necesita que los dos móviles manden posición.
+  //
+  // Ahora cierra el viaje de verdad. Se puede hacer sin riesgo porque el
+  // cobro es en efectivo y la plataforma cobra por suscripción, no por viaje:
+  // cerrar no le cuesta dinero a nadie ni le quita al taxista lo suyo, que lo
+  // cobra en mano. Queda escrito quién lo cerró —actor «cliente»— para que el
+  // informe de turno pueda distinguirlo.
+  app.post('/api/solicitudes/:id/he-bajado', async (req) => {
+    const dispositivo = await dispositivoDesde(req);
+    const solicitudId = Number((req.params as { id: string }).id);
+    await solicitudPropia(solicitudId, dispositivo.id); // propiedad
+
+    const conductorId = await enTransaccion(pool, async (cliente) => {
+      const fila = await cliente.query(
+        `SELECT s.estado, v.id AS viaje_id, v.conductor_id
+         FROM solicitud s
+         LEFT JOIN viaje v ON v.solicitud_id = s.id
+         WHERE s.id = $1 FOR UPDATE OF s`,
+        [solicitudId],
+      );
+      const estado: string = fila.rows[0].estado;
+      // Ya cerrado —el taxista se adelantó, o lo cerró la separación del GPS—:
+      // no es un error, es que no hay nada que hacer.
+      if (estado === 'COMPLETADO') return null;
+      if (estado !== 'RECOGIDO') {
+        throw errorHttp(409, `Solo se puede dar por terminado un viaje en curso (está en ${estado}).`);
+      }
+
+      await transicionarSolicitud(cliente, solicitudId, 'COMPLETADO', 'cliente', 'pasajero_bajo');
+      await cliente.query(
+        'UPDATE viaje SET completado_en = COALESCE(completado_en, now()) WHERE id = $1',
+        [fila.rows[0].viaje_id],
+      );
+
+      // Se libera la plaza. Con taxi compartido el conductor puede seguir
+      // llevando a otros: solo se mueve la presencia si el coche estaba lleno.
+      const conductor: number | null = fila.rows[0].conductor_id;
+      if (conductor !== null) {
+        const presencia = await cliente.query(
+          'SELECT estado FROM presencia WHERE conductor_id = $1 FOR UPDATE',
+          [conductor],
+        );
+        if (presencia.rows[0]?.estado === 'OCUPADO') {
+          await transicionarConductor(cliente, conductor, 'DISPONIBLE', 'sistema', 'pasajero_bajo');
+        }
+        // Para que su pantalla lo vea AHORA y no en el próximo latido: puede
+        // estar esperando a que se libere la plaza para coger otra carrera.
+        await emisor.emitir({
+          tipo: 'D3_viaje_cerrado_comision',
+          rol: 'conductor',
+          solicitudId,
+          conductorId: conductor,
+          datos: { cerradoPor: 'pasajero' },
+        }, cliente);
+      }
+      return conductor;
+    });
+
+    return { terminado: true, conductorId: conductorId === null ? null : String(conductorId) };
+  });
+
   app.post('/api/solicitudes/:id/cancelar', async (req) => {
     const dispositivo = await dispositivoDesde(req);
     const solicitudId = Number((req.params as { id: string }).id);

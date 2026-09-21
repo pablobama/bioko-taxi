@@ -72,6 +72,11 @@ export interface Maniobra {
   // Solo en rotonda: por qué salida se sale, contando como cuenta quien
   // conduce.
   salida?: number;
+  // Solo en rotonda: metros desde el principio de la ruta hasta el punto por
+  // donde se DEJA el anillo. Una rotonda son dos avisos en dos sitios: uno
+  // antes de entrar, para saber la salida, y otro ya dentro, justo antes de
+  // la suya. `desdeElInicioM` es el primero y esto es el segundo.
+  salidaEnM?: number;
   // Metros desde el principio de la ruta hasta ese punto.
   desdeElInicioM: number;
 }
@@ -181,6 +186,7 @@ export function maniobrasDeLaRuta(
     const paso = rotondas.get(i);
     if (paso !== undefined) {
       lista.push({
+        salidaEnM: acumulado[paso.indiceSalida] ?? acumulado[i],
         // El SITIO de la maniobra es la salida del anillo, no la entrada. Es lo
         // que la identifica entre un recálculo y otro: entrando en la rotonda,
         // la ruta se rehace desde dentro y el punto de entrada se mueve con el
@@ -276,12 +282,16 @@ function avanzar(ruta: Punto[], acumulado: number[], i: number, distancia: numbe
 // metros, así que el coche está siempre cerca de su comienzo; y ante dos
 // tramos igual de cercanos, el de delante es el bueno, porque el de atrás ya
 // se pasó.
-const CERCA_DE_LA_RUTA_M = 30;
+// Margen con el que un tramo «empata» con el mejor. Cinco metros: menos que
+// el error del GPS, así que dos tramos que empatan dentro de eso son
+// indistinguibles y hay que elegir por otra cosa.
+const EMPATE_M = 5;
 
 function andadoDeLaRuta(ruta: Punto[], acumulado: number[], donde: Punto): number {
   const cosLat = Math.cos((donde.lat * Math.PI) / 180);
-  let mejor = 0;
-  let mejorDistancia = Number.POSITIVE_INFINITY;
+  // Distancia del coche a cada tramo, y cuánto se llevaría andado si fuera ese.
+  const distancias: number[] = [];
+  const andados: number[] = [];
   for (let i = 1; i < ruta.length; i += 1) {
     const a = ruta[i - 1];
     const b = ruta[i];
@@ -292,18 +302,24 @@ function andadoDeLaRuta(ruta: Punto[], acumulado: number[], donde: Punto): numbe
     const py = (donde.lat - a.lat) * 111_320;
     const largo = bx * bx + by * by;
     const t = largo === 0 ? 0 : Math.max(0, Math.min(1, (px * bx + py * by) / largo));
-    const distancia = Math.hypot(px - t * bx, py - t * by);
-    // En cuanto un tramo vale, se para: el de delante manda sobre el de atrás.
-    if (distancia <= CERCA_DE_LA_RUTA_M) return acumulado[i - 1] + t * Math.sqrt(largo);
-    if (distancia < mejorDistancia) {
-      mejorDistancia = distancia;
-      mejor = acumulado[i - 1] + t * Math.sqrt(largo);
-    }
+    distancias.push(Math.hypot(px - t * bx, py - t * by));
+    andados.push(acumulado[i - 1] + t * Math.sqrt(largo));
   }
-  // Ningún tramo cerca: el coche se ha salido de la ruta. Se devuelve el más
-  // cercano de todos, que es lo único que queda, y el recálculo del plano
-  // pondrá las cosas en su sitio en los próximos veinte metros.
-  return mejor;
+  if (distancias.length === 0) return 0;
+
+  // El mejor tramo, y de los que EMPATAN con él, el primero.
+  //
+  // Lo segundo importa tanto como lo primero. Una ruta de Malabo vuelve a
+  // pasar cerca de sí misma continuamente —la cuadrícula del centro, la vuelta
+  // a una manzana, el propio anillo de una rotonda al lado de la calle por la
+  // que se llega—, así que sin desempatar por orden la guía se creía dos
+  // kilómetros más adelante y anunciaba giros de otro barrio.
+  let minimo = Number.POSITIVE_INFINITY;
+  for (const d of distancias) minimo = Math.min(minimo, d);
+  for (let i = 0; i < distancias.length; i += 1) {
+    if (distancias[i] <= minimo + EMPATE_M) return andados[i];
+  }
+  return andados[0];
 }
 
 // Una distancia que se pueda decir y oír conduciendo. «En ciento ochenta y
@@ -335,12 +351,44 @@ export function proximoAviso(
   const andado = andadoDeLaRuta(ruta, acumulado, donde);
 
   for (const maniobra of lista) {
+    // Una rotonda no se acaba al entrar: sigue siendo la maniobra en curso
+    // hasta que se sale del anillo. Por eso, para saber si ya se pasó, se mira
+    // su SALIDA y no su entrada.
+    const finM = maniobra.giro === 'rotonda'
+      ? maniobra.salidaEnM ?? maniobra.desdeElInicioM
+      : maniobra.desdeElInicioM;
     // Cinco metros de margen: justo encima del cruce, la proyección ya puede
     // haberlo pasado y la maniobra quedaría sin decirse.
     const falta = maniobra.desdeElInicioM - andado;
-    if (falta < -5) continue;
+    if (finM - andado < -5) continue;
 
     const sitio = dondeEsta(maniobra.punto);
+
+    // Las rotondas llevan su propio par de avisos, en dos SITIOS distintos:
+    //
+    //   - Antes de entrar, con el número: «en doscientos metros, en la
+    //     rotonda toma la salida 2». Es lo que hay que saber para elegir el
+    //     carril.
+    //   - Ya DENTRO, justo antes de la suya: «sal aquí». Es lo que pidió el
+    //     taxista que lo probó, y tiene razón: dentro de un anillo se pierde
+    //     la cuenta, y un aviso dado solo antes de entrar no sirve de nada
+    //     treinta segundos después, dando vueltas.
+    if (maniobra.giro === 'rotonda') {
+      const claveEntrada = `${sitio}:rotonda-entrada`;
+      if (falta > 0 && falta <= ESCALONES_M[0] && !dichas.has(claveEntrada)) {
+        return {
+          giro: 'rotonda', salida: maniobra.salida, metros: decible(falta), clave: claveEntrada,
+        };
+      }
+      // Treinta metros antes de la salida: a la velocidad a la que se anda
+      // dentro de una rotonda son unos cuatro segundos, el tiempo justo de
+      // poner el intermitente y salir.
+      const claveSalida = `${sitio}:rotonda-salida`;
+      if (finM - andado <= 30 && !dichas.has(claveSalida)) {
+        return { giro: 'rotonda', salida: maniobra.salida, metros: 0, clave: claveSalida };
+      }
+      return null;
+    }
 
     if (maniobra.giro === 'llegada') {
       if (falta > LLEGADA_M) return null;

@@ -760,6 +760,19 @@ export const api = {
   estado: (solicitudId: number) =>
     pedirJson<DetalleSolicitud>(`/api/solicitudes/${solicitudId}`),
 
+  // «Ya me bajé»: cierra el viaje en el servidor (21/09). Antes el botón solo
+  // limpiaba la pantalla y el taxista seguía con el pasajero a bordo.
+  heBajado: (solicitudId: number) =>
+    pedirJson<{ terminado: boolean }>(`/api/solicitudes/${solicitudId}/he-bajado`, {
+      method: 'POST',
+      // Con cuerpo aunque no haga falta: la cabecera dice JSON, y Fastify
+      // rechaza con un 400 un POST JSON vacío. Lo encontró la primera prueba
+      // en el navegador —el botón «no hacía nada», otra vez—.
+      body: '{}',
+      // Repetirlo es seguro: un viaje ya cerrado contesta «terminado» igual.
+      reintentos: 1,
+    }),
+
   cancelar: (solicitudId: number) =>
     pedirJson<{ estado: string; strike: boolean }>(`/api/solicitudes/${solicitudId}/cancelar`, {
       method: 'POST',

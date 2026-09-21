@@ -15,6 +15,8 @@ export type FaseCliente =
 
 export interface AccionesCliente {
   alAbrirAjustes: () => void;
+  // «Ya me bajé»: cierra el viaje en el servidor, no solo en esta pantalla.
+  alBajar: () => void;
   alAbrirEstadisticas: () => void;
   alPedir: () => void;
   alCancelar: () => void;
@@ -341,7 +343,7 @@ export default function VistaCliente({
             </button>
           )}
           {detalle.estado === 'RECOGIDO' && (
-            <button type="button" className="tenue" onClick={acciones.alLimpiar}>
+            <button type="button" className="tenue" onClick={acciones.alBajar}>
               {t('accion.yaMeBaje')}
             </button>
           )}

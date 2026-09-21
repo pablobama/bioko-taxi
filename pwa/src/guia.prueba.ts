@@ -70,9 +70,10 @@ test('el aviso llega a doscientos metros y no antes', () => {
   // A 300 m del cruce todavía no se dice nada.
   assert.equal(proximoAviso(puntos, punto(0, 0), dichas), null);
 
-  // A 150 m, sí.
-  const aviso = proximoAviso(puntos, punto(150, 0), dichas);
-  assert.ok(aviso !== null, 'a 150 m del cruce tiene que avisar');
+  // Acercándose, sí. (El cruce está en el vértice 290, no en el 300: el
+  // último punto de la recta y el primero del tramo al este son el mismo.)
+  const aviso = proximoAviso(puntos, punto(120, 0), dichas);
+  assert.ok(aviso !== null, 'a 170 m del cruce tiene que avisar');
   assert.equal(aviso!.giro, 'derecha');
   assert.equal(aviso!.metros, 200);
 });
@@ -188,4 +189,39 @@ test('en una rotonda se dice la salida, y se dice una sola vez', () => {
   const rotondasRehecha = new Map([[0, { salida: 1, indiceSalida: 2 }]]);
   assert.equal(proximoAviso(rehecha, punto(310, 12), dichas, rotondasRehecha), null,
     'es la misma rotonda: ya se dijo');
+});
+
+test('la rotonda se avisa dos veces: antes de entrar y ya dentro', () => {
+  // Lo que pidió el taxista que la probó: el aviso de antes de entrar no
+  // sirve treinta segundos después, dando vueltas dentro del anillo.
+  const anillo = [punto(300, 0), punto(310, 10), punto(310, 25), punto(300, 35)];
+  const puntos = [
+    ...recta(0, 290),
+    ...anillo,
+    ...Array.from({ length: 20 }, (_, i) => punto(300, 45 + i * 10)),
+  ];
+  const entrada = puntos.length - 20 - anillo.length;
+  const rotondas = new Map([[entrada, { salida: 2, indiceSalida: entrada + 3 }]]);
+  const dichas = new Set<string>();
+
+  // Llegando: el número de salida.
+  const antes = proximoAviso(puntos, punto(150, 0), dichas, rotondas);
+  assert.equal(antes!.giro, 'rotonda');
+  assert.equal(antes!.salida, 2);
+  assert.ok(antes!.metros > 0, 'de lejos se dice la distancia');
+  dichas.add(antes!.clave);
+
+  // Dentro del anillo, entre la entrada y la salida: todavía no toca.
+  const dentro = proximoAviso(puntos, punto(305, 5), dichas, rotondas);
+  assert.equal(dentro, null, 'nada más entrar no hay nada nuevo que decir');
+
+  // Pegado a su salida: «sal aquí», sin número.
+  const saliendo = proximoAviso(puntos, punto(310, 22), dichas, rotondas);
+  assert.ok(saliendo !== null, 'dentro del anillo hay que avisar de la salida');
+  assert.equal(saliendo!.giro, 'rotonda');
+  assert.equal(saliendo!.metros, 0);
+  dichas.add(saliendo!.clave);
+
+  // Y una sola vez.
+  assert.equal(proximoAviso(puntos, punto(308, 28), dichas, rotondas), null);
 });

@@ -9,7 +9,7 @@
 // activa el cliente cuando lo declararon ausente?).
 
 import type pg from 'pg';
-import type { Adaptador, EventoSalida } from './bus.js';
+import type { Adaptador, EventoSalida, OpcionesEntrega } from './bus.js';
 
 export type EnvioSse = (carga: string) => void;
 
@@ -64,7 +64,11 @@ export class ConexionesSse {
 export class AdaptadorSse implements Adaptador {
   constructor(private readonly conexiones: ConexionesSse) {}
 
-  async entregar(evento: EventoSalida, cliente: pg.ClientBase): Promise<string> {
+  async entregar(
+    evento: EventoSalida,
+    cliente: pg.ClientBase,
+    opciones: OpcionesEntrega = { hayAlternativa: false },
+  ): Promise<string> {
     // Destinatario: el dispositivo del cliente, o el del conductor cuando el
     // evento es para él. El panel web del taxista usa esta misma vía; la app
     // Android usa FCM, que le llega con la pantalla apagada.
@@ -100,7 +104,14 @@ export class AdaptadorSse implements Adaptador {
     // notificación web—, que es lo único que suena con la aplicación cerrada.
     // Si no hay canal 2 configurado el evento queda como antes: sin entregar y
     // con su motivo escrito.
-    if (evento.rol === 'conductor') {
+    //
+    // Pero SOLO si hay a dónde escalar (21/09). La primera versión fallaba
+    // siempre con el taxista desconectado, también en los avisos que no tienen
+    // canal 2 —saldo bajo, viaje cerrado—, y esos acababan reintentándose diez
+    // veces y marcados «abandonado» por la única razón de que la aplicación
+    // estaba cerrada. Sin alternativa, no llegar es un dato y no un fallo:
+    // se ven al abrir la aplicación, que es para lo que están.
+    if (evento.rol === 'conductor' && opciones.hayAlternativa) {
       throw new Error(
         `El conductor ${evento.conductorId} no tiene la aplicación abierta `
         + `(evento ${evento.id}, ${evento.tipo}).`,
