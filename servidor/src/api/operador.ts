@@ -369,10 +369,29 @@ export function registrarRutasOperador(
 
     return enTransaccion(pool, async (cliente) => {
       const existente = await cliente.query(
-        'SELECT id FROM conductor WHERE telefono = $1',
+        'SELECT id, unificado_en FROM conductor WHERE telefono = $1',
         [telefonoTaxi],
       );
       let conductorId: number;
+      // Unificado con otro taxista (migración 061): el papel de taxista pasa a
+      // ser ESE, con sus datos tal como estén. Sin esto, cada vez que se pulsaba
+      // «Taxista» en el conmutador se volvía a enganchar el dispositivo al taxi
+      // viejo y la unificación se deshacía sola. Y no se le toca nada —ni la
+      // suscripción ni la verificación—: es un taxista de verdad con lo suyo,
+      // no el taxi de pruebas que este mismo endpoint se inventa.
+      const unificadoEn = existente.rows[0]?.unificado_en ?? null;
+      if (unificadoEn !== null) {
+        conductorId = Number(unificadoEn);
+        await cliente.query(
+          `INSERT INTO dispositivo (uuid_persistente, tipo, conductor_id, ultimo_heartbeat)
+           VALUES ($1, 'conductor', $2, now())
+           ON CONFLICT (uuid_persistente) DO UPDATE
+             SET tipo = 'conductor', conductor_id = EXCLUDED.conductor_id`,
+          [uuid.toLowerCase(), conductorId],
+        );
+        const destino = await cliente.query('SELECT telefono FROM conductor WHERE id = $1', [conductorId]);
+        return { conductorId, telefono: destino.rows[0].telefono as string };
+      }
       if (existente.rowCount !== 0) {
         conductorId = Number(existente.rows[0].id);
         await cliente.query(

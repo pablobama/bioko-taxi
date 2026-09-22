@@ -606,3 +606,48 @@ test('el recorrido: lo ve el operador, no un agente de campo, y sale por tramos'
   });
   assert.equal(malo.statusCode, 400);
 });
+
+// --- Migración 061: el taxi del operador unificado con su taxista de verdad --
+
+test('«Taxista» en el conmutador respeta la unificación y no resucita el taxi viejo', async () => {
+  // El conmutador llama a mi-taxi CADA VEZ que se pulsa «Taxista». Antes de la
+  // 061 eso buscaba el taxi del operador por su teléfono y le volvía a
+  // enganchar el dispositivo: una unificación hecha con el script se habría
+  // deshecho al primer cambio de papel.
+  const uuidTaxi = randomUUID();
+  const primera = await app.inject({
+    method: 'POST', url: '/api/operador/mi-taxi',
+    headers: cabeceras(UUID_OPERADOR), payload: { uuid: uuidTaxi },
+  });
+  assert.equal(primera.statusCode, 200, primera.body);
+  const taxiOperador = Number(primera.json().conductorId);
+
+  // Su taxista de verdad, con lo suyo.
+  const real = await pool.query(
+    `INSERT INTO conductor (telefono, nombre, estado_verificacion, suscrito_hasta)
+     VALUES ($1, 'Pablo de verdad', 'verificado', now() + interval '10 days')
+     RETURNING id, suscrito_hasta`,
+    [telefonoUnico()],
+  );
+  const pablo = Number(real.rows[0].id);
+  const suscripcionAntes = new Date(real.rows[0].suscrito_hasta).getTime();
+  await pool.query('UPDATE conductor SET unificado_en = $2 WHERE id = $1', [taxiOperador, pablo]);
+
+  // Pulsa «Taxista» otra vez.
+  const segunda = await app.inject({
+    method: 'POST', url: '/api/operador/mi-taxi',
+    headers: cabeceras(UUID_OPERADOR), payload: { uuid: uuidTaxi },
+  });
+  assert.equal(segunda.statusCode, 200, segunda.body);
+  assert.equal(Number(segunda.json().conductorId), pablo, 'el papel de taxista es ya el de Pablo');
+
+  const dispositivo = await pool.query(
+    'SELECT conductor_id FROM dispositivo WHERE uuid_persistente = $1', [uuidTaxi],
+  );
+  assert.equal(Number(dispositivo.rows[0].conductor_id), pablo);
+
+  // Y a Pablo no se le toca nada: mi-taxi regala un año de suscripción al taxi
+  // de pruebas que se inventa, no a un taxista de verdad.
+  const despues = await pool.query('SELECT suscrito_hasta FROM conductor WHERE id = $1', [pablo]);
+  assert.equal(new Date(despues.rows[0].suscrito_hasta).getTime(), suscripcionAntes);
+});
