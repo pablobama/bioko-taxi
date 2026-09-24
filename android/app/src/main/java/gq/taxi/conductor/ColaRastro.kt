@@ -71,6 +71,16 @@ object ColaRastro {
     // del intervalo mínimo; si se movió lo bastante, sí; y si no se movió pero
     // hace rato del último, también — que es la diferencia entre «estuvo una
     // hora parado en la parada del mercado» y «no se sabe».
+    // Metros por segundo a km/h, que es como viaja y como se guarda. Una
+    // lectura rota —NaN, infinito, negativa o de avión— se deja fuera: vale
+    // menos que no decir nada, porque el servidor la creería.
+    fun velocidadKmh(metrosPorSegundo: Float): Double? {
+        if (metrosPorSegundo.isNaN() || metrosPorSegundo.isInfinite()) return null
+        val kmh = metrosPorSegundo * 3.6
+        if (kmh < 0 || kmh > 300) return null
+        return Math.round(kmh * 10.0) / 10.0
+    }
+
     @Synchronized
     fun anotar(contexto: Context, posicion: Location): Boolean {
         // La lectura mala fuera, y ANTES del aclarado: si contara, ocuparía el
@@ -90,6 +100,12 @@ object ColaRastro {
             .put("lng", posicion.longitude)
             .put("en", ISO.format(Date(posicion.time)))
         if (posicion.hasAccuracy()) json.put("precision", posicion.accuracy.toDouble())
+        // La velocidad que MIDE el receptor, en km/h (migración 063). Android
+        // la da en metros por segundo y `hasSpeed()` dice si la sabe: sin ella
+        // el servidor tiene que deducir el tiempo al volante de restar dos
+        // posiciones, y entre dos lecturas separadas un minuto no hay forma de
+        // saber cuánto fue semáforo.
+        if (posicion.hasSpeed()) json.put("velocidad", velocidadKmh(posicion.speed))
         val linea = json.toString()
         return try {
             fichero(contexto).appendText(linea + "\n")

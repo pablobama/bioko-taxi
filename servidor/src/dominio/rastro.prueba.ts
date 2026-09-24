@@ -104,6 +104,84 @@ test('el taxi parado deja un punto cada tanto: «estuvo ahí» no es «no se sab
   assert.equal(await guardar(id, 5, 400), true, 'a los seis minutos sí, aunque no se haya movido');
 });
 
+// --- Migración 063: la velocidad que MIDE el GPS ---------------------------
+
+// Como `guardar`, pero diciendo además a qué velocidad iba el coche.
+const guardarA = (id: number, m: number, seg: number, kmh: number | null) =>
+  enTransaccion(pool, (c) => {
+    const p = aMetros(m);
+    return registrarRastro(c, id, p.lat, p.lng, enSegundo(seg), null, kmh);
+  });
+
+const velocidadesDe = async (id: number) => {
+  const { rows } = await pool.query(
+    'SELECT velocidad_kmh FROM rastro WHERE conductor_id = $1 ORDER BY creado_en',
+    [id],
+  );
+  return rows.map((f: { velocidad_kmh: number | null }) =>
+    (f.velocidad_kmh === null ? null : Number(f.velocidad_kmh)));
+};
+
+test('la velocidad medida se guarda con el punto, y la que no se puede creer no', async () => {
+  const id = await crearConductor();
+  await guardarA(id, 0, 0, 42.5);
+  await guardarA(id, 300, 60, null);
+  // 900 km/h no es un taxi. Se guarda el punto —la posición es buena— pero sin
+  // velocidad: reventar el latido entero por un dato raro sería peor.
+  await guardarA(id, 600, 120, 900);
+  await guardarA(id, 900, 180, -5);
+  assert.deepEqual(await velocidadesDe(id), [42.5, null, null, null]);
+});
+
+test('con velocidad medida, el tiempo al volante deja de suponerse', async () => {
+  // Medio kilómetro recorrido en cinco minutos. Sin más datos no hay forma de
+  // saber cuánto de esos cinco minutos fue andar y cuánto un semáforo: se
+  // estima. Diciendo el GPS que iba a 50, son 36 segundos de volante y el
+  // resto, parado.
+  const medido = await crearConductor();
+  await guardarA(medido, 0, 0, 50);
+  await guardarA(medido, 500, 300, 50);
+  const conMedida = await recorridoDe(pool, medido, enSegundo(-100), enSegundo(600));
+
+  const supuesto = await crearConductor();
+  await guardarA(supuesto, 0, 0, null);
+  await guardarA(supuesto, 500, 300, null);
+  const sinMedida = await recorridoDe(pool, supuesto, enSegundo(-100), enSegundo(600));
+
+  // Los metros no cambian: la velocidad dice cuánto TIEMPO se estuvo andando,
+  // no por dónde.
+  assert.equal(Math.abs(conMedida.metros - sinMedida.metros) < 5, true);
+  // 500 m a 50 km/h son 36 s. Dos segundos de margen por el redondeo de los
+  // grados a metros.
+  assert.ok(Math.abs(conMedida.segundosEnMovimiento - 36) <= 2,
+    `36 s esperados, ${conMedida.segundosEnMovimiento}`);
+  assert.ok(sinMedida.segundosEnMovimiento > conMedida.segundosEnMovimiento,
+    'la estimación por clase de calle daba más tiempo al volante que la medida');
+});
+
+test('una velocidad de coche parado no se usa: el trayecto existió', async () => {
+  // El GPS dice 0,5 km/h en las dos lecturas y sin embargo hay medio kilómetro
+  // entre ellas. Esas dos lecturas no describen el trayecto —el coche arrancó
+  // y paró entremedias—, así que se vuelve a estimar como siempre en vez de
+  // dividir por medio kilómetro por hora y sacar una hora de volante.
+  const id = await crearConductor();
+  await guardarA(id, 0, 0, 0.5);
+  await guardarA(id, 500, 300, 0.5);
+  const r = await recorridoDe(pool, id, enSegundo(-100), enSegundo(600));
+  assert.ok(r.segundosEnMovimiento <= 300, 'nunca más que el hueco entre los dos puntos');
+  assert.ok(r.segundosEnMovimiento > 36, 'y no la cuenta absurda de ir a 0,5 km/h');
+});
+
+test('el lote sin cobertura sube también la velocidad medida', async () => {
+  const id = await crearConductor();
+  await transicion(id, 'DESCONECTADO', 'DISPONIBLE', enSegundo(0));
+  await enTransaccion(pool, (c) => registrarRastroDiferido(c, id, [
+    { ...aMetros(0), en: enSegundo(0), velocidadKmh: 31.4 },
+    { ...aMetros(400), en: enSegundo(60) },
+  ], enSegundo(120)));
+  assert.deepEqual(await velocidadesDe(id), [31.4, null]);
+});
+
 test('quien no está en servicio no deja rastro, aunque su móvil lo mande', async () => {
   const id = await crearConductor('DESCONECTADO');
   assert.equal(await guardar(id, 0, 0), false);

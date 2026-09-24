@@ -52,15 +52,6 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   claro. Si algún día se quiere «pedir en cuanto haya red», tiene que llevar
   una caducidad corta y explícita, y decírselo al pasajero.
 
-- **[P56-02] «Al volante» todavía supone a qué velocidad se va por cada calle.**
-  Con puntos cada minuto no se sabe cuánto de ese minuto fue un semáforo; se
-  estima con la velocidad típica de cada clase de calle del enrutador. Si en
-  Malabo se va más deprisa que eso, el tiempo al volante sale largo y la
-  velocidad corta (es buena parte del −19 % de arriba). La solución que no
-  supone nada es guardar con cada punto la velocidad que ya mide el GPS
-  (`coords.speed` en la PWA, `Location.speed` en Android): el móvil SABE si
-  estaba parado.
-
 - **[P55-01] Render en plan gratuito se DUERME, y con él todo lo automático.**
   `render.yaml` dice `plan: free`: sin peticiones durante 15 minutos el
   servicio se apaga, y un `setInterval` no corre en un proceso apagado. Se vio
@@ -571,6 +562,24 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   trabajo para el operador, que los va confirmando.
 
 ## Resueltos
+
+- **[P56-02] «Al volante» ya no supone a qué velocidad se va** — resuelto el
+  2026-09-24 (migración 063). Con cada punto del recorrido se guarda la
+  velocidad que MIDE el receptor (`coords.speed` en la PWA, `Location.speed`
+  en Android, las dos en m/s y convertidas a km/h en el móvil), y el tiempo al
+  volante se calcula con ella en vez de con la velocidad típica de cada clase
+  de calle del enrutador. Medido en el mismo recorrido de 4,4 km por la
+  carretera del aeropuerto: estimando salían 9 minutos de volante a 29,5 km/h;
+  con la medida de un coche a 45, salen 5,9 minutos a 45,0. **Sigue siendo
+  opcional en todo el camino:** un teléfono sin fijación buena no da velocidad,
+  las versiones que ya están en la calle no la mandan y el recorrido viejo no
+  la tiene — en todos esos casos se estima como antes. Dos defensas: una
+  lectura imposible (NaN, negativa, 300 km/h) se guarda como «no se sabe» en
+  vez de reventar el latido, y una medida de coche parado con metros de por
+  medio no se usa, porque esas dos lecturas no describen el trayecto. Cinco
+  pruebas en `rastro.prueba.ts`. **Lo que falta por saber:** cuánto cambia el
+  informe con datos de verdad; hasta que un turno entero se grabe con la
+  aplicación nueva no hay más que la medida de laboratorio de arriba.
 
 - **[P62-02] Elegir coche no reserva nada, y ahora se dice** — resuelto el
   2026-09-24. Lo que NO cambia: elegir sigue siendo una preferencia y no una

@@ -653,7 +653,10 @@ export const api = {
   // El recorrido apuntado sin cobertura (migración 051). Va aparte del latido:
   // el latido tiene que ser barato y salir cada veinte segundos, y esto es un
   // lote que solo aparece cuando vuelve la red.
-  subirRastro: (puntos: Array<{ lat: number; lng: number; en: string; precision: number | null }>) =>
+  subirRastro: (puntos: Array<{
+    lat: number; lng: number; en: string;
+    precision: number | null; velocidad?: number | null;
+  }>) =>
     pedirJson<{ recibidos: number; guardados: number; descartados: number }>(
       '/api/conductor/rastro',
       { method: 'POST', body: JSON.stringify({ puntos }) },
@@ -1086,6 +1089,19 @@ export interface Posicion {
   // un margen; sin ella pone la hora de llegada, que llega hasta ocho segundos
   // tarde y estropea la velocidad de cada tramo.
   en?: string;
+  // Velocidad MEDIDA por el receptor, ya en km/h (migración 063). El navegador
+  // la da en metros por segundo y a veces no la da: null entonces. Se manda
+  // para no tener que deducirla después restando dos posiciones, que es lo que
+  // hacía que el tiempo al volante saliera largo.
+  velocidad?: number | null;
+}
+
+// `coords.speed` viene en m/s, o null si el receptor no la sabe. Un NaN o un
+// negativo es un dato roto, no un coche parado.
+export function velocidadEnKmh(metrosPorSegundo: number | null | undefined): number | null {
+  if (typeof metrosPorSegundo !== 'number' || !Number.isFinite(metrosPorSegundo)) return null;
+  if (metrosPorSegundo < 0) return null;
+  return Math.round(metrosPorSegundo * 3.6 * 10) / 10;
 }
 
 export function coordenadasOportunistas(
@@ -1119,6 +1135,7 @@ export function coordenadasOportunistas(
         lng: mejor.coords.longitude,
         precision: mejor.coords.accuracy,
         en: new Date(mejor.timestamp).toISOString(),
+        velocidad: velocidadEnKmh(mejor.coords.speed),
       });
     };
 

@@ -46,6 +46,9 @@ export interface PuntoLocal {
   // null en los puntos apuntados antes de la migración 054, que siguen en la
   // cola de algún móvil y hay que poder subir igual.
   precision?: number | null;
+  // Velocidad medida por el GPS en km/h (migración 063). Ausente en los puntos
+  // apuntados antes, y null cuando el receptor no la dio.
+  velocidad?: number | null;
 }
 
 let baseAbierta: Promise<IDBDatabase> | null = null;
@@ -100,7 +103,7 @@ function metrosEntre(a: { lat: number; lng: number }, b: { lat: number; lng: num
 // rato del último, también —que es la diferencia entre «estuvo una hora parado
 // en la parada del mercado» y «no se sabe»—.
 export async function anotarRastro(
-  punto: { lat: number; lng: number; precision?: number | null },
+  punto: { lat: number; lng: number; precision?: number | null; velocidad?: number | null },
   ahora: Date = new Date(),
 ): Promise<boolean> {
   if (typeof indexedDB === 'undefined') return false;
@@ -126,7 +129,11 @@ export async function anotarRastro(
       }
     }
     await enAlmacen('readwrite', (a) => a.add({
-      lat: punto.lat, lng: punto.lng, en: ahora.toISOString(), precision,
+      lat: punto.lat,
+      lng: punto.lng,
+      en: ahora.toISOString(),
+      precision,
+      velocidad: punto.velocidad ?? null,
     }) as IDBRequest<IDBValidKey>);
     ultimo = { lat: punto.lat, lng: punto.lng, en: ahora.getTime() };
     await recortar();

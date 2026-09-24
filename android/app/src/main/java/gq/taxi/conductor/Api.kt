@@ -73,6 +73,12 @@ object Api {
             // una de antena; sin la hora, le pone la de llegada y la
             // velocidad de cada tramo sale mal.
             if (posicion.hasAccuracy()) cuerpo.put("precision", posicion.accuracy.toDouble())
+            // Y la velocidad medida (migración 063): el latido es la vía por
+            // la que entra el recorrido cuando hay cobertura, así que si no va
+            // aquí solo la tendrían los puntos que pasaron por la cola.
+            if (posicion.hasSpeed()) {
+                ColaRastro.velocidadKmh(posicion.speed)?.let { cuerpo.put("velocidad", it) }
+            }
             cuerpo.put("en", ColaRastro.ISO.format(java.util.Date(posicion.time)))
         }
         return peticion(contexto, "POST", "/api/conductor/heartbeat", cuerpo)

@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  abrirEventosConductor, api, coordenadasOportunistas, enPruebasLocales,
+  abrirEventosConductor, api, coordenadasOportunistas, enPruebasLocales, velocidadEnKmh,
   type DatosConductor, type EstadoConductor, type Posicion, type PuntoMapa,
   type Zona, type ZonaConDemanda,
 } from './api';
@@ -426,7 +426,11 @@ export default function PanelConductor({
       const pendientes = await pendientesRastro(100);
       if (pendientes.length === 0) return;
       await api.subirRastro(
-        pendientes.map((p) => ({ lat: p.lat, lng: p.lng, en: p.en, precision: p.precision ?? null })),
+        pendientes.map((p) => ({
+          lat: p.lat, lng: p.lng, en: p.en,
+          precision: p.precision ?? null,
+          velocidad: p.velocidad ?? null,
+        })),
       );
       await olvidarRastro(pendientes.map((p) => p.id!).filter((id) => id !== undefined));
       // Si venía menos de un lote lleno, ya no queda nada.
@@ -545,6 +549,10 @@ export default function PanelConductor({
           lat: p.coords.latitude,
           lng: p.coords.longitude,
           precision: p.coords.accuracy,
+          // Lo que el receptor MIDE, no lo que se deduzca luego restando dos
+          // posiciones (migración 063): es lo único que sabe de verdad si el
+          // coche estaba parado en un semáforo.
+          velocidad: velocidadEnKmh(p.coords.speed),
         };
         coordenadas.current = nueva;
         moverCoche(nueva);

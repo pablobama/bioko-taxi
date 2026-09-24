@@ -19,6 +19,10 @@ export interface PuntoRastro {
   // que pinta el mapa de calor: la ruta que repite todos los días sale roja y
   // la que hizo una vez, azul.
   pasadas?: number;
+  // Velocidad MEDIDA por el GPS en el instante de la lectura, en km/h
+  // (migración 063). null o ausente cuando el teléfono no la dio: no se
+  // inventa, se estima como antes.
+  velocidadKmh?: number | null;
 }
 
 // Un recorrido no es una línea: es una línea con agujeros. El taxista sale de
@@ -84,6 +88,9 @@ export async function registrarRastro(
   // Radio de error de la lectura (migración 054). null si el cliente no lo
   // manda: se apunta igual, y queda a la vista como «no se sabe».
   precisionM: number | null = null,
+  // Velocidad medida por el GPS (migración 063). Opcional por los teléfonos
+  // que no la dan y por las versiones que ya están en la calle.
+  velocidadKmh: number | null = null,
 ): Promise<boolean> {
   const enServicio = await cliente.query(
     `SELECT 1 FROM presencia WHERE conductor_id = $1 AND estado <> 'DESCONECTADO'`,
@@ -119,15 +126,27 @@ export async function registrarRastro(
   // ON CONFLICT: el latido y el envío diferido pueden traer la misma lectura
   // con la misma hora ahora que los dos usan la hora del GPS (migración 054).
   const res = await cliente.query(
-    `INSERT INTO rastro (conductor_id, lat, lng, creado_en, precision_m)
-     VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
-    [conductorId, lat, lng, ahora, precisionM],
+    `INSERT INTO rastro (conductor_id, lat, lng, creado_en, precision_m, velocidad_kmh)
+     VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`,
+    [conductorId, lat, lng, ahora, precisionM, velocidadAceptable(velocidadKmh)],
   );
   return (res.rowCount ?? 0) > 0;
 }
 
 // Sin precisión se acepta —clientes viejos, pruebas— y con ella, solo por
 // debajo del máximo. Un NaN o un negativo es un dato roto, no uno bueno.
+// Una velocidad que no se puede creer no se guarda: fuera del rango del CHECK
+// de la 063 el INSERT reventaría el latido entero por un dato raro, y un dato
+// raro vale menos que el latido. Un NaN, un negativo o 400 km/h no son un
+// taxi; un null es «el teléfono no lo dijo», que es distinto y se guarda tal
+// cual.
+export function velocidadAceptable(velocidadKmh: number | null | undefined): number | null {
+  if (velocidadKmh === null || velocidadKmh === undefined) return null;
+  if (!Number.isFinite(velocidadKmh)) return null;
+  if (velocidadKmh < 0 || velocidadKmh > 300) return null;
+  return velocidadKmh;
+}
+
 export function precisionAceptable(precisionM: number | null, maximaM: number): boolean {
   if (precisionM === null) return true;
   return Number.isFinite(precisionM) && precisionM >= 0 && precisionM <= maximaM;
@@ -162,7 +181,10 @@ export function precisionAceptable(precisionM: number | null, maximaM: number): 
 export async function registrarRastroDiferido(
   cliente: pg.ClientBase,
   conductorId: number,
-  puntos: Array<{ lat: number; lng: number; en: Date; precisionM?: number | null }>,
+  puntos: Array<{
+    lat: number; lng: number; en: Date;
+    precisionM?: number | null; velocidadKmh?: number | null;
+  }>,
   ahora: Date = new Date(),
 ): Promise<{ guardados: number; descartados: number }> {
   if (puntos.length === 0) return { guardados: 0, descartados: 0 };
@@ -232,9 +254,12 @@ export async function registrarRastroDiferido(
     const pegado = horas.some((h) => Math.abs(h - cuando) < intervaloSeg * 1000);
     if (pegado) continue;
     const res = await cliente.query(
-      `INSERT INTO rastro (conductor_id, lat, lng, creado_en, precision_m)
-       VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
-      [conductorId, punto.lat, punto.lng, punto.en, punto.precisionM ?? null],
+      `INSERT INTO rastro (conductor_id, lat, lng, creado_en, precision_m, velocidad_kmh)
+       VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`,
+      [
+        conductorId, punto.lat, punto.lng, punto.en, punto.precisionM ?? null,
+        velocidadAceptable(punto.velocidadKmh),
+      ],
     );
     if (res.rowCount !== 0) {
       guardados += 1;
@@ -252,14 +277,17 @@ export async function recorridoDe(
   maxPuntos = 1500,
 ): Promise<Recorrido> {
   const filas = await cliente.query(
-    `SELECT lat, lng, creado_en FROM rastro
+    `SELECT lat, lng, creado_en, velocidad_kmh FROM rastro
      WHERE conductor_id = $1 AND creado_en >= $2 AND creado_en < $3
      ORDER BY creado_en`,
     [conductorId, desde, hasta],
   );
   const todos: PuntoRastro[] = filas.rows.map(
-    (f: { lat: number; lng: number; creado_en: Date }) => ({
-      lat: Number(f.lat), lng: Number(f.lng), en: new Date(f.creado_en),
+    (f: { lat: number; lng: number; creado_en: Date; velocidad_kmh: number | null }) => ({
+      lat: Number(f.lat),
+      lng: Number(f.lng),
+      en: new Date(f.creado_en),
+      velocidadKmh: f.velocidad_kmh === null ? null : Number(f.velocidad_kmh),
     }),
   );
 
@@ -360,18 +388,56 @@ function andarPorCalles(
 
     const camino = caminoPorCarretera(ancla, punto, salto, hueco, maximaKmh);
     const tope = CORTE_TRAMO_MS / 1000;
+    // Lo que MIDIÓ el GPS manda sobre lo que supone la tabla de velocidades
+    // típicas del enrutador (migración 063). Solo sustituye al cálculo cuando
+    // hay medida: sin ella, todo sigue igual que antes.
+    const medida = velocidadMedida(ancla, punto);
     if (camino !== null) {
       metros += camino.distanciaM;
-      segundos += Math.min(hueco, camino.segundosTipicos, tope);
+      segundos += Math.min(
+        hueco,
+        medida === null ? camino.segundosTipicos : camino.distanciaM / (medida / 3.6),
+        tope,
+      );
       densificar(trazado, camino.puntos, ancla.en, punto.en);
     } else {
       metros += salto;
-      segundos += Math.min(hueco, tope);
+      segundos += Math.min(
+        hueco,
+        medida === null ? hueco : salto / (medida / 3.6),
+        tope,
+      );
       densificar(trazado, [ancla, punto], ancla.en, punto.en);
     }
     ancla = punto;
   }
   return { metros, segundos, trazado };
+}
+
+// Por debajo de esto el coche está parado, no circulando despacio: es el
+// temblor del chip con el motor en marcha. Sirve, sobre todo, para no dividir
+// por una velocidad de 0,4 km/h y sacar un tiempo en marcha absurdo.
+const PARADO_KMH = 3;
+
+// A qué velocidad se fue de un punto al siguiente, SEGÚN EL GPS (migración
+// 063), o null si no lo dijo.
+//
+// El receptor mide la velocidad por el efecto Doppler sobre la señal, no
+// restando dos posiciones: sabe si el coche estaba parado en un semáforo
+// aunque entre las dos lecturas haya pasado un minuto. Eso es justo lo que no
+// se podía deducir y por lo que el tiempo al volante salía largo.
+//
+// Se promedian los dos extremos porque lo que se busca es la velocidad DEL
+// TRAYECTO entre ellos, y esas dos lecturas son lo único que se sabe de él. Si
+// solo una está, se usa esa: media información es más que ninguna. Y si de la
+// media sale un coche parado, se devuelve null y se estima como siempre: hay
+// metros de por medio, así que esas dos lecturas no describen el trayecto.
+function velocidadMedida(a: PuntoRastro, b: PuntoRastro): number | null {
+  const dos = [a.velocidadKmh, b.velocidadKmh]
+    .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  if (dos.length === 0) return null;
+  const media = dos.reduce((suma, v) => suma + v, 0) / dos.length;
+  return media < PARADO_KMH ? null : media;
 }
 
 // Añade un camino al trazado con un punto cada 15 m como mucho, repartiendo la

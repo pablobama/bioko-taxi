@@ -435,7 +435,10 @@ export function registrarRutasConductor(
   app.post('/api/conductor/rastro', async (req) => {
     const sesion = await sesionDesde(req);
     const cuerpo = (req.body ?? {}) as {
-      puntos?: Array<{ lat?: unknown; lng?: unknown; en?: unknown; precision?: unknown }>;
+      puntos?: Array<{
+        lat?: unknown; lng?: unknown; en?: unknown;
+        precision?: unknown; velocidad?: unknown;
+      }>;
     };
     const crudos = Array.isArray(cuerpo.puntos) ? cuerpo.puntos : [];
     // `precision` es opcional: los móviles que aún no la mandan siguen
@@ -450,6 +453,10 @@ export function registrarRutasConductor(
         lng: Number(p.lng),
         en: new Date(String(p.en)),
         precisionM: typeof p.precision === 'number' ? p.precision : null,
+        // Velocidad medida por el GPS, en km/h (migración 063). Opcional
+        // igual que la precisión: las versiones que ya están en la calle no
+        // la mandan y tienen que poder seguir subiendo su recorrido.
+        velocidadKmh: typeof p.velocidad === 'number' ? p.velocidad : null,
       }))
       // Una fecha ilegible es `Invalid Date`, y su `getTime()` es NaN: sin
       // esta comprobación se colaría hasta el INSERT y reventaría el lote
@@ -521,6 +528,9 @@ export function registrarRutasConductor(
     const sesion = await sesionDesde(req);
     const cuerpo = (req.body ?? {}) as {
       zonaId?: number; lat?: number; lng?: number; precision?: number;
+      // Velocidad del GPS en km/h (migración 063). La convierte el móvil: los
+      // dos sistemas la dan en metros por segundo.
+      velocidad?: number;
       // Hora de la LECTURA, no del envío (migración 054). Opcional.
       en?: string;
     };
@@ -575,6 +585,7 @@ export function registrarRutasConductor(
           cliente, sesion.conductorId, cuerpo.lat, cuerpo.lng,
           await horaDeLectura(cliente, cuerpo.en),
           typeof cuerpo.precision === 'number' ? cuerpo.precision : null,
+          typeof cuerpo.velocidad === 'number' ? cuerpo.velocidad : null,
         );
       }
     });
