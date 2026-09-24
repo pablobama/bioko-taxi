@@ -345,10 +345,6 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   necesario para el mapa de aproximación, pero es una divulgación nueva que
   conviene contarle al conductor en su alta.
 
-- **[P14-04] La reputación no afecta todavía al despacho.** Se muestra al
-  cliente pero `prioridad_despacho` sigue sin calcularse a partir de ella:
-  eso es el paso 10. Un conductor con malas notas hoy recibe lo mismo.
-
 - **[P5-02] La re-emisión no reoferta a quien ya tuvo oferta.** Tras la
   reasignación de R3 (`ACEPTADO → EMITIDO`), el índice único
   `oferta(solicitud_id, conductor_id)` impide volver a ofertar la misma
@@ -521,13 +517,6 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   pantalla siga abierta se puede copiar; después solo queda cortarlo y
   compartir otro. Guardarlo en el propio teléfono lo arreglaría.
 
-- **[P42-01] Al taxista no se le ha dicho que su recorrido queda guardado.**
-  La migración 042 guarda por dónde anda cada taxi mientras está en servicio,
-  y el operador lo ve en su ficha. Se registra solo en servicio y se borra a
-  los noventa días, pero el taxista no se ha enterado por ninguna pantalla.
-  Es su coche y su jornada: enterarse por casualidad destruye más confianza de
-  la que ahorra el silencio. Una línea en su panel bastaría.
-
 - **[P42-02] La tabla `rastro` es la que más crece de toda la base.** Un punto
   por taxi cada minuto de turno. Se filtra al escribir y se purga sola cada
   seis horas por `rastro_retencion_dias` (90), pero nadie ha medido todavía
@@ -553,6 +542,25 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   trabajo para el operador, que los va confirmando.
 
 ## Resueltos
+
+- **[P14-04] La reputación cuenta en el reparto** — resuelto el 2026-09-24
+  (migración 065). Entra en el ORDEN de los candidatos, con tres cuidados:
+  por TRAMOS y no por decimales (4,6 y 4,7 son el mismo taxista, y una décima
+  no puede decidir quién come); solo con `reputacion_muestras_minimas`
+  valoraciones o más —por debajo va en el tramo del medio, para que tres
+  pasajeros de mal día no dejen a nadie sin trabajo y un taxista nuevo no
+  arranque castigado—; y DESPUÉS de la prioridad que pone el operador a mano y
+  de «va ya hacia allí», que es lo que le conviene al pasajero de esa carrera.
+  Lo que no hace: excluir. El mal valorado recibe la carrera en la oleada
+  siguiente, porque dejar a alguien sin trabajo por una media es una sanción y
+  las sanciones las pone el operador con un nombre detrás. Dos pruebas.
+
+- **[P42-01] Al taxista se le dice que su recorrido queda guardado** — resuelto
+  el 2026-09-24. Una línea junto al botón de entrar en servicio, en la web y en
+  la app de Android: en servicio se guarda por dónde pasa, fuera de servicio no
+  se guarda nada, y se borra a los 90 días. Las tres cosas importan y la
+  tercera es la que convierte «me vigilan» en «saben por dónde trabajé este
+  mes». En Android va además en la notificación permanente, que ya lo decía.
 
 - **[P58-01] El aviso a TODOS los taxistas** — resuelto el 2026-09-24
   (migración 064), y resuelto acotándolo: no se avisa a todos en cada

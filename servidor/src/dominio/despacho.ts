@@ -125,7 +125,9 @@ async function zonasAdyacentes(cliente: pg.ClientBase, zonaId: number): Promise<
 //      de destino coincidente). Es la aproximación barata a «coche que pasa
 //      por tu camino», usando zonas: sin cálculo de rutas ni GPS de más.
 //   2. prioridad_despacho.
-//   3. Menor tasa de cancelación aceptado→cancelado.
+//   3. Tramo de reputación (migración 065): bien, normal, mal. Por tramos y
+//      no por decimales, y solo con valoraciones suficientes — ver la 065.
+//   4. Menor tasa de cancelación aceptado→cancelado.
 async function candidatos(
   cliente: pg.ClientBase,
   solicitudId: number,
@@ -154,6 +156,11 @@ async function candidatos(
     return [];
   }
   const ventanaSeg = await leerParametroEntero(cliente, 'ventana_heartbeat_seg');
+  // Reputación (migración 065). Se leen aquí y se pasan como parámetros para
+  // que el operador pueda moverlos sin desplegar, como todo lo demás.
+  const muestrasMinimas = await leerParametroEntero(cliente, 'reputacion_muestras_minimas');
+  const tramoBueno = await leerParametroEntero(cliente, 'reputacion_tramo_bueno');
+  const tramoMalo = await leerParametroEntero(cliente, 'reputacion_tramo_malo');
   const res = await cliente.query(
     `WITH destino_pedido AS (
        SELECT rd.id AS referencia_id, rd.zona_id
@@ -188,6 +195,18 @@ async function candidatos(
                  AND sr.estado IN ('ACEPTADO', 'EN_CAMINO', 'RECOGIDO')
                  AND (rr.id = dp.referencia_id OR rr.zona_id = dp.zona_id)) DESC,
               c.prioridad_despacho DESC,
+              -- Tramo de reputación (migración 065): 2 bien, 1 normal, 0 mal.
+              -- Quien no tiene valoraciones suficientes va en el del medio: ni
+              -- castigado por ser nuevo ni premiado sin haberlo demostrado.
+              (SELECT CASE
+                        WHEN count(*) < $9 THEN 1
+                        WHEN avg(val.puntuacion) * 10 >= $10 THEN 2
+                        WHEN avg(val.puntuacion) * 10 < $11 THEN 0
+                        ELSE 1
+                      END
+               FROM valoracion val
+               JOIN viaje vr ON vr.id = val.viaje_id
+               WHERE vr.conductor_id = c.id AND val.emisor = 'cliente') DESC,
               COALESCE(
                 (SELECT count(*)::float FROM transicion t
                  JOIN solicitud s2 ON s2.id = t.solicitud_id
@@ -202,6 +221,7 @@ async function candidatos(
     [
       solicitudId, zonaIds, ahora, ventanaSeg, limite,
       cualquierZona, soloConductorId, todaLaCiudad,
+      muestrasMinimas, tramoBueno, tramoMalo,
     ],
   );
   return res.rows.map((f) => f.conductor_id);

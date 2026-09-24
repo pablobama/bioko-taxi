@@ -681,6 +681,85 @@ test('cualquier zona: la oleada 4 llega DESPUÉS de la de los barrios vecinos, n
   }
 });
 
+// --- Migración 065: la reputación cuenta en el reparto ---------------------
+
+// Le pone al taxista `cuantas` valoraciones de `nota`, inventando el viaje que
+// las justifica. Directo por SQL: lo que se prueba es el ORDEN del reparto, no
+// el camino por el que se valora, que tiene sus propias pruebas.
+async function valorarAsi(conductorId: number, nota: number, cuantas: number): Promise<void> {
+  for (let i = 0; i < cuantas; i += 1) {
+    const solicitud = await pool.query(
+      `INSERT INTO solicitud
+         (dispositivo_cliente_id, telefono_cliente, referencia_origen_id,
+          referencia_destino_id, clave_idempotencia, estado, conductor_id)
+       SELECT $1, '+240222999995', r.id, r.id, $2, 'COMPLETADO', $3
+       FROM referencia r LIMIT 1
+       RETURNING id`,
+      [dispositivoClienteId, `nota-${randomUUID()}`, conductorId],
+    );
+    const viaje = await pool.query(
+      `INSERT INTO viaje (solicitud_id, conductor_id, pin) VALUES ($1, $2, '1234') RETURNING id`,
+      [solicitud.rows[0].id, conductorId],
+    );
+    await pool.query(
+      `INSERT INTO valoracion (viaje_id, emisor, puntuacion) VALUES ($1, 'cliente', $2)`,
+      [viaje.rows[0].id, nota],
+    );
+  }
+}
+
+test('con la misma prioridad, la carrera va antes a quien está mejor valorado', async () => {
+  const escenario = await montarEscenario();
+  const bueno = await crearConductorEnZona(escenario.zonaA);
+  const malo = await crearConductorEnZona(escenario.zonaA);
+  const nuevo = await crearConductorEnZona(escenario.zonaA);
+  const otroNuevo = await crearConductorEnZona(escenario.zonaA);
+  await valorarAsi(bueno, 5, 6);
+  await valorarAsi(malo, 2, 6);
+  // El nuevo se queda con tres valoraciones malas: por debajo del mínimo, no
+  // cuentan. Tres pasajeros de mal día no dejan a nadie sin trabajo.
+  await valorarAsi(nuevo, 1, 3);
+
+  const solicitudId = await crearSolicitudEn(escenario);
+  const emisor = new EmisorRegistro();
+  await iniciarDespacho(pool, emisor, solicitudId);
+
+  // La oleada 1 son tres: el bien valorado y los dos que no tienen nota que
+  // cuente. El de las malas notas espera a la oleada 2.
+  const primeros = (await ofertasDe(solicitudId)).map((o) => String(o.conductorId));
+  assert.equal(primeros.length, 3);
+  assert.ok(primeros.includes(String(bueno)), 'el bien valorado va en la primera oleada');
+  assert.equal(primeros.includes(String(malo)), false, 'el mal valorado va detrás');
+  assert.ok(
+    primeros.includes(String(nuevo)) && primeros.includes(String(otroNuevo)),
+    'sin valoraciones suficientes se va en el tramo del medio, no castigado',
+  );
+});
+
+test('la mala nota retrasa, no excluye: en la oleada siguiente también recibe', async () => {
+  const escenario = await montarEscenario();
+  const malo = await crearConductorEnZona(escenario.zonaA);
+  await valorarAsi(malo, 1, 8);
+  for (let i = 0; i < 3; i += 1) await crearConductorEnZona(escenario.zonaA);
+
+  const solicitudId = await crearSolicitudEn(escenario);
+  const emisor = new EmisorRegistro();
+  const t0 = new Date();
+  await iniciarDespacho(pool, emisor, solicitudId, t0);
+  assert.equal(
+    (await ofertasDe(solicitudId)).some((o) => String(o.conductorId) === String(malo)),
+    false,
+  );
+
+  // Dejar a alguien sin trabajo por una media es una sanción, y las sanciones
+  // las pone el operador con un nombre detrás. Aquí solo va después.
+  await avanzarDespachos(pool, emisor, despues(t0, 21));
+  assert.ok(
+    (await ofertasDe(solicitudId)).some((o) => String(o.conductorId) === String(malo)),
+    'la oleada 2 sí le llega',
+  );
+});
+
 // --- Migración 064: la oleada 5, toda la ciudad antes de rendirse ----------
 
 test('sin nadie en el barrio, la carrera ya no muere: se ofrece a toda la ciudad', async () => {

@@ -380,6 +380,15 @@ export default function VistaConductor({
           {!enServicio && (
             <p className="nota">{t('zona.teLocaliza')}</p>
           )}
+          {/* Que su recorrido queda guardado tiene que decírselo la
+              aplicación, no la casualidad (P42-01). Se guarda solo en
+              servicio y se borra a los noventa días; las dos cosas importan,
+              y la segunda es la que convierte «me vigilan» en «saben por
+              dónde trabajé este mes». Va junto al botón de entrar, que es
+              donde se decide. */}
+          {!enServicio && (
+            <p className="nota">{t('rastro.seGuarda')}</p>
+          )}
           <button
             type="button"
             className={enServicio ? 'secundario' : 'principal grande'}

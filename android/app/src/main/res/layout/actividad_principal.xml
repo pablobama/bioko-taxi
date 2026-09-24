@@ -92,6 +92,16 @@
                 android:layout_width="match_parent"
                 android:layout_height="64dp"
                 android:text="@string/accion_entrar_servicio" />
+
+            <!-- Que su recorrido queda guardado tiene que decírselo la
+                 aplicación y no la casualidad (P42-01). Aquí importa más que
+                 en la web: esta app graba con la pantalla bloqueada. -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="8dp"
+                android:text="@string/rastro_se_guarda"
+                android:textSize="13sp" />
         </LinearLayout>
 
         <!-- ················ Oferta entrante ················ -->

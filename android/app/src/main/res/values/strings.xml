@@ -30,6 +30,7 @@
          toda la ciudad antes de darla por perdida. -->
     <string name="oferta_nadie_la_ha_cogido">Nadie la ha cogido · puede estar lejos</string>
     <string name="canal_ofertas">Ofertas de carrera</string>
+    <string name="rastro_se_guarda">En servicio se guarda por dónde pasas, para tus números y para la central. Fuera de servicio, no se guarda nada. Se borra a los 90 días.</string>
     <string name="canal_servicio">En servicio</string>
     <!-- La notificación dice que se está grabando el recorrido. No es un
          adorno: el taxista lleva el GPS encendido y su recorrido se guarda, y
