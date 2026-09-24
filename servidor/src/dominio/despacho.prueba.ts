@@ -20,7 +20,7 @@ import { caducarPresencias, registrarHeartbeat } from './presencia.js';
 import { crearZona, declararAdyacencia, guardarReferencia } from './gazetteer.js';
 import { recargar } from './monedero.js';
 import { crearSolicitud } from './transiciones.js';
-import { sinTaxisDeTodaLaIsla } from './ayuda-pruebas.js';
+import { sinAvisoALaCiudad, sinTaxisDeTodaLaIsla } from './ayuda-pruebas.js';
 
 
 // Teléfono de pruebas que PUEDE existir: nueve dígitos locales, como los de
@@ -242,7 +242,11 @@ test('ACEPTACIÓN: dos aceptaciones simultáneas — exactamente una gana y la o
 });
 
 test('R1: zona sin nadie conectado (ni adyacentes) → SIN_OFERTA inmediato', async () => {
-  await sinTaxisDeTodaLaIsla(pool, async () => {
+  // Y con el aviso a la ciudad apagado (migración 064): encendido, el corte
+  // mira toda la ciudad y basta un taxi de otra prueba para que no corte —que
+  // es lo correcto, y tiene sus propias pruebas—. Aquí se mide el corte por
+  // zona vacía, que es otra cosa.
+  await sinTaxisDeTodaLaIsla(pool, () => sinAvisoALaCiudad(pool, async () => {
   const escenario = await montarEscenario(); // sin conductores en A ni B
   const solicitudId = await crearSolicitudEn(escenario);
   const emisor = new EmisorRegistro();
@@ -259,10 +263,14 @@ test('R1: zona sin nadie conectado (ni adyacentes) → SIN_OFERTA inmediato', as
     [solicitudId],
   );
   assert.equal(transiciones.rows[0].n, 0);
-  });
+  }));
 });
 
 test('oleadas: 3 más prioritarios → hasta 8 en zona → adyacentes → SIN_OFERTA a los 90 s', async () => {
+  // Sin esto, una petición suelta de otra prueba llega a su oleada 5 mientras
+  // esta corre y se lleva a TODOS los taxis de la ciudad —los de aquí
+  // incluidos— a OFERTADO, y las cuentas de esta prueba dejan de cuadrar.
+  await cerrarSolicitudesSueltas();
   const escenario = await montarEscenario();
   const enZonaA: number[] = [];
   for (let prioridad = 0; prioridad < 10; prioridad += 1) {
@@ -339,7 +347,7 @@ test('zona del origen vacía pero adyacente con conductores: se emite y la olead
 test('heartbeat: el conductor con heartbeat vencido no recibe ofertas; tras refrescar, sí', async () => {
   // También mira el corte R1, así que necesita que no haya ningún taxista de
   // «toda la isla» en servicio: ver `sinTaxisDeTodaLaIsla`.
-  await sinTaxisDeTodaLaIsla(pool, async () => {
+  await sinTaxisDeTodaLaIsla(pool, () => sinAvisoALaCiudad(pool, async () => {
   const escenario = await montarEscenario();
   const dormido = await crearConductorEnZona(escenario.zonaA, { desfaseHeartbeatSeg: 130 });
   const solicitudId = await crearSolicitudEn(escenario);
@@ -356,7 +364,7 @@ test('heartbeat: el conductor con heartbeat vencido no recibe ofertas; tras refr
   const inicio2 = await iniciarDespacho(pool, emisor, solicitud2, new Date());
   assert.equal(inicio2.resultado, 'EMITIDO');
   assert.equal(inicio2.ofertas, 1);
-  });
+  }));
 });
 
 test('el conductor sin suscripción vigente no recibe broadcasts (migración 011)', async () => {
@@ -671,6 +679,104 @@ test('cualquier zona: la oleada 4 llega DESPUÉS de la de los barrios vecinos, n
   } finally {
     await pool.query('UPDATE conductor SET recibe_en_cualquier_zona = false WHERE id = $1', [lejano]);
   }
+});
+
+// --- Migración 064: la oleada 5, toda la ciudad antes de rendirse ----------
+
+test('sin nadie en el barrio, la carrera ya no muere: se ofrece a toda la ciudad', async () => {
+  await cerrarSolicitudesSueltas();
+  const escenario = await montarEscenario();
+  // Un taxi en una zona SUELTA: ni es el barrio del origen, ni su vecina, ni
+  // recibe de toda la isla. Es decir, el reparto normal no lo alcanza nunca.
+  const lejos = (await enTransaccion(pool, (c) =>
+    crearZona(c, `Zona lejana ${randomUUID()}`, 3.80, 8.85))).zonaId;
+  const suelto = await crearConductorEnZona(lejos);
+
+  const solicitudId = await crearSolicitudEn(escenario);
+  const emisor = new EmisorRegistro();
+  const t0 = new Date();
+
+  // Antes de la 064 esto era SIN_OFERTA en el acto: barrio vacío, vecinos
+  // vacíos. Ahora la petición vive, porque hay un taxi en la ciudad al que
+  // todavía se le puede preguntar.
+  const inicio = await iniciarDespacho(pool, emisor, solicitudId, t0);
+  assert.equal(inicio.resultado, 'EMITIDO');
+  assert.equal(inicio.ofertas, 0, 'y no se le ofrece a nadie todavía: no es su turno');
+
+  // A los 60 s sigue sin tocarle: las oleadas del barrio y de los vecinos
+  // tienen que haber pasado primero.
+  await avanzarDespachos(pool, emisor, despues(t0, 61));
+  assert.equal((await ofertasDe(solicitudId)).length, 0);
+
+  // A los 75, ya no queda nadie a quien esperar. Se comprueba que ESTÉ, no
+  // quiénes son todos: la oleada 5 convoca a la ciudad entera, y en la base de
+  // desarrollo la ciudad son también los taxis que dejaron otras pruebas
+  // (P12-03). Que aparezcan es precisamente lo que se está probando.
+  await avanzarDespachos(pool, emisor, despues(t0, 76));
+  const ofertas = await ofertasDe(solicitudId);
+  assert.ok(ofertas.some((o) => String(o.conductorId) === String(suelto) && o.oleada === 5),
+    `el taxi del otro barrio tenía que recibirla: ${JSON.stringify(ofertas)}`);
+  assert.equal(ofertas.every((o) => o.oleada === 5), true, 'y ninguna antes de la 5');
+});
+
+test('si alguien tiene la oferta en la mano, no se convoca a la ciudad', async () => {
+  await cerrarSolicitudesSueltas();
+  const escenario = await montarEscenario();
+  const delBarrio = await crearConductorEnZona(escenario.zonaA);
+  const lejos = (await enTransaccion(pool, (c) =>
+    crearZona(c, `Zona lejana ${randomUUID()}`, 3.81, 8.86))).zonaId;
+  await crearConductorEnZona(lejos);
+
+  const solicitudId = await crearSolicitudEn(escenario);
+  const emisor = new EmisorRegistro();
+  const t0 = new Date();
+  await iniciarDespacho(pool, emisor, solicitudId, t0);
+
+  // El del barrio la tiene delante y no ha contestado. Aunque pasen los 75 s,
+  // nadie más se entera: su respuesta puede llegar, y quitarle la carrera al
+  // que está al lado del pasajero es justo lo que el reparto por oleadas
+  // evita.
+  await avanzarDespachos(pool, emisor, despues(t0, 80));
+  const ofertas = await ofertasDe(solicitudId);
+  assert.deepEqual(ofertas.map((o) => o.conductorId), [delBarrio]);
+  assert.equal(ofertas.every((o) => o.oleada < 5), true);
+});
+
+test('rechazada por todos, la ciudad entera sí se entera', async () => {
+  await cerrarSolicitudesSueltas();
+  const escenario = await montarEscenario();
+  const delBarrio = await crearConductorEnZona(escenario.zonaA);
+  const lejos = (await enTransaccion(pool, (c) =>
+    crearZona(c, `Zona lejana ${randomUUID()}`, 3.82, 8.87))).zonaId;
+  const suelto = await crearConductorEnZona(lejos);
+
+  const solicitudId = await crearSolicitudEn(escenario);
+  const emisor = new EmisorRegistro();
+  const t0 = new Date();
+  await iniciarDespacho(pool, emisor, solicitudId, t0);
+  await rechazarOferta(pool, solicitudId, delBarrio);
+
+  await avanzarDespachos(pool, emisor, despues(t0, 76));
+  const ofertas = await ofertasDe(solicitudId);
+  assert.ok(ofertas.some((o) => o.conductorId === suelto && o.oleada === 5),
+    'ya no hay ninguna oferta viva: es la carrera o nada');
+});
+
+test('con el aviso apagado, el reparto es el de antes', async () => {
+  await cerrarSolicitudesSueltas();
+  await sinTaxisDeTodaLaIsla(pool, () => sinAvisoALaCiudad(pool, async () => {
+    const escenario = await montarEscenario();
+    const lejos = (await enTransaccion(pool, (c) =>
+      crearZona(c, `Zona lejana ${randomUUID()}`, 3.83, 8.88))).zonaId;
+    await crearConductorEnZona(lejos);
+
+    const solicitudId = await crearSolicitudEn(escenario);
+    const emisor = new EmisorRegistro();
+    // El taxi de la otra punta existe, pero el interruptor está a 0: la
+    // petición se cierra en el acto, como antes de la 064.
+    const inicio = await iniciarDespacho(pool, emisor, solicitudId);
+    assert.equal(inicio.resultado, 'SIN_OFERTA');
+  }));
 });
 
 // --- Migración 062: el pasajero elige coche --------------------------------

@@ -13,7 +13,7 @@ import { EmisorRegistro } from '../dominio/eventos.js';
 import { crearZona, guardarReferencia } from '../dominio/gazetteer.js';
 import { procesarClienteAusente } from '../dominio/monedero.js';
 import { ConexionesSse } from '../eventos/adaptador-sse.js';
-import { sinTaxisDeTodaLaIsla } from '../dominio/ayuda-pruebas.js';
+import { sinAvisoALaCiudad, sinTaxisDeTodaLaIsla } from '../dominio/ayuda-pruebas.js';
 import { crearServidor } from './servidor.js';
 
 
@@ -323,9 +323,10 @@ test('salud: el cuadro de mandos evalúa las alarmas y detecta la zona que se qu
 });
 
 test('central: crear una solicitud por teléfono le da dispositivo propio al que llama y es idempotente', async () => {
-  // Espera el corte R1 («zona recién creada y vacía»), así que necesita que
-  // no haya taxistas de «toda la isla» en servicio: ver `sinTaxisDeTodaLaIsla`.
-  await sinTaxisDeTodaLaIsla(pool, async () => {
+  // Espera el corte R1 («zona recién creada y vacía»), así que necesita que no
+  // haya taxistas de «toda la isla» en servicio ni aviso a la ciudad entera
+  // (migración 064): ver `sinTaxisDeTodaLaIsla` y `sinAvisoALaCiudad`.
+  await sinTaxisDeTodaLaIsla(pool, () => sinAvisoALaCiudad(pool, async () => {
   const { origenId, destinoId } = await crearZonaConReferencias();
   const telefono = `+240333${Date.now() % 1000000}${Math.floor(Math.random() * 100)}`;
 
@@ -365,7 +366,7 @@ test('central: crear una solicitud por teléfono le da dispositivo propio al que
     lista.json().solicitudes.some((s: { id: string }) => Number(s.id) === Number(primera.json().solicitudId)),
     'la solicitud de la central tiene que salir en su listado',
   );
-  });
+  }));
 });
 
 test('gazetteer: crear, desactivar (visible para el operador), alias y su quitado ruidoso', async () => {

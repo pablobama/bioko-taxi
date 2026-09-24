@@ -26,6 +26,9 @@
     <!-- Aceptar y rechazar NO se guardan: valen ahora. Una aceptación de hace
          veinte minutos le quitaría la carrera a otro taxista que ya la hizo. -->
     <string name="sin_red_necesita_red">Para aceptar o rechazar una carrera hace falta red.</string>
+    <!-- Oleada 5 (migración 064): la carrera que nadie ha cogido, ofrecida a
+         toda la ciudad antes de darla por perdida. -->
+    <string name="oferta_nadie_la_ha_cogido">Nadie la ha cogido · puede estar lejos</string>
     <string name="canal_ofertas">Ofertas de carrera</string>
     <string name="canal_servicio">En servicio</string>
     <!-- La notificación dice que se está grabando el recorrido. No es un

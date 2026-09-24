@@ -10,7 +10,7 @@ import type pg from 'pg';
 import { crearPool, enTransaccion } from '../bd/conexion.js';
 import { iniciarDespacho, reclamarSolicitud, rechazarOferta } from './despacho.js';
 import { EmisorRegistro } from './eventos.js';
-import { sinTaxisDeTodaLaIsla } from './ayuda-pruebas.js';
+import { sinAvisoALaCiudad, sinTaxisDeTodaLaIsla } from './ayuda-pruebas.js';
 import { crearZona, guardarReferencia } from './gazetteer.js';
 import { ocupacionDe, rutaDe } from './ocupacion.js';
 import { procesarProximidad, registrarPosicion } from './proximidad.js';
@@ -163,8 +163,10 @@ test('el conductor con plazas libres sigue DISPONIBLE y recibe más ofertas', as
 
 test('al llenarse el coche pasa a OCUPADO y deja de recibir ofertas', async () => {
   // Mira el corte R1, así que necesita que no haya taxistas de «toda la isla»
-  // en servicio: ver `sinTaxisDeTodaLaIsla`.
-  await sinTaxisDeTodaLaIsla(pool, async () => {
+  // en servicio ni aviso a la ciudad entera (migración 064): con cualquiera de
+  // los dos, la solicitud no se corta —y hace bien—, pero lo que aquí se mide
+  // es el coche lleno.
+  await sinTaxisDeTodaLaIsla(pool, () => sinAvisoALaCiudad(pool, async () => {
   const escenario = await montarEscenario();
   const conductorId = await crearConductor(escenario.zonaId, 2);
   const emisor = new EmisorRegistro();
@@ -178,7 +180,7 @@ test('al llenarse el coche pasa a OCUPADO y deja de recibir ofertas', async () =
   const nueva = await pedir(escenario);
   const resultado = await iniciarDespacho(pool, emisor, nueva);
   assert.equal(resultado.resultado, 'SIN_OFERTA');
-  });
+  }));
 });
 
 test('al bajarse un pasajero se libera la plaza y vuelve a recibir ofertas', async () => {

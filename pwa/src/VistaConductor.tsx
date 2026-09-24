@@ -301,7 +301,13 @@ export default function VistaConductor({
       {/* Oferta entrante: lo único que importa cuando llega. */}
       {oferta && (
         <div className="oferta">
-          <span className="etiqueta-viva">{t('oferta.nuevaCarrera')}</span>
+          <span className="etiqueta-viva">
+            {/* La oleada 5 (migración 064) no es una carrera más: es una que
+                nadie ha cogido y que está a punto de perderse, casi siempre
+                lejos. Decirlo cambia la decisión —se acepta sabiendo que hay
+                que ir hasta allí— y evita que parezca un reparto injusto. */}
+            {oferta.oleada === 5 ? t('oferta.nadieLaHaCogido') : t('oferta.nuevaCarrera')}
+          </span>
           <div className="pasajero-ruta grande">
             <span className="ruta-desde">{oferta.origen}</span>
             <span className="ruta-hasta">{oferta.destino}</span>

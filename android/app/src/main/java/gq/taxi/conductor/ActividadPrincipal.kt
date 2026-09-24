@@ -332,8 +332,16 @@ class ActividadPrincipal : Activity() {
         vista<View>(R.id.seccion_oferta).visibility = if (oferta != null) View.VISIBLE else View.GONE
         if (oferta != null) {
             solicitudActiva = oferta.getLong("solicitudId")
+            val ruta = "${oferta.optString("origen")} → ${oferta.optString("destino")}"
+            // La oleada 5 (migración 064) es una carrera que nadie ha cogido y
+            // que está a punto de perderse, casi siempre lejos. Decirlo cambia
+            // la decisión: se acepta sabiendo que hay que ir hasta allí.
             vista<TextView>(R.id.texto_oferta).text =
-                "${oferta.optString("origen")} → ${oferta.optString("destino")}"
+                if (oferta.optInt("oleada") == 5) {
+                    getString(R.string.oferta_nadie_la_ha_cogido) + "\n" + ruta
+                } else {
+                    ruta
+                }
             val banda = oferta.optJSONObject("bandaPrecio")
             vista<TextView>(R.id.texto_oferta_banda).text =
                 if (banda == null) "Sin precio orientativo de esta ruta todavía"

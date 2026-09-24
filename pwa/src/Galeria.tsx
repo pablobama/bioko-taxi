@@ -546,6 +546,22 @@ export default function Galeria() {
               }))}
             </Marco>
 
+            <Marco
+              titulo="La que nadie ha cogido"
+              descripcion="Oleada 5 (migración 064): nadie la ha aceptado y está a punto de perderse, así que se ofrece a toda la ciudad. Se dice, porque casi siempre está lejos y eso cambia la decisión."
+            >
+              {conductor(estadoConductor({
+                ofertas: [{
+                  solicitudId: 1235,
+                  origen: 'Mercado SEMU',
+                  destino: catedral.nombre,
+                  oleada: 5,
+                  expiraEn: null,
+                  bandaPrecio: { p25: 1500, p50: 2000, p75: 3000 },
+                }],
+              }))}
+            </Marco>
+
             <Marco titulo="Voy a recogerlo" descripcion="Aceptada. Aún no ve el teléfono del pasajero.">
               {conductor(estadoConductor({
                 plazasLibres: 3,

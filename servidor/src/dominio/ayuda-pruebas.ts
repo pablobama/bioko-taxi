@@ -44,3 +44,33 @@ export async function sinTaxisDeTodaLaIsla<T>(
     }
   }
 }
+
+// Ejecuta una prueba con el aviso a la ciudad entera APAGADO (migración 064).
+//
+// Es el mismo problema que arriba, un escalón más arriba: con el aviso
+// encendido, el corte R1 mira toda la ciudad, así que basta un taxi vivo en
+// cualquier barrio de la base compartida —y en la de desarrollo hay varios,
+// dejados por otras pruebas— para que ninguna solicitud se cierre nunca con
+// «no hay taxi». Eso es lo correcto en producción y hace imposible escribir
+// aquí la prueba del corte.
+//
+// Quien prueba el corte por zona vacía está probando eso. La oleada 5 tiene
+// sus propias pruebas, y precisamente comprueban lo contrario: que con el
+// aviso encendido la carrera NO se cierra.
+export async function sinAvisoALaCiudad<T>(
+  pool: pg.Pool,
+  prueba: () => Promise<T>,
+): Promise<T> {
+  const antes = await pool.query(
+    `SELECT valor FROM parametro WHERE clave = 'aviso_ciudad_entera'`,
+  );
+  const valor = antes.rows[0]?.valor ?? '1';
+  await pool.query(`UPDATE parametro SET valor = '0' WHERE clave = 'aviso_ciudad_entera'`);
+  try {
+    return await prueba();
+  } finally {
+    await pool.query(
+      `UPDATE parametro SET valor = $1 WHERE clave = 'aviso_ciudad_entera'`, [valor],
+    );
+  }
+}

@@ -6,6 +6,9 @@
 //   Oleada 1  t=0    hasta 3 conductores, zona del origen
 //   Oleada 2  t=20   hasta 8 conductores acumulados, zona del origen
 //   Oleada 3  t=45   hasta 8 conductores de zonas adyacentes
+//   Oleada 4  t=60   los que reciben de toda la isla (migración 048)
+//   Oleada 5  t=75   TODA la ciudad, y solo si nadie tiene la carrera en la
+//                    mano: es la carrera o nada (migración 064)
 //   t=90            SIN_OFERTA
 //
 // Todos los umbrales salen de la tabla parametro. La proximidad se modela a
@@ -139,8 +142,15 @@ async function candidatos(
   // se le acabó la suscripción, o se le llenó el coche entre que el pasajero
   // lo eligió y pulsó, no se le oferta y la carrera sigue su camino normal.
   soloConductorId: number | null = null,
+  // Oleada 5 (migración 064): TODOS los taxis en servicio de la ciudad, estén
+  // en el barrio que estén y hayan pedido o no recibir de toda la isla. Va
+  // aparte de `cualquierZona` porque no es lo mismo: aquello respeta lo que
+  // cada taxista eligió, y esto es la llamada de última hora antes de decirle
+  // al pasajero que no hay taxi.
+  todaLaCiudad = false,
 ): Promise<number[]> {
-  if ((zonaIds.length === 0 && !cualquierZona && soloConductorId === null) || limite <= 0) {
+  const sinZona = cualquierZona || todaLaCiudad || soloConductorId !== null;
+  if ((zonaIds.length === 0 && !sinZona) || limite <= 0) {
     return [];
   }
   const ventanaSeg = await leerParametroEntero(cliente, 'ventana_heartbeat_seg');
@@ -160,8 +170,8 @@ async function candidatos(
      CROSS JOIN destino_pedido dp
      WHERE p.estado = 'DISPONIBLE'
        AND ($7::bigint IS NULL OR p.conductor_id = $7)
-       AND ($7::bigint IS NOT NULL OR $6 OR p.zona_id = ANY($2))
-       AND ($7::bigint IS NOT NULL OR $6 IS FALSE OR c.recibe_en_cualquier_zona)
+       AND ($7::bigint IS NOT NULL OR $6 OR $8 OR p.zona_id = ANY($2))
+       AND ($7::bigint IS NOT NULL OR $8 OR $6 IS FALSE OR c.recibe_en_cualquier_zona)
        AND p.ultimo_heartbeat IS NOT NULL
        AND p.ultimo_heartbeat >= $3::timestamptz - make_interval(secs => $4)
        AND c.estado_verificacion = 'verificado'
@@ -189,7 +199,10 @@ async function candidatos(
                 0) ASC,
               c.id ASC
      LIMIT $5`,
-    [solicitudId, zonaIds, ahora, ventanaSeg, limite, cualquierZona, soloConductorId],
+    [
+      solicitudId, zonaIds, ahora, ventanaSeg, limite,
+      cualquierZona, soloConductorId, todaLaCiudad,
+    ],
   );
   return res.rows.map((f) => f.conductor_id);
 }
@@ -255,8 +268,13 @@ async function hayConductoresVivos(
   cliente: pg.ClientBase,
   zonaIds: number[],
   ahora: Date,
+  // Con el aviso a la ciudad entera encendido (migración 064), el corte mira
+  // TODA la ciudad y no solo el barrio y sus vecinos. Si hay un taxi libre en
+  // Semu, cerrar la petición a los cero segundos sería dar por perdido justo
+  // lo que la oleada 5 viene a salvar.
+  todaLaCiudad = false,
 ): Promise<boolean> {
-  if (zonaIds.length === 0) {
+  if (zonaIds.length === 0 && !todaLaCiudad) {
     return false;
   }
   const ventanaSeg = await leerParametroEntero(cliente, 'ventana_heartbeat_seg');
@@ -266,7 +284,7 @@ async function hayConductoresVivos(
      JOIN conductor c ON c.id = p.conductor_id
      JOIN vehiculo v ON v.conductor_id = c.id
      WHERE p.estado IN ('DISPONIBLE', 'OFERTADO')
-       AND (p.zona_id = ANY($1) OR c.recibe_en_cualquier_zona)
+       AND ($4 OR p.zona_id = ANY($1) OR c.recibe_en_cualquier_zona)
        AND p.ultimo_heartbeat IS NOT NULL
        AND p.ultimo_heartbeat >= $2::timestamptz - make_interval(secs => $3)
        AND c.estado_verificacion = 'verificado'
@@ -276,7 +294,7 @@ async function hayConductoresVivos(
             WHERE sp.conductor_id = c.id
               AND sp.estado IN ('ACEPTADO', 'EN_CAMINO', 'RECOGIDO')) < v.plazas
      LIMIT 1`,
-    [zonaIds, ahora, ventanaSeg],
+    [zonaIds, ahora, ventanaSeg, todaLaCiudad],
   );
   return (res.rowCount ?? 0) > 0;
 }
@@ -312,7 +330,9 @@ export async function iniciarDespacho(
     const elegidoVivo = solicitud.conductorElegidoId === null
       ? []
       : await candidatos(cliente, solicitudId, [], 1, ahora, false, solicitud.conductorElegidoId);
-    if (elegidoVivo.length === 0 && !(await hayConductoresVivos(cliente, todasLasZonas, ahora))) {
+    const avisoCiudad = (await leerParametroEntero(cliente, 'aviso_ciudad_entera')) === 1;
+    const hayVivos = await hayConductoresVivos(cliente, todasLasZonas, ahora, avisoCiudad);
+    if (elegidoVivo.length === 0 && !hayVivos) {
       await transicionarSolicitud(cliente, solicitudId, 'SIN_OFERTA', 'sistema', 'zona_vacia');
       await emisor.emitir({
         tipo: 'C3_sin_conductor',
@@ -465,8 +485,46 @@ export async function avanzarDespachos(
         );
         await ofertarA(cliente, emisor, solicitud, nuevos, 4, ahora);
       }
+
+      // Oleada 5 (migración 064): toda la ciudad, y solo antes de rendirse.
+      //
+      // Las dos condiciones son el diseño entero. La del tiempo es obvia; la
+      // otra es la que hace que esto no sea «avisar a todos»: si alguien tiene
+      // la oferta delante y todavía no ha contestado, no se convoca a nadie
+      // más. Su respuesta puede llegar, y quitarle la carrera al que está al
+      // lado del pasajero para dársela al que pulse antes desde el otro
+      // extremo de Malabo es exactamente lo que el reparto por oleadas evita.
+      if (await avisarACiudadEntera(cliente, emisor, solicitud, transcurrido, ahora)) return;
     });
   }
+}
+
+// Devuelve si llegó a convocar a alguien, que es lo que hace las pruebas
+// legibles. Fuera de `avanzarDespachos` para que el tique se lea de un vistazo.
+async function avisarACiudadEntera(
+  cliente: pg.ClientBase,
+  emisor: EmisorEventos,
+  solicitud: SolicitudDespacho,
+  transcurrido: number,
+  ahora: Date,
+): Promise<boolean> {
+  if ((await leerParametroEntero(cliente, 'aviso_ciudad_entera')) !== 1) return false;
+  if (transcurrido < await leerParametroEntero(cliente, 'oleada_5_seg')) return false;
+
+  // «Viva» es una oferta sin respuesta todavía. Una rechazada o expirada no
+  // cuenta: nadie la tiene en la mano.
+  const viva = await cliente.query(
+    'SELECT 1 FROM oferta WHERE solicitud_id = $1 AND resultado IS NULL LIMIT 1',
+    [solicitud.id],
+  );
+  if ((viva.rowCount ?? 0) > 0) return false;
+
+  const tope = await leerParametroEntero(cliente, 'oleada_5_max_conductores');
+  const nuevos = await candidatos(
+    cliente, solicitud.id, [], tope, ahora, false, null, true,
+  );
+  await ofertarA(cliente, emisor, solicitud, nuevos, 5, ahora);
+  return nuevos.length > 0;
 }
 
 export interface ResultadoReclamacion {

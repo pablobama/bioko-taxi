@@ -13,15 +13,6 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   equivocarse en un caso concreto: tres paradas en triángulo donde ir primero
   a la más cercana obliga a volver sobre los propios pasos.
 
-- **[P58-01] El aviso a TODOS los taxistas, no solo a los de la oleada.**
-  Resuelto el hueco técnico (migración 058: la PWA ya recibe notificación con
-  la aplicación cerrada), queda la pregunta de reparto: hoy la carrera se
-  ofrece a tres taxistas, luego a ocho, luego a los barrios vecinos. Avisar a
-  todos los de la ciudad tiene precio —cuarenta móviles sonando por una
-  carrera a doce kilómetros y carrera por pulsar primero— y solo compensa en
-  un caso concreto: cuando la zona está vacía y la petición iba a morir en «no
-  hay taxi». Ese caso sí merece probarse con datos de producción delante.
-
 - **[P58-02] La guía por voz no dice nombres de calle.** Dice el giro y la
   distancia («en doscientos metros, gira a la derecha») porque el plano guarda
   geometría y clase de vía, no rótulos. El nombre está en OSM y se podría
@@ -562,6 +553,29 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   trabajo para el operador, que los va confirmando.
 
 ## Resueltos
+
+- **[P58-01] El aviso a TODOS los taxistas** — resuelto el 2026-09-24
+  (migración 064), y resuelto acotándolo: no se avisa a todos en cada
+  petición, se avisa a todos **antes de rendirse**. La oleada 5 se dispara
+  solo si se cumplen las dos cosas: han pasado 75 s desde la emisión (la
+  expiración está en 90) y no hay NI UNA oferta viva. Si alguien la tiene
+  delante sin contestar, no se convoca a nadie: su respuesta puede llegar, y
+  quitarle la carrera al que está al lado del pasajero para dársela al que
+  pulse antes desde la otra punta es justo lo que el reparto por oleadas
+  evita. Cuando no la tiene nadie, un móvil sonando en Semu no le quita nada a
+  nadie: es la carrera o nada. El corte de R1 pasa a mirar la ciudad entera
+  por la misma razón —cerrar con «no hay taxi» a los cero segundos teniendo un
+  taxi libre en otro barrio sería dar por perdido lo que esto viene a salvar—.
+  Interruptor en `parametro.aviso_ciudad_entera`: a 0, el reparto es
+  exactamente el de antes. Cuatro pruebas en `despacho.prueba.ts`, y las dos
+  aplicaciones dicen «Nadie la ha cogido · puede estar lejos» en esa oferta,
+  porque eso cambia la decisión del taxista. **Lo que cuesta, medido en el
+  diseño y no en producción todavía:** el pasajero de una zona vacía espera
+  hasta 75 s en vez de oír «no hay taxi» al momento, y durante esos últimos
+  quince segundos los taxis convocados quedan OFERTADO —y un taxista solo
+  puede tener una oferta delante (P8-03)—, así que otra petición que entre
+  justo entonces se queda sin a quién ofrecérsela. Con la flota de hoy es raro
+  y dura poco; con muchas peticiones a la vez habrá que revisarlo.
 
 - **[P56-02] «Al volante» ya no supone a qué velocidad se va** — resuelto el
   2026-09-24 (migración 063). Con cada punto del recorrido se guarda la
