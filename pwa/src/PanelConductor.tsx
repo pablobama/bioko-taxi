@@ -744,12 +744,24 @@ export default function PanelConductor({
   const pasajeros = estado?.pasajeros ?? [];
 
   // El mapa del taxista responde a una sola pregunta: ¿a dónde voy ahora?
-  //   - Con alguien por recoger: a su punto de recogida, con la ruta desde
-  //     donde está el coche (el caso inverso al del pasajero).
-  //   - Con todos a bordo: al destino del primero que baja.
-  //   - En servicio y sin nadie: su propio barrio, esperando.
-  const primerPendiente = pasajeros.find((p) => p.estado !== 'RECOGIDO');
-  const primerABordo = pasajeros.find((p) => p.estado === 'RECOGIDO');
+  //
+  // Y la respuesta es EL PRIMERO DE LA LISTA, sea lo que sea: si está por
+  // recoger, su punto de recogida; si va dentro, su destino. El servidor manda
+  // los pasajeros ordenados por lo que toca hacer antes —la parada más cercana
+  // por las calles, sin dejar a nadie antes de subirlo (dominio/paradas.ts)—,
+  // así que aquí no se decide nada.
+  //
+  // Antes esto era «primero todas las recogidas y después los destinos», y con
+  // taxi compartido se notaba: el último en subir podía bajarse a doscientos
+  // metros y la guía llevaba al taxista al otro lado de Malabo con él dentro,
+  // pasando de largo por delante de su puerta.
+  const siguiente = pasajeros[0] ?? null;
+  const primerPendiente = siguiente !== null && siguiente.estado !== 'RECOGIDO'
+    ? siguiente
+    : undefined;
+  const primerABordo = siguiente !== null && siguiente.estado === 'RECOGIDO'
+    ? siguiente
+    : undefined;
   // Dónde está el pasajero AHORA, si su móvil lo está diciendo (P46-01).
   //
   // El punto de la solicitud es de cuando pidió el taxi: puede llevar diez

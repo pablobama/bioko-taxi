@@ -29,6 +29,8 @@ interface SolicitudDespacho {
   id: number;
   estado: string;
   dispositivoClienteId: number;
+  // A quién eligió el pasajero al pedir, si eligió a alguien (migración 062).
+  conductorElegidoId: number | null;
   zonaOrigenId: number;
   zonaDestinoId: number;
   origenNombre: string;
@@ -48,6 +50,7 @@ async function bloquearSolicitud(
     // urbano padre — la unidad de siempre. Un lugar en «Barrio Bisinga» no
     // se queda sin taxis solo porque el barrio en sí no tiene vecinas.
     `SELECT s.id, s.estado, s.dispositivo_cliente_id, s.expira_en,
+            s.conductor_elegido_id,
             COALESCE(zo.zona_padre_id, zo.id) AS zona_origen_id, ro.nombre AS origen_nombre,
             COALESCE(zd.zona_padre_id, zd.id) AS zona_destino_id, rd.nombre AS destino_nombre
      FROM solicitud s
@@ -67,6 +70,8 @@ async function bloquearSolicitud(
     id: fila.id,
     estado: fila.estado,
     dispositivoClienteId: fila.dispositivo_cliente_id,
+    conductorElegidoId: fila.conductor_elegido_id === null
+      ? null : Number(fila.conductor_elegido_id),
     zonaOrigenId: fila.zona_origen_id,
     zonaDestinoId: fila.zona_destino_id,
     origenNombre: fila.origen_nombre,
@@ -128,8 +133,14 @@ async function candidatos(
   // reciben de toda la isla. Va aparte y no como «zonaIds vacío» para que sea
   // imposible convocar a media flota por un array vacío en otra llamada.
   cualquierZona = false,
+  // Oleada 0 (migración 062): el coche que eligió el pasajero, y solo ese.
+  // También ignora el barrio —se eligió de una lista que ya incluía los
+  // vecinos— pero pasa por TODOS los demás filtros: si no está disponible, o
+  // se le acabó la suscripción, o se le llenó el coche entre que el pasajero
+  // lo eligió y pulsó, no se le oferta y la carrera sigue su camino normal.
+  soloConductorId: number | null = null,
 ): Promise<number[]> {
-  if ((zonaIds.length === 0 && !cualquierZona) || limite <= 0) {
+  if ((zonaIds.length === 0 && !cualquierZona && soloConductorId === null) || limite <= 0) {
     return [];
   }
   const ventanaSeg = await leerParametroEntero(cliente, 'ventana_heartbeat_seg');
@@ -148,8 +159,9 @@ async function candidatos(
      JOIN vehiculo v ON v.conductor_id = c.id
      CROSS JOIN destino_pedido dp
      WHERE p.estado = 'DISPONIBLE'
-       AND ($6 OR p.zona_id = ANY($2))
-       AND ($6 IS FALSE OR c.recibe_en_cualquier_zona)
+       AND ($7::bigint IS NULL OR p.conductor_id = $7)
+       AND ($7::bigint IS NOT NULL OR $6 OR p.zona_id = ANY($2))
+       AND ($7::bigint IS NOT NULL OR $6 IS FALSE OR c.recibe_en_cualquier_zona)
        AND p.ultimo_heartbeat IS NOT NULL
        AND p.ultimo_heartbeat >= $3::timestamptz - make_interval(secs => $4)
        AND c.estado_verificacion = 'verificado'
@@ -177,7 +189,7 @@ async function candidatos(
                 0) ASC,
               c.id ASC
      LIMIT $5`,
-    [solicitudId, zonaIds, ahora, ventanaSeg, limite, cualquierZona],
+    [solicitudId, zonaIds, ahora, ventanaSeg, limite, cualquierZona, soloConductorId],
   );
   return res.rows.map((f) => f.conductor_id);
 }
@@ -294,7 +306,13 @@ export async function iniciarDespacho(
 
     const adyacentes = await zonasAdyacentes(cliente, solicitud.zonaOrigenId);
     const todasLasZonas = [solicitud.zonaOrigenId, ...adyacentes];
-    if (!(await hayConductoresVivos(cliente, todasLasZonas, ahora))) {
+    // El coche elegido cuenta como vivo aunque no esté en el barrio: se eligió
+    // de una lista que incluía los vecinos y los de toda la isla, y cortar la
+    // carrera con «no hay taxi» justo después de elegirlo sería absurdo.
+    const elegidoVivo = solicitud.conductorElegidoId === null
+      ? []
+      : await candidatos(cliente, solicitudId, [], 1, ahora, false, solicitud.conductorElegidoId);
+    if (elegidoVivo.length === 0 && !(await hayConductoresVivos(cliente, todasLasZonas, ahora))) {
       await transicionarSolicitud(cliente, solicitudId, 'SIN_OFERTA', 'sistema', 'zona_vacia');
       await emisor.emitir({
         tipo: 'C3_sin_conductor',
@@ -312,6 +330,14 @@ export async function iniciarDespacho(
     solicitud.expiraEn = expiraEn;
 
     await transicionarSolicitud(cliente, solicitudId, 'EMITIDO', 'sistema', 'primera_oleada');
+
+    // Oleada 0 (migración 062): si el pasajero eligió coche y ese coche puede
+    // recibirla, va a él SOLO. Las oleadas normales esperan su turno en
+    // `avanzarDespachos`.
+    if (elegidoVivo.length > 0) {
+      await ofertarA(cliente, emisor, solicitud, elegidoVivo, 0, ahora);
+      return { resultado: 'EMITIDO' as const, ofertas: elegidoVivo.length };
+    }
 
     const maximoOleada1 = await leerParametroEntero(cliente, 'oleada_1_max_conductores');
     const oleada1 = await candidatos(cliente, solicitudId, [solicitud.zonaOrigenId], maximoOleada1, ahora);
@@ -379,6 +405,16 @@ export async function avanzarDespachos(
         await expirarSolicitud(cliente, emisor, solicitud);
         return;
       }
+
+      // La exclusiva del coche elegido (migración 062): mientras dura, no se
+      // ofrece a nadie más. Pasada, el reparto normal arranca como si nada, y
+      // el elegido se queda con su oferta: puede aceptarla hasta que caduque.
+      const elegidoSeg = await leerParametroEntero(cliente, 'oleada_elegido_seg');
+      const ofertaElegido = await cliente.query(
+        'SELECT 1 FROM oferta WHERE solicitud_id = $1 AND oleada = 0 LIMIT 1',
+        [solicitud.id],
+      );
+      if ((ofertaElegido.rowCount ?? 0) > 0 && transcurrido < elegidoSeg) return;
 
       const porOleada = await cliente.query(
         `SELECT oleada, count(*)::int AS n FROM oferta WHERE solicitud_id = $1 GROUP BY oleada`,

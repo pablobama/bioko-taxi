@@ -26,6 +26,8 @@ import { llegadaDeViaje } from '../dominio/llegada.js';
 import {
   borrarSuscripcion, clavesVapid, guardarSuscripcion,
 } from '../dominio/notificaciones.js';
+import { ordenarParadas, distanciaRectaM, type ParadaPendiente } from '../dominio/paradas.js';
+import { rutaParaLlegar } from '../dominio/carreteras.js';
 import { puntoDeRecogida } from '../dominio/recogida.js';
 import { recargasDe, solicitarRecarga } from '../dominio/recargas.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
@@ -741,6 +743,8 @@ export function registrarRutasConductor(
       ultimaPosicion.set(String(p.viaje_id), { lat: Number(p.lat), lng: Number(p.lng) });
     }
 
+    const coche = ultimaPosicion.values().next().value ?? null;
+
     const relojSeg = await enTransaccion(pool, (c) => relojEsperaSeg(c, sesion.conductorId));
     const ocupacion = await ocupacionDe(pool, sesion.conductorId);
     const suscripcion = await pool.query(
@@ -767,7 +771,7 @@ export function registrarRutasConductor(
         expiraEn: o.expira_en,
         bandaPrecio: o.p50 === null ? null : { p25: Number(o.p25), p50: Number(o.p50), p75: Number(o.p75) },
       })),
-      pasajeros: await Promise.all(pasajeros.rows.map(async (fila) => {
+      pasajeros: await ordenarPasajeros(await Promise.all(pasajeros.rows.map(async (fila) => {
         const recogida = puntoDeRecogida({
           referenciaLat: Number(fila.ref_origen_lat),
           referenciaLng: Number(fila.ref_origen_lng),
@@ -817,9 +821,51 @@ export function registrarRutasConductor(
         etaMin: llegada?.minutos ?? null,
         distanciaM: llegada?.distanciaM ?? null,
         };
-      })),
+      })), coche),
     };
   });
+
+  // El orden en que le toca hacer las paradas (24/09). Ver dominio/paradas.ts:
+  // lo siguiente es lo que tiene más a mano, y a nadie se le deja antes de
+  // subirlo. La lista sale ya ordenada, así que la pantalla del taxista —que
+  // coge el primero para la guía y el plano— no tiene que decidir nada.
+  //
+  // Se mide POR LAS CALLES, no en recta: en la cuadrícula del centro, con sus
+  // sentidos únicos, el destino «más cerca» en recta puede estar a tres
+  // manzanas de rodeo. Si el grafo no sabe llegar (fuera del plano), vale la
+  // recta, que es lo que había.
+  type Pasajero = { solicitudId: number; estado: string; origen: string;
+    origenLat: number; origenLng: number; destino: string;
+    destinoLat: number; destinoLng: number };
+  async function ordenarPasajeros<T extends Pasajero>(
+    lista: T[],
+    coche: { lat: number; lng: number } | null,
+  ): Promise<T[]> {
+    if (lista.length <= 1 || coche === null) return lista;
+    const paradas: ParadaPendiente[] = lista.map((p) => (p.estado === 'RECOGIDO'
+      ? {
+        solicitudId: Number(p.solicitudId), tipo: 'destino' as const,
+        lat: p.destinoLat, lng: p.destinoLng, nombre: p.destino,
+      }
+      : {
+        solicitudId: Number(p.solicitudId), tipo: 'recogida' as const,
+        lat: p.origenLat, lng: p.origenLng, nombre: p.origen,
+      }));
+    const porCalles = (desde: { lat: number; lng: number }, hasta: { lat: number; lng: number }) => {
+      const camino = rutaParaLlegar(desde, hasta);
+      const recta = distanciaRectaM(desde, hasta);
+      // Un rodeo disparatado del grafo (enganche en la calzada equivocada) no
+      // puede decidir el orden: ahí manda la recta, igual que en la ETA.
+      return camino !== null && camino.distanciaM <= recta * 3 + 500
+        ? camino.distanciaM
+        : recta;
+    };
+    const ordenadas = ordenarParadas(coche, paradas, porCalles);
+    const porSolicitud = new Map(lista.map((p) => [Number(p.solicitudId), p]));
+    return ordenadas
+      .map((p) => porSolicitud.get(p.solicitudId))
+      .filter((p): p is T => p !== undefined);
+  }
 
   // --- Ciclo del viaje ----------------------------------------------------
 

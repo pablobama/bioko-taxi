@@ -318,6 +318,68 @@ body {
 
 /* --------------------------------------------- cobertura agregada --- */
 
+/* Elegir coche (migración 062). Una fila por coche: el tiempo grande a la
+   izquierda —es por lo que se elige— y el coche y sus extras al lado. Sin
+   ninguna posición, aquí ni en ningún sitio.
+
+   Tope de altura con desplazamiento: con quince taxis libres la lista se
+   comería la pantalla y el botón de pedir quedaría fuera. */
+.coches ul {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 34dvh;
+  overflow-y: auto;
+}
+
+.coche {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 58px 1fr;
+  grid-template-areas: 'tiempo que' 'tiempo mas';
+  align-items: center;
+  gap: 0 10px;
+  text-align: left;
+  padding: 9px 11px;
+  border-radius: 13px;
+  border: 1px solid var(--borde);
+  background: var(--tarjeta);
+  color: var(--hueso);
+  font-family: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.coche.elegido {
+  border-color: var(--ambar);
+  background: rgba(255, 176, 32, 0.12);
+}
+
+.coche-tiempo {
+  grid-area: tiempo;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--ambar);
+  font-variant-numeric: tabular-nums;
+}
+
+.coche-que { grid-area: que; }
+
+.coche-mas {
+  grid-area: mas;
+  color: var(--humo);
+  font-size: 0.78rem;
+}
+
+.nota-pequena {
+  color: var(--humo);
+  font-size: 0.78rem;
+  margin-top: 2px;
+}
+
 /* Cuántos taxis pueden venir, encima del botón de pedir. Nunca posiciones: el
    razonamiento está en la migración 023. */
 .cobertura {

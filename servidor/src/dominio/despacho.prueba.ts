@@ -20,6 +20,7 @@ import { caducarPresencias, registrarHeartbeat } from './presencia.js';
 import { crearZona, declararAdyacencia, guardarReferencia } from './gazetteer.js';
 import { recargar } from './monedero.js';
 import { crearSolicitud } from './transiciones.js';
+import { sinTaxisDeTodaLaIsla } from './ayuda-pruebas.js';
 
 
 // Teléfono de pruebas que PUEDE existir: nueve dígitos locales, como los de
@@ -241,6 +242,7 @@ test('ACEPTACIÓN: dos aceptaciones simultáneas — exactamente una gana y la o
 });
 
 test('R1: zona sin nadie conectado (ni adyacentes) → SIN_OFERTA inmediato', async () => {
+  await sinTaxisDeTodaLaIsla(pool, async () => {
   const escenario = await montarEscenario(); // sin conductores en A ni B
   const solicitudId = await crearSolicitudEn(escenario);
   const emisor = new EmisorRegistro();
@@ -257,6 +259,7 @@ test('R1: zona sin nadie conectado (ni adyacentes) → SIN_OFERTA inmediato', as
     [solicitudId],
   );
   assert.equal(transiciones.rows[0].n, 0);
+  });
 });
 
 test('oleadas: 3 más prioritarios → hasta 8 en zona → adyacentes → SIN_OFERTA a los 90 s', async () => {
@@ -334,6 +337,9 @@ test('zona del origen vacía pero adyacente con conductores: se emite y la olead
 });
 
 test('heartbeat: el conductor con heartbeat vencido no recibe ofertas; tras refrescar, sí', async () => {
+  // También mira el corte R1, así que necesita que no haya ningún taxista de
+  // «toda la isla» en servicio: ver `sinTaxisDeTodaLaIsla`.
+  await sinTaxisDeTodaLaIsla(pool, async () => {
   const escenario = await montarEscenario();
   const dormido = await crearConductorEnZona(escenario.zonaA, { desfaseHeartbeatSeg: 130 });
   const solicitudId = await crearSolicitudEn(escenario);
@@ -350,6 +356,7 @@ test('heartbeat: el conductor con heartbeat vencido no recibe ofertas; tras refr
   const inicio2 = await iniciarDespacho(pool, emisor, solicitud2, new Date());
   assert.equal(inicio2.resultado, 'EMITIDO');
   assert.equal(inicio2.ofertas, 1);
+  });
 });
 
 test('el conductor sin suscripción vigente no recibe broadcasts (migración 011)', async () => {
@@ -664,4 +671,71 @@ test('cualquier zona: la oleada 4 llega DESPUÉS de la de los barrios vecinos, n
   } finally {
     await pool.query('UPDATE conductor SET recibe_en_cualquier_zona = false WHERE id = $1', [lejano]);
   }
+});
+
+// --- Migración 062: el pasajero elige coche --------------------------------
+
+async function pedirEligiendo(escenario: Escenario, conductorId: number): Promise<number> {
+  const creada = await enTransaccion(pool, (c) => crearSolicitud(c, {
+    dispositivoClienteId: dispositivoClienteId,
+    telefonoCliente: '+240222999993',
+    referenciaOrigenId: escenario.refOrigen,
+    referenciaDestinoId: escenario.refDestino,
+    actor: 'cliente',
+    claveIdempotencia: `elige-${randomUUID()}`,
+    conductorElegidoId: conductorId,
+  }));
+  return creada.solicitudId;
+}
+
+test('el coche elegido recibe la carrera en exclusiva, y solo unos segundos', async () => {
+  await cerrarSolicitudesSueltas();
+  const escenario = await montarEscenario();
+  const elegido = await crearConductorEnZona(escenario.zonaA);
+  const otro = await crearConductorEnZona(escenario.zonaA);
+
+  const solicitudId = await pedirEligiendo(escenario, elegido);
+  const emisor = new EmisorRegistro();
+  const t0 = new Date();
+  await iniciarDespacho(pool, emisor, solicitudId, t0);
+
+  // Oleada 0: solo él. El otro está en el mismo barrio y no la ve todavía.
+  let ofertas = await ofertasDe(solicitudId);
+  assert.deepEqual(ofertas.map((o) => o.conductorId), [elegido]);
+  assert.equal(ofertas[0].oleada, 0);
+
+  // Mientras dura su exclusiva (20 s), sigue siendo el único.
+  await avanzarDespachos(pool, emisor, despues(t0, 10));
+  ofertas = await ofertasDe(solicitudId);
+  assert.equal(ofertas.length, 1, 'durante la exclusiva no se ofrece a nadie más');
+
+  // Pasada, el reparto normal arranca: el otro la recibe.
+  await avanzarDespachos(pool, emisor, despues(t0, 25));
+  ofertas = await ofertasDe(solicitudId);
+  assert.ok(ofertas.some((o) => o.conductorId === otro),
+    'si el elegido no la coge, la carrera sigue su camino');
+  // Y el elegido conserva la suya: puede aceptarla hasta que caduque.
+  assert.ok(ofertas.some((o) => o.conductorId === elegido && o.oleada === 0));
+});
+
+test('elegir un coche que ya no puede no deja la carrera sin reparto', async () => {
+  // Entre elegir y pulsar pasan segundos, y en ese rato el taxi puede coger
+  // otra carrera o salir de servicio. La elección se cae y el reparto normal
+  // empieza en el acto, sin esperar la exclusiva de alguien que no está.
+  await cerrarSolicitudesSueltas();
+  const escenario = await montarEscenario();
+  const elegido = await crearConductorEnZona(escenario.zonaA);
+  const otro = await crearConductorEnZona(escenario.zonaA);
+  await pool.query(
+    `UPDATE presencia SET estado = 'DESCONECTADO' WHERE conductor_id = $1`, [elegido],
+  );
+
+  const solicitudId = await pedirEligiendo(escenario, elegido);
+  const emisor = new EmisorRegistro();
+  const inicio = await iniciarDespacho(pool, emisor, solicitudId, new Date());
+  assert.equal(inicio.resultado, 'EMITIDO');
+
+  const ofertas = await ofertasDe(solicitudId);
+  assert.deepEqual(ofertas.map((o) => o.conductorId), [otro],
+    'la oleada 1 normal, desde el primer segundo');
 });

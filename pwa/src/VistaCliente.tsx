@@ -2,8 +2,13 @@
 // taxista, separada del panel para que la galería de diseños pueda mostrar
 // todos los estados sin duplicar el maquetado.
 
-import type { DestinoSugerido, DetalleSolicitud, ReferenciaSugerida, TaxisCerca } from './api';
-import CompartirViaje from './CompartirViaje';
+import type {
+  DestinoSugerido,
+  DetalleSolicitud,
+  ReferenciaSugerida,
+  TaxisCerca,
+  TaxiElegible,
+} from './api';
 import IconoCategoria from './IconoCategoria';
 import type { crearT } from './i18n';
 import AvisoSinRed from './AvisoSinRed';
@@ -25,6 +30,7 @@ export interface AccionesCliente {
   alQuitarOrigen: () => void;
   alLlamar: () => void;
   alElegirDestino: (destino: DestinoSugerido) => void;
+  alElegirCoche: (conductorId: number) => void;
   alEscribirDestino: () => void;
 }
 
@@ -43,6 +49,9 @@ export interface PropiedadesVistaCliente {
   // origen, o sin conexión): entonces no se dice nada, que es más honesto que
   // enseñar un cero o un número viejo.
   taxisCerca: TaxisCerca | null;
+  // Los coches que podrían venir y cuál está elegido (migración 062).
+  elegibles?: TaxiElegible[];
+  elegido?: number | null;
   valorada: boolean;
   aviso?: string;
   t: T;
@@ -79,6 +88,7 @@ function Estrellas({ media, valoraciones, t }: { media: number | null; valoracio
 
 export default function VistaCliente({
   fase, detalle, origen, destino, gpsResuelto, origenEnGps = false, hayCoordenadas, taxisCerca,
+  elegibles = [], elegido = null,
   valorada, aviso, t, sugeridos, escribiendo, puedeDeshacer, segundosGracia,
   buscadorDestino, buscadorOrigen, plegada = false, sinRed = null, acciones,
 }: PropiedadesVistaCliente & { acciones: AccionesCliente }) {
@@ -185,13 +195,57 @@ export default function VistaCliente({
               )
           )}
 
+          {/* Elegir coche (migración 062). Antes no se elegía nada: se pedía
+              y el sistema ofrecía la carrera en oleadas al barrio. Sigue
+              siendo lo normal —«el que antes llegue» está elegido de fábrica—
+              porque es lo más rápido y lo más justo para el taxista; pero
+              quien prefiera esperar tres minutos más por un coche con aire, o
+              por el que mejor valoran, ahora puede.
+
+              Lo que se ve de cada coche: qué es, cómo lo valoran y cuánto
+              tardaría. NUNCA dónde está: un punto que se puede seguir en un
+              mapa es una herramienta de acoso, y ver un taxi a cien metros
+              invita a bajar a pararlo en la calle, donde la plataforma no
+              cobra. Un tiempo estimado no se puede seguir. */}
+          {origen && elegibles.length > 0 && (
+            <div className="coches">
+              <p className="nota-pequena">{t('coches.elige')}</p>
+              <ul>
+                {elegibles.map((coche) => (
+                  <li key={coche.conductorId}>
+                    <button
+                      type="button"
+                      className={elegido === coche.conductorId ? 'coche elegido' : 'coche'}
+                      aria-pressed={elegido === coche.conductorId}
+                      onClick={() => acciones.alElegirCoche(coche.conductorId)}
+                    >
+                      <span className="coche-tiempo">
+                        {coche.etaMin === null ? '—' : t('coches.min', { n: coche.etaMin })}
+                      </span>
+                      <span className="coche-que">
+                        <strong>{coche.marca ?? t('coches.taxi')}</strong>
+                        {coche.color && ` · ${coche.color}`}
+                        {coche.carroceria && ` · ${coche.carroceria}`}
+                      </span>
+                      <span className="coche-mas">
+                        {coche.valoracion !== null && `★ ${coche.valoracion.toFixed(1)} `}
+                        {coche.aireAcondicionado && `· ${t('coches.aire')} `}
+                        {coche.plazas > 1 && `· ${t('coches.plazas', { n: coche.plazas })}`}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <button
             type="button"
             className="principal grande"
             disabled={!origen || !destino}
             onClick={acciones.alPedir}
           >
-            {t('accion.pedirTaxi')}
+            {elegido === null ? t('accion.pedirTaxi') : t('accion.pedirEsteCoche')}
           </button>
         </>
       )}
@@ -202,7 +256,6 @@ export default function VistaCliente({
           <p className="nota">
             {detalle ? t('esperando.hacia', { destino: detalle.destino }) : ''}
           </p>
-          <p className="nota">{t('esperando.nota')}</p>
           {/* Un toque sin querer en «Pedir taxi» crea una solicitud de verdad.
               Durante unos segundos el botón de salir se ofrece grande y con el
               nombre de lo que la persona quiere hacer —deshacer— en vez de
@@ -319,17 +372,12 @@ export default function VistaCliente({
             {t('llamada.llamar')} <small>{t('llamada.privada')}</small>
           </button>
 
-          {/* «Mírame llegar» (migración 043). Aquí abajo y no arriba del todo
-              a propósito: lo primero que el pasajero necesita ver es qué coche
-              viene y poder llamar al taxista. */}
-          <CompartirViaje solicitudId={detalle.solicitudId} t={t} />
-
-          <p className="nota">
-            {detalle.estado === 'RECOGIDO'
-              ? t('asignado.notaRecogido')
-              : t('asignado.notaEsperando')}
-            {detalle.taxi && t('asignado.tiempoAproximado')}
-          </p>
+          {/* «Mírame llegar» (migración 043) ya no vive aquí: es un botón
+              flotante sobre el plano, como los demás (24/09). Y con él se
+              fueron sus párrafos de explicación: quien va en un taxi mirando
+              el móvil no lee instrucciones, y cada línea de texto empujaba
+              hacia abajo lo único que de verdad busca —qué coche viene, el
+              PIN y el botón de llamar—. */}
 
           {/* Con reloj de verdad. Antes ponía «gratis el primer minuto» sin
               decir por qué segundo iba, así que no se sabía si cancelar salía

@@ -493,6 +493,23 @@ export interface ParametroOperador {
 }
 
 // Cobertura agregada (migración 023). Conteos por zona, nunca posiciones.
+// Un coche que podría venir, para elegirlo (migración 062). Sin posiciones:
+// qué coche es, cómo lo valoran y cuánto tardaría.
+export interface TaxiElegible {
+  conductorId: number;
+  marca: string | null;
+  color: string | null;
+  carroceria: string | null;
+  plazas: number;
+  aireAcondicionado: boolean;
+  seguro: boolean;
+  valoracion: number | null;
+  valoraciones: number;
+  etaMin: number | null;
+  distanciaM: number | null;
+  enTuZona: boolean;
+}
+
 export interface TaxisCerca {
   zona: string;
   zonaId: number;
@@ -751,10 +768,17 @@ export const api = {
     origenId: number,
     destinoId: number,
     coordenadas: { lat: number; lng: number } | null,
+    // El coche elegido, si eligió uno (migración 062).
+    conductorElegidoId?: number | null,
   ) =>
     pedirJson<{ solicitudId: number; estado: string; yaExistia: boolean }>('/api/solicitudes', {
       method: 'POST',
-      body: JSON.stringify({ origenId, destinoId, ...(coordenadas ?? {}) }),
+      body: JSON.stringify({
+        origenId,
+        destinoId,
+        ...(coordenadas ?? {}),
+        ...(conductorElegidoId ? { conductorElegidoId } : {}),
+      }),
     }),
 
   estado: (solicitudId: number) =>
@@ -876,6 +900,9 @@ export const api = {
   // 90 s. Nunca dónde está ninguno.
   taxisCerca: (origenId: number) =>
     pedirJson<TaxisCerca>(`/api/taxis-cerca?origenId=${origenId}`),
+
+  taxisElegibles: (origenId: number) =>
+    pedirJson<{ taxis: TaxiElegible[] }>(`/api/taxis-elegibles?origenId=${origenId}`),
 
   // Dónde se está pidiendo taxi, por barrio. Solo en servicio.
   demandaConductor: () =>

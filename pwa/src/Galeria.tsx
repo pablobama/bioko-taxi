@@ -32,7 +32,7 @@ const NADA = () => undefined;
 
 const accionesCliente: AccionesCliente = {
   alAbrirAjustes: NADA, alAbrirEstadisticas: NADA, alPedir: NADA, alBajar: NADA,
-  alCancelar: NADA, alLimpiar: NADA, alValorar: NADA, alQuitarOrigen: NADA, alLlamar: NADA, alElegirDestino: NADA, alEscribirDestino: NADA,
+  alCancelar: NADA, alLimpiar: NADA, alValorar: NADA, alQuitarOrigen: NADA, alLlamar: NADA, alElegirDestino: NADA, alElegirCoche: NADA, alEscribirDestino: NADA,
 };
 
 const accionesConductor: AccionesConductor = {

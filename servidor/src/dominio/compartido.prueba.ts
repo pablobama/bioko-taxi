@@ -10,6 +10,7 @@ import type pg from 'pg';
 import { crearPool, enTransaccion } from '../bd/conexion.js';
 import { iniciarDespacho, reclamarSolicitud, rechazarOferta } from './despacho.js';
 import { EmisorRegistro } from './eventos.js';
+import { sinTaxisDeTodaLaIsla } from './ayuda-pruebas.js';
 import { crearZona, guardarReferencia } from './gazetteer.js';
 import { ocupacionDe, rutaDe } from './ocupacion.js';
 import { procesarProximidad, registrarPosicion } from './proximidad.js';
@@ -161,6 +162,9 @@ test('el conductor con plazas libres sigue DISPONIBLE y recibe más ofertas', as
 });
 
 test('al llenarse el coche pasa a OCUPADO y deja de recibir ofertas', async () => {
+  // Mira el corte R1, así que necesita que no haya taxistas de «toda la isla»
+  // en servicio: ver `sinTaxisDeTodaLaIsla`.
+  await sinTaxisDeTodaLaIsla(pool, async () => {
   const escenario = await montarEscenario();
   const conductorId = await crearConductor(escenario.zonaId, 2);
   const emisor = new EmisorRegistro();
@@ -174,6 +178,7 @@ test('al llenarse el coche pasa a OCUPADO y deja de recibir ofertas', async () =
   const nueva = await pedir(escenario);
   const resultado = await iniciarDespacho(pool, emisor, nueva);
   assert.equal(resultado.resultado, 'SIN_OFERTA');
+  });
 });
 
 test('al bajarse un pasajero se libera la plaza y vuelve a recibir ofertas', async () => {
@@ -395,4 +400,31 @@ test('GPS con un solo pasajero pendiente: la recogida automática sí funciona',
 
   await procesarProximidad(pool, emisor, t0);
   assert.equal(await estadoSolicitud(pendiente), 'RECOGIDO');
+});
+
+// --- 24/09: el orden de las paradas es el de bajada, no el de subida --------
+
+test('la ruta del coche va por cercanía: el último en subir puede bajarse primero', async () => {
+  // Lo que pidió quien conduce. El pasajero 1 sube primero y se baja LEJOS; el
+  // pasajero 2 sube después y se baja pegado al coche. Con el orden de subida,
+  // la guía llevaba al taxista al destino lejano con el otro dentro, pasando
+  // de largo por delante de su puerta.
+  const escenario = await montarEscenario();
+  const conductorId = await crearConductor(escenario.zonaId, 4);
+  const primero = await subirPasajero(escenario, conductorId, escenario.destinoLejanoId);
+  const segundo = await subirPasajero(escenario, conductorId, escenario.destinoId);
+
+  // Sin saber dónde está el coche, el orden es el de subida: no hay desde
+  // dónde medir y no se inventa nada.
+  const sinPosicion = await rutaDe(pool, conductorId);
+  assert.deepEqual(
+    sinPosicion.map((p) => Number(p.solicitudId)), [Number(primero), Number(segundo)],
+  );
+
+  // Con el coche en el origen, manda la cercanía: primero el de al lado.
+  const conPosicion = await rutaDe(pool, conductorId, { lat: 3.75, lng: 8.78 });
+  assert.deepEqual(
+    conPosicion.map((p) => Number(p.solicitudId)), [Number(segundo), Number(primero)],
+    'el que se baja al lado va antes, aunque subiera después',
+  );
 });

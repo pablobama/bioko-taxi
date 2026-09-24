@@ -101,7 +101,6 @@ export default function CompartirViaje({ solicitudId, t }: { solicitudId: number
           <button type="button" className="secundario" disabled={ocupado} onClick={compartir}>
             {t('seguir.compartir')}
           </button>
-          <p className="nota">{t('seguir.explicacion')} {t('seguir.soloVerificados')}</p>
         </>
       )}
 
@@ -116,15 +115,13 @@ export default function CompartirViaje({ solicitudId, t }: { solicitudId: number
               {copiado ? t('seguir.copiado') : t('seguir.copiar')}
             </button>
           )}
-          {(estado?.visitas.length ?? 0) === 0 ? (
-            <p className="nota">{t('seguir.nadieMira')}</p>
-          ) : (
-            <>
-              <p className="nota">{t('seguir.mirando')}</p>
-              <ul className="ruta">
-                {estado?.visitas.map((v) => <li key={v.telefono}>{v.telefono}</li>)}
-              </ul>
-            </>
+          {/* Quién está mirando sí se queda: no es una instrucción, es el
+              control de quien comparte. Si aparece un número que no reconoce,
+              su enlace anda donde no debería y lo corta desde aquí. */}
+          {(estado?.visitas.length ?? 0) > 0 && (
+            <ul className="ruta">
+              {estado?.visitas.map((v) => <li key={v.telefono}>{v.telefono}</li>)}
+            </ul>
           )}
           <button type="button" className="tenue" disabled={ocupado} onClick={cortar}>
             {t('seguir.cortar')}

@@ -13,6 +13,7 @@
 
 import type pg from 'pg';
 import { leerParametroEntero } from './parametros.js';
+import { estimarLlegada } from './llegada.js';
 
 export interface TaxisCerca {
   // Zona del punto de recogida, para poder nombrarla al contestar.
@@ -175,4 +176,135 @@ export async function demandaPorZona(
     })),
     ventanaMin,
   };
+}
+
+// --- Elegir coche (24/09) ---------------------------------------------------
+
+export interface TaxiElegible {
+  // Hace falta para poder pedir ESE coche. No dice nada de la persona: es un
+  // número de fila, y el nombre y la matrícula ya se entregan al asignarlo.
+  conductorId: number;
+  marca: string | null;
+  color: string | null;
+  carroceria: string | null;
+  plazas: number;
+  aireAcondicionado: boolean;
+  seguro: boolean;
+  valoracion: number | null;
+  valoraciones: number;
+  // Lo que se estima que tardaría en llegar a por esta persona. null si el
+  // coche no ha mandado posición reciente: entonces no se sabe, y decir un
+  // número inventado sería peor.
+  etaMin: number | null;
+  distanciaM: number | null;
+  // Si va a llegar desde el barrio del pasajero o desde uno vecino. Es la
+  // única pista de sitio que se da, y es la que ya daba el conteo.
+  enTuZona: boolean;
+}
+
+// Los taxis que PODRÍAN venir a por alguien que sale de esta referencia, uno a
+// uno, para que el pasajero elija.
+//
+// Es el mismo conteo de `taxisCercaDe` abierto en filas, con los mismos
+// filtros —si aquí apareciera un taxi que el reparto va a descartar, se le
+// estaría ofreciendo un coche que no puede venir— más lo que hace falta para
+// decidir: qué coche es, cómo lo valoran y cuánto tardaría.
+//
+// LO QUE NO SE DA, y es deliberado: ninguna posición, ni el nombre, ni el
+// teléfono, ni la matrícula. La regla de la migración 023 sigue entera —un
+// punto que se puede seguir en un mapa es una herramienta de acoso, y ver un
+// taxi a cien metros invita a bajar a pararlo en la calle, donde la plataforma
+// no cobra—. Un tiempo estimado no se puede seguir.
+export async function taxisElegiblesDe(
+  cliente: pg.ClientBase | pg.Pool,
+  referenciaId: number,
+  limite = 8,
+): Promise<TaxiElegible[]> {
+  const zona = await cliente.query(
+    `SELECT COALESCE(z.zona_padre_id, z.id)::int AS id
+     FROM referencia r JOIN zona z ON z.id = r.zona_id
+     WHERE r.id = $1`,
+    [referenciaId],
+  );
+  if (zona.rowCount === 0) return [];
+  const zonaId: number = zona.rows[0].id;
+  const ventanaSeg = await leerParametroEntero(cliente, 'ventana_heartbeat_seg');
+  const frescuraSeg = await leerParametroEntero(cliente, 'gps_frescura_seg');
+
+  const res = await cliente.query(
+    `SELECT c.id AS conductor_id, v.marca, v.color, v.carroceria, v.plazas,
+            v.aire_acondicionado, v.seguro,
+            (p.zona_id = $1) AS en_tu_zona,
+            -- La misma cuenta que reputacionDe: solo lo que puntuó el
+            -- pasajero, nunca lo que el taxista puntuó a sus pasajeros.
+            (SELECT round(avg(va.puntuacion)::numeric, 1) FROM valoracion va
+             JOIN viaje vi ON vi.id = va.viaje_id
+             WHERE vi.conductor_id = c.id AND va.emisor = 'cliente') AS valoracion,
+            (SELECT count(*)::int FROM valoracion va
+             JOIN viaje vi ON vi.id = va.viaje_id
+             WHERE vi.conductor_id = c.id AND va.emisor = 'cliente') AS valoraciones,
+            -- Su última posición conocida, SOLO para medir el tiempo. No sale
+            -- de esta función.
+            (SELECT po.lat FROM posicion po
+             JOIN viaje vi ON vi.id = po.viaje_id
+             JOIN solicitud so ON so.id = vi.solicitud_id
+             WHERE so.conductor_id = c.id AND po.actor = 'conductor'
+               AND po.creado_en >= now() - make_interval(secs => $3)
+             ORDER BY po.creado_en DESC LIMIT 1) AS lat,
+            (SELECT po.lng FROM posicion po
+             JOIN viaje vi ON vi.id = po.viaje_id
+             JOIN solicitud so ON so.id = vi.solicitud_id
+             WHERE so.conductor_id = c.id AND po.actor = 'conductor'
+               AND po.creado_en >= now() - make_interval(secs => $3)
+             ORDER BY po.creado_en DESC LIMIT 1) AS lng,
+            -- Y si no hay ninguna, el centro de su barrio: no es su posición,
+            -- es el barrio que él mismo declaró al entrar en servicio, que es
+            -- lo que ya se le enseña al pasajero en el conteo.
+            z.centroide_lat AS zona_lat, z.centroide_lng AS zona_lng
+     FROM presencia p
+     JOIN conductor c ON c.id = p.conductor_id
+     JOIN vehiculo v ON v.conductor_id = c.id
+     LEFT JOIN zona z ON z.id = p.zona_id
+     WHERE (p.zona_id = $1 OR p.zona_id IN (
+              SELECT zona_adyacente_id FROM zona_adyacencia WHERE zona_id = $1)
+            OR c.recibe_en_cualquier_zona)
+       AND c.unificado_en IS NULL
+       AND ${filtroTaxiVivo('$2')}
+     LIMIT $4`,
+    [zonaId, ventanaSeg, frescuraSeg, limite],
+  );
+
+  const destino = await cliente.query(
+    'SELECT lat, lng FROM referencia WHERE id = $1', [referenciaId],
+  );
+  const recogida = {
+    lat: Number(destino.rows[0].lat), lng: Number(destino.rows[0].lng),
+  };
+
+  const lista: TaxiElegible[] = [];
+  for (const f of res.rows) {
+    const desde = f.lat !== null && f.lng !== null
+      ? { lat: Number(f.lat), lng: Number(f.lng) }
+      : f.zona_lat !== null && f.zona_lng !== null
+        ? { lat: Number(f.zona_lat), lng: Number(f.zona_lng) }
+        : null;
+    const estimacion = desde === null ? null : await estimarLlegada(cliente, desde, recogida);
+    lista.push({
+      conductorId: Number(f.conductor_id),
+      marca: f.marca,
+      color: f.color,
+      carroceria: f.carroceria,
+      plazas: Number(f.plazas),
+      aireAcondicionado: f.aire_acondicionado,
+      seguro: f.seguro,
+      valoracion: f.valoracion === null ? null : Number(f.valoracion),
+      valoraciones: Number(f.valoraciones),
+      etaMin: estimacion?.minutos ?? null,
+      distanciaM: estimacion?.distanciaM ?? null,
+      enTuZona: f.en_tu_zona === true,
+    });
+  }
+  // Por tiempo, y los que no se sabe al final: un coche del que no se sabe
+  // cuándo llega no puede encabezar una lista que se ordena por eso.
+  return lista.sort((a, b) => (a.etaMin ?? 9_999) - (b.etaMin ?? 9_999));
 }

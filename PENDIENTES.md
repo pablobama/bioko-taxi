@@ -4,6 +4,21 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
 
 ## Abiertos
 
+- **[P62-01] El orden de paradas es voraz, no el mejor posible.** Con taxi
+  compartido, lo siguiente es la parada más cercana por las calles, y desde
+  ella otra vez la más cercana. El orden ÓPTIMO (el problema del viajante) con
+  cuatro plazas son 40.320 combinaciones, cada una midiendo caminos por el
+  grafo: no compensa para cuatro paradas. El voraz acierta en lo que importa
+  —no cruzar la ciudad con alguien dentro que se baja al lado— pero puede
+  equivocarse en un caso concreto: tres paradas en triángulo donde ir primero
+  a la más cercana obliga a volver sobre los propios pasos.
+
+- **[P62-02] Elegir coche no reserva nada.** El coche elegido recibe la carrera
+  en exclusiva veinte segundos; si no la coge, empieza el reparto normal y el
+  pasajero se lleva el que la acepte. Es a propósito —a un taxista no se le
+  puede obligar— pero la aplicación todavía no le dice al pasajero que el coche
+  que eligió no la cogió: solo le llega el que sea. Merece un aviso.
+
 - **[P58-01] El aviso a TODOS los taxistas, no solo a los de la oleada.**
   Resuelto el hueco técnico (migración 058: la PWA ya recibe notificación con
   la aplicación cerrada), queda la pregunta de reparto: hoy la carrera se

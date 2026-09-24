@@ -11,9 +11,18 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  abrirEventos, api, coordenadasOportunistas, enPruebasLocales,
-  type DestinoSugerido, type DetalleSolicitud, type EventoSse, type Perfil, type PuntoMapa,
-  type ReferenciaSugerida, type TaxisCerca,
+  abrirEventos,
+  api,
+  coordenadasOportunistas,
+  enPruebasLocales,
+  type DestinoSugerido,
+  type DetalleSolicitud,
+  type EventoSse,
+  type Perfil,
+  type PuntoMapa,
+  type ReferenciaSugerida,
+  type TaxisCerca,
+  type TaxiElegible,
 } from './api';
 import Estadisticas from './Estadisticas';
 import { metrosEntre } from './geo';
@@ -21,6 +30,7 @@ import { mensajeDeError, ErrorDeRed, useConexion, ErrorDelServidor } from './con
 import IconoCategoria from './IconoCategoria';
 import { crearT, localeVoz, type Idioma } from './i18n';
 import { useLlamada, type SenalRecibida } from './llamada';
+import CompartirViaje from './CompartirViaje';
 import MandosFlotantes from './MandosFlotantes';
 import {
   encolar, guardarUltimo, olvidarUltimo, sincronizar, ultimoGuardado, usePendientes,
@@ -223,6 +233,13 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
   >(null);
   // Hoja recogida: el plano se ve entero. Lo manda el botón flotante.
   const [panelPlegado, setPanelPlegado] = useState(false);
+  // La hoja de «mírame llegar», abierta desde su botón flotante.
+  const [compartiendo, setCompartiendo] = useState(false);
+  // Los coches que podrían venir y cuál ha elegido (migración 062).
+  // `elegido === null` es «el que antes llegue», que es lo que había siempre y
+  // sigue siendo lo normal: elegir es opcional.
+  const [elegibles, setElegibles] = useState<TaxiElegible[]>([]);
+  const [elegido, setElegido] = useState<number | null>(null);
   // Sin red (migración 057): de cuándo es el viaje que se está enseñando si no
   // es de ahora. null = fresco.
   const [datosDe, setDatosDe] = useState<string | null>(null);
@@ -494,6 +511,29 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
     };
   }, [fase, origen]);
 
+  // Los coches que podrían venir, para elegir (migración 062). Misma cadencia
+  // que el conteo: los dos contestan la misma pregunta —«¿voy a conseguir
+  // taxi?»— y este la detalla. Si el origen cambia, la elección anterior ya no
+  // vale: se eligió por un tiempo estimado hasta OTRO sitio.
+  useEffect(() => {
+    if (fase !== 'destino' || !origen) {
+      setElegibles([]);
+      return;
+    }
+    let vivo = true;
+    setElegido(null);
+    const pedir = () => {
+      api.taxisElegibles(origen.id)
+        .then((r) => { if (vivo) setElegibles(r.taxis); })
+        .catch(() => { if (vivo) setElegibles([]); });
+    };
+    pedir();
+    // Cada veinte segundos: los tiempos envejecen rápido, y un coche que ya
+    // cogió otra carrera tiene que desaparecer de la lista solo.
+    const reloj = setInterval(pedir, 20_000);
+    return () => { vivo = false; clearInterval(reloj); };
+  }, [fase, origen]);
+
   // Reloj de un segundo. Solo late cuando hay una cuenta atrás en pantalla:
   // el resto del tiempo redibujar cada segundo sería gastar batería para nada.
   useEffect(() => {
@@ -624,7 +664,7 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
     prepararSonido();
     setAviso('');
     try {
-      const respuesta = await api.pedirTaxi(origen.id, destino.id, coordenadas);
+      const respuesta = await api.pedirTaxi(origen.id, destino.id, coordenadas, elegido);
       localStorage.setItem('solicitudActiva', String(respuesta.solicitudId));
       setPedidoEn(Date.now());
       if (respuesta.estado === 'SIN_OFERTA') {
@@ -786,6 +826,19 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
         alAlternarSilencio={llamada.alternarSilencio}
       />
 
+      {/* La hoja de compartir, que abre y cierra el botón flotante. Encima
+          del plano y por delante de la del viaje: se abre, se manda el enlace
+          y se cierra. */}
+      {compartiendo && fase === 'asignado' && detalle !== null && (
+        <section className="hoja">
+          <h1>{t('seguir.compartir')}</h1>
+          <CompartirViaje solicitudId={detalle.solicitudId} t={t} />
+          <button type="button" className="tenue" onClick={() => setCompartiendo(false)}>
+            {t('accion.volver')}
+          </button>
+        </section>
+      )}
+
       {fase === 'estadisticas' && (
         <section className="hoja">
           <Estadisticas t={t} idioma={idioma} alVolver={() => setFase('destino')} />
@@ -815,13 +868,27 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
           etiquetaPlegar={t('cabecera.ocultarPanel')}
           etiquetaDesplegar={t('cabecera.mostrarPanel')}
           mandos={[
+            // «Mírame llegar»: solo con viaje en marcha, que es cuando hay algo
+            // que compartir. Flotante como el resto (24/09): antes era un
+            // bloque con dos párrafos en medio de la hoja, entre el coche que
+            // viene y el botón de llamar.
+            ...(fase === 'asignado' && detalle !== null
+              ? [{
+                icono: '⤴',
+                etiqueta: t('seguir.compartir'),
+                alPulsar: () => setCompartiendo((abierto) => !abierto),
+              }]
+              : []),
             { icono: '▤', etiqueta: t('cabecera.tusNumeros'), alPulsar: () => setFase('estadisticas') },
             { icono: '⚙', etiqueta: t('cabecera.tusDatos'), alPulsar: () => setFase('ajustes') },
           ]}
         />
       )}
 
-      {fase !== 'estadisticas' && fase !== 'ajustes' && (
+      {/* Mientras se comparte, la hoja del viaje se esconde: dos hojas a la
+          vez se pisan y el título de la de arriba acaba debajo de los mandos
+          flotantes. Es un momento, y al volver está todo como estaba. */}
+      {!compartiendo && fase !== 'estadisticas' && fase !== 'ajustes' && (
         <VistaCliente
           plegada={panelPlegado}
           sinRed={datosDe !== null || pendientes > 0 ? { datosDe, pendientes } : null}
@@ -832,6 +899,8 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
           gpsResuelto={gpsResuelto}
           origenEnGps={gpsFino}
           taxisCerca={taxisCerca}
+          elegibles={elegibles}
+          elegido={elegido}
           hayCoordenadas={coordenadas !== null}
           valorada={valorada}
           aviso={aviso}
@@ -855,7 +924,11 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
             alBajar: () => { void heBajado(); },
             alValorar: valorar,
             alQuitarOrigen: () => { origenQuitadoAMano.current = true; setOrigen(null); },
-            alElegirDestino: (elegido) => { setDestino(elegido); setAviso(''); },
+            alElegirDestino: (destinoElegido) => { setDestino(destinoElegido); setAviso(''); },
+            // Elegir coche, o volver a «el que antes llegue» tocando el mismo.
+            alElegirCoche: (conductorId) => setElegido(
+              (actual) => (actual === conductorId ? null : conductorId),
+            ),
             alEscribirDestino: () => setEscribiendo(true),
             alLlamar: () => { if (detalle) llamada.llamar(detalle.solicitudId); },
           }}

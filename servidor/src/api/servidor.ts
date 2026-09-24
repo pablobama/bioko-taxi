@@ -9,7 +9,7 @@ import { gzipSync } from 'node:zlib';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { enTransaccion } from '../bd/conexion.js';
-import { taxisCercaDe } from '../dominio/cobertura.js';
+import { taxisCercaDe, taxisElegiblesDe } from '../dominio/cobertura.js';
 import { normalizarTelefono } from '../dominio/telefono.js';
 import { iniciarDespacho } from '../dominio/despacho.js';
 import { ErrorTransicionInvalida } from '../dominio/errores.js';
@@ -239,6 +239,19 @@ export function crearServidor(
     return cerca;
   });
 
+  // Los coches que podrían venir, uno a uno, para que el pasajero elija
+  // (migración 062). Nunca posiciones: qué coche es, cómo lo valoran y cuánto
+  // tardaría. Ver `taxisElegiblesDe`.
+  app.get('/api/taxis-elegibles', async (req) => {
+    await dispositivoDesde(req);
+    const { origenId } = req.query as { origenId?: string };
+    const id = Number(origenId);
+    if (!Number.isInteger(id)) {
+      throw errorHttp(400, 'Falta origenId: los tiempos se miden hasta un sitio concreto.');
+    }
+    return { taxis: await taxisElegiblesDe(pool, id) };
+  });
+
   app.get('/api/destinos-sugeridos', async (req) => {
     const dispositivo = await dispositivoDesde(req);
     const { origenId } = req.query as { origenId?: string };
@@ -430,7 +443,7 @@ export function crearServidor(
     }
     const cuerpo = req.body as {
       telefono?: string; origenId?: number; destinoId?: number; lat?: number; lng?: number;
-      precision?: number;
+      precision?: number; conductorElegidoId?: number;
     };
     if (!cuerpo?.origenId || !cuerpo.destinoId) {
       throw errorHttp(400, 'Faltan campos: origenId y destinoId son obligatorios.');
@@ -471,6 +484,12 @@ export function crearServidor(
       lngCliente: typeof cuerpo.lng === 'number' ? cuerpo.lng : undefined,
       precisionClienteM: typeof cuerpo.precision === 'number' && cuerpo.precision >= 0
         ? cuerpo.precision : undefined,
+      // El coche elegido (migración 062). No se comprueba aquí si sigue
+      // disponible: eso lo hace el reparto al emitir, con los mismos filtros
+      // que usa para todos. Entre elegir y pulsar pueden pasar veinte
+      // segundos, y en veinte segundos un taxi coge otra carrera.
+      conductorElegidoId: Number.isInteger(cuerpo.conductorElegidoId)
+        ? Number(cuerpo.conductorElegidoId) : undefined,
     }));
 
     if (!creada.yaExistia) {
@@ -527,7 +546,20 @@ export function crearServidor(
     } | null = null;
     if (fila.conductor_id !== null) {
       const ocupacion = await ocupacionDe(pool, fila.conductor_id);
-      const ruta = await rutaDe(pool, fila.conductor_id);
+      // Con la última posición del coche: las paradas salen en el orden en que
+      // se van a bajar, no en el que subieron (24/09).
+      const dondeVa = await pool.query(
+        `SELECT p.lat, p.lng FROM posicion p
+         JOIN viaje v ON v.id = p.viaje_id
+         JOIN solicitud s ON s.id = v.solicitud_id
+         WHERE s.conductor_id = $1 AND p.actor = 'conductor'
+         ORDER BY p.creado_en DESC LIMIT 1`,
+        [fila.conductor_id],
+      );
+      const coche = dondeVa.rowCount === 0
+        ? null
+        : { lat: Number(dondeVa.rows[0].lat), lng: Number(dondeVa.rows[0].lng) };
+      const ruta = await rutaDe(pool, fila.conductor_id, coche);
       compartido = {
         pasajerosABordo: ocupacion.aBordo,
         plazas: ocupacion.plazas,

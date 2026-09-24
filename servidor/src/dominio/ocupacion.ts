@@ -10,6 +10,8 @@
 // dos veces.
 
 import type pg from 'pg';
+import { ordenarParadas, distanciaRectaM, type ParadaPendiente } from './paradas.js';
+import { rutaParaLlegar } from './carreteras.js';
 
 export const ESTADOS_QUE_OCUPAN_PLAZA = ['ACEPTADO', 'EN_CAMINO', 'RECOGIDO'] as const;
 
@@ -63,9 +65,16 @@ export async function estadoPorOcupacion(
   return ocupacion.libres > 0 ? 'DISPONIBLE' : 'OCUPADO';
 }
 
-// Ruta del coche: los destinos de los pasajeros comprometidos, en el orden en
-// que subieron. Es lo que se muestra al cliente para que entienda el viaje
-// compartido. Solo lugares: ni nombres ni teléfonos de los demás pasajeros.
+// Ruta del coche: los destinos de los pasajeros comprometidos, EN EL ORDEN EN
+// QUE SE VAN A BAJAR. Es lo que se muestra al cliente para que entienda el
+// viaje compartido y sepa si es el primero o el último. Solo lugares: ni
+// nombres ni teléfonos de los demás pasajeros.
+//
+// Hasta el 24/09 el orden era el de subida (`ORDER BY s.id`), que no es el
+// orden en que pasan las cosas: el último en subir puede bajarse primero si su
+// destino cae de camino. El pasajero leía una lista que no se correspondía con
+// su viaje, y el taxista —que cogía de aquí su siguiente parada— cruzaba la
+// ciudad pasando de largo por delante de la puerta de quien llevaba dentro.
 export interface ParadaRuta {
   solicitudId: number;
   destino: string;
@@ -79,6 +88,9 @@ export interface ParadaRuta {
 export async function rutaDe(
   cliente: pg.ClientBase | pg.Pool,
   conductorId: number,
+  // Dónde está el coche. Sin ella no hay desde dónde medir y se devuelve el
+  // orden de subida, que es lo que había.
+  coche: { lat: number; lng: number } | null = null,
 ): Promise<ParadaRuta[]> {
   const res = await cliente.query(
     `SELECT s.id, s.estado, rd.nombre AS destino, rd.lat, rd.lng
@@ -88,11 +100,30 @@ export async function rutaDe(
      ORDER BY s.id`,
     [conductorId, ESTADOS_QUE_OCUPAN_PLAZA],
   );
-  return res.rows.map((f) => ({
+  const paradas: ParadaRuta[] = res.rows.map((f) => ({
     solicitudId: f.id,
     destino: f.destino,
     estado: f.estado,
-    lat: f.lat,
-    lng: f.lng,
+    lat: Number(f.lat),
+    lng: Number(f.lng),
   }));
+  if (coche === null || paradas.length <= 1) return paradas;
+
+  // Se ordenan los DESTINOS por cercanía desde el coche, midiendo por las
+  // calles. A quien todavía no ha subido se le trata igual: su destino no
+  // puede ir antes que su recogida, pero esa regla la aplica el taxista con
+  // su propia lista (ver `ordenarPasajeros` en api/conductor.ts); aquí lo que
+  // se enseña es el orden de bajada, que es la pregunta del pasajero.
+  const porCalles = (desde: { lat: number; lng: number }, hasta: { lat: number; lng: number }) => {
+    const camino = rutaParaLlegar(desde, hasta);
+    const recta = distanciaRectaM(desde, hasta);
+    return camino !== null && camino.distanciaM <= recta * 3 + 500 ? camino.distanciaM : recta;
+  };
+  const comoParadas: ParadaPendiente[] = paradas.map((p) => ({
+    solicitudId: Number(p.solicitudId), tipo: 'destino', lat: p.lat, lng: p.lng, nombre: p.destino,
+  }));
+  const porSolicitud = new Map(paradas.map((p) => [Number(p.solicitudId), p]));
+  return ordenarParadas(coche, comoParadas, porCalles)
+    .map((p) => porSolicitud.get(p.solicitudId))
+    .filter((p): p is ParadaRuta => p !== undefined);
 }
