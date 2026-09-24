@@ -2083,3 +2083,17 @@ button.importe.elegido-importe {
   color: var(--humo);
   letter-spacing: 0.04em;
 }
+
+/* El coche elegido no cogió la carrera (migración 062).
+   Discreto a propósito: es información, no una alarma. Lo que importa sigue
+   siendo el tiempo y la ficha del taxi que sí viene. */
+.aviso-elegido {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--humo);
+  font-size: 0.92rem;
+  line-height: 1.4;
+}

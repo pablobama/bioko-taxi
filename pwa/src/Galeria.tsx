@@ -71,6 +71,7 @@ function solicitud(cambios: Partial<DetalleSolicitud> = {}): DetalleSolicitud {
     taxi: { lat: 3.756, lng: 8.779, etaMin: 4, distanciaM: 1180, frescuraSeg: 12 },
     llegada: null,
     reputacion: { media: 4.6, valoraciones: 37, viajesCompletados: 52 },
+    elegido: null,
     compartido: {
       pasajerosABordo: 0,
       plazas: 4,
@@ -174,8 +175,17 @@ function pasajero(estado: string, cambios: Record<string, unknown> = {}) {
     telefonoCliente: estado === 'ACEPTADO' ? null : '+240222888999',
     llegadoEn: null,
     relojEsperaSeg: 300,
+    // Sin estos campos la galería se caía entera: `posicionCliente` ausente
+    // no es `null`, y la vista comprueba `!== null` antes de mirar dentro. El
+    // molde queda TIPADO a propósito —sin `as`— para que un campo nuevo del
+    // taxista rompa aquí al compilar y no en la pantalla.
+    recogidaEnGps: true,
+    metrosDeLaReferencia: 90,
+    posicionCliente: null,
+    etaMin: 4,
+    distanciaM: 1180,
     ...cambios,
-  } as EstadoConductor['pasajeros'][number];
+  } satisfies EstadoConductor['pasajeros'][number];
 }
 
 // --- Marco de teléfono ----------------------------------------------------
@@ -370,6 +380,15 @@ export default function Galeria() {
 
             <Marco titulo="Sin taxi" descripcion="Respuesta en menos de 5 s si no hay nadie conectado en la zona.">
               {cliente('sin_taxi')}
+            </Marco>
+
+            <Marco titulo="El coche elegido no la cogió" descripcion="Elegir es una preferencia, no una reserva: si no la coge en veinte segundos sigue el reparto normal. Se dice, en vez de aparecer otro coche sin explicación.">
+              {cliente('asignado', {
+                detalle: solicitud({
+                  elegido: { nombre: 'Juan Obama', matricula: 'GE-4820-B', estado: 'no_la_cogio' },
+                }),
+                segundosGracia: 47,
+              })}
             </Marco>
 
             <Marco titulo="Taxi asignado" descripcion="Matrícula grande, coche, nombre y nota. Abajo, los segundos que quedan para cancelar gratis.">

@@ -13,12 +13,6 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   equivocarse en un caso concreto: tres paradas en triángulo donde ir primero
   a la más cercana obliga a volver sobre los propios pasos.
 
-- **[P62-02] Elegir coche no reserva nada.** El coche elegido recibe la carrera
-  en exclusiva veinte segundos; si no la coge, empieza el reparto normal y el
-  pasajero se lleva el que la acepte. Es a propósito —a un taxista no se le
-  puede obligar— pero la aplicación todavía no le dice al pasajero que el coche
-  que eligió no la cogió: solo le llega el que sea. Merece un aviso.
-
 - **[P58-01] El aviso a TODOS los taxistas, no solo a los de la oleada.**
   Resuelto el hueco técnico (migración 058: la PWA ya recibe notificación con
   la aplicación cerrada), queda la pregunta de reparto: hoy la carrera se
@@ -577,6 +571,18 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   trabajo para el operador, que los va confirmando.
 
 ## Resueltos
+
+- **[P62-02] Elegir coche no reserva nada, y ahora se dice** — resuelto el
+  2026-09-24. Lo que NO cambia: elegir sigue siendo una preferencia y no una
+  reserva; a un taxista no se le puede obligar a aceptar, así que pasada su
+  exclusiva de veinte segundos la carrera sigue el reparto de siempre. Lo que
+  cambia es que el pasajero se entera. `GET /api/solicitudes/:id` devuelve
+  `elegido` con el coche que eligió y en qué quedó: `esperando` mientras corre
+  su exclusiva, `no_la_cogio` en cuanto la carrera pasa de la oleada 0 o él
+  contesta que no, y `es_el_tuyo` si la cogió. Se dice en la espera —todavía a
+  tiempo de decidir si sigue esperando o cancela— y junto a la ficha del taxi
+  que sí viene. Tres pruebas en `servidor.prueba.ts`. Sin coordenadas de por
+  medio: matrícula, nombre y en qué quedó, nada más.
 
 - **[P56-01] Recorrido el doble de denso, al mismo coste** — resuelto el
   2026-09-15 (migración 056), decidido por el operador. `rastro_intervalo_min_seg`

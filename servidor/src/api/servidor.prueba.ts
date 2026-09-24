@@ -9,7 +9,7 @@ import { createHmac, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { crearPool, enTransaccion } from '../bd/conexion.js';
-import { reclamarSolicitud } from '../dominio/despacho.js';
+import { avanzarDespachos, reclamarSolicitud } from '../dominio/despacho.js';
 import { EmisorRegistro } from '../dominio/eventos.js';
 import { crearZona, guardarReferencia } from '../dominio/gazetteer.js';
 import { recargar } from '../dominio/monedero.js';
@@ -770,6 +770,81 @@ function senal(uuid: string, solicitudId: number, tipo: string, carga: unknown =
     payload: { tipo, carga },
   });
 }
+
+// --- Migración 062: qué pasó con el coche que eligió ------------------------
+
+test('el pasajero se entera de que el coche que eligió no cogió la carrera', async () => {
+  // `crearConductorEnZona` devuelve el id tal cual lo da Postgres, y un
+  // bigint llega como cadena: el servidor exige un entero de verdad.
+  const elegidoId = Number(await crearConductorEnZona());
+  const otroId = await crearConductorEnZona();
+  // `crearConductorEnZona` mueve las referencias a la zona del último: se
+  // vuelve a poner al elegido donde están el origen y el destino, que es lo
+  // que hace que los dos sean candidatos de la misma carrera.
+  await pool.query('UPDATE presencia SET zona_id = $2 WHERE conductor_id = $1', [elegidoId, zonaId]);
+
+  const uuid = randomUUID();
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/solicitudes',
+    headers: cabeceras(uuid),
+    payload: {
+      telefono: '+240222999992', origenId, destinoId, conductorElegidoId: elegidoId,
+    },
+  });
+  assert.ok(res.statusCode < 300, res.body);
+  const { solicitudId } = res.json();
+
+  const mirar = async () => {
+    const detalle = await app.inject({
+      method: 'GET', url: `/api/solicitudes/${solicitudId}`, headers: cabeceras(uuid),
+    });
+    return detalle.json().elegido;
+  };
+
+  // Su exclusiva está corriendo: todavía no hay nada que contar.
+  assert.equal((await mirar()).estado, 'esperando');
+  assert.equal((await mirar()).matricula.startsWith('GE-'), true);
+
+  // Pasa la exclusiva y la carrera sigue su camino: eso YA es la respuesta,
+  // aunque aún no haya taxi. Quien eligió un coche está esperando ESE coche.
+  await avanzarDespachos(pool, emisor, new Date(Date.now() + 30_000));
+  assert.equal((await mirar()).estado, 'no_la_cogio');
+
+  // Y la coge otro: se sigue diciendo, junto a la ficha del que sí viene.
+  await reclamarSolicitud(pool, emisor, solicitudId, otroId);
+  assert.equal((await mirar()).estado, 'no_la_cogio');
+});
+
+test('si el coche elegido sí la coge, no se le cuenta nada al pasajero', async () => {
+  const elegidoId = Number(await crearConductorEnZona());
+  const uuid = randomUUID();
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/solicitudes',
+    headers: cabeceras(uuid),
+    payload: {
+      telefono: '+240222999992', origenId, destinoId, conductorElegidoId: elegidoId,
+    },
+  });
+  const { solicitudId } = res.json();
+  await reclamarSolicitud(pool, emisor, solicitudId, elegidoId);
+  const detalle = await app.inject({
+    method: 'GET', url: `/api/solicitudes/${solicitudId}`, headers: cabeceras(uuid),
+  });
+  assert.equal(detalle.json().elegido.estado, 'es_el_tuyo');
+});
+
+// Sin elegir coche —lo normal— el campo no existe: nada que enseñar.
+test('quien no eligió coche no recibe ningún aviso de elección', async () => {
+  await crearConductorEnZona();
+  const uuid = randomUUID();
+  const { solicitudId } = await pedirTaxi(uuid);
+  const detalle = await app.inject({
+    method: 'GET', url: `/api/solicitudes/${solicitudId}`, headers: cabeceras(uuid),
+  });
+  assert.equal(detalle.json().elegido, null);
+});
 
 test('llamada: el pasajero y su taxista se alcanzan, y la señal llega al otro', async () => {
   const v = await viajeAceptado();

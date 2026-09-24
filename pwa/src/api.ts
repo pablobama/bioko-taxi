@@ -159,6 +159,15 @@ export interface DetalleSolicitud {
   // subir— pero el tiempo sí, que es lo que importa a partir de ahí.
   llegada: { etaMin: number; distanciaM: number } | null;
   reputacion: Reputacion | null;
+  // El coche que se eligió al pedir (migración 062), si se eligió alguno.
+  // Elegir es una preferencia, no una reserva: si el elegido no coge la
+  // carrera en veinte segundos empieza el reparto normal. Esto es lo que
+  // permite CONTARLO en vez de que aparezca otro coche sin explicación.
+  elegido: {
+    nombre: string;
+    matricula: string | null;
+    estado: 'esperando' | 'es_el_tuyo' | 'no_la_cogio';
+  } | null;
   conductor: string | null;
   matricula: string | null;
   marca: string | null;

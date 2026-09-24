@@ -519,13 +519,17 @@ export function crearServidor(
               rd.nombre AS destino, rd.lat AS destino_lat, rd.lng AS destino_lng,
               v.id AS viaje_id, v.pin, v.llegado_en,
               c.nombre AS conductor, ve.matricula, ve.marca, ve.color,
-              ve.aire_acondicionado, ve.seguro
+              ve.aire_acondicionado, ve.seguro,
+              s.conductor_elegido_id, ce.nombre AS elegido_nombre,
+              vel.matricula AS elegido_matricula
        FROM solicitud s
        JOIN referencia ro ON ro.id = s.referencia_origen_id
        JOIN referencia rd ON rd.id = s.referencia_destino_id
        LEFT JOIN viaje v ON v.solicitud_id = s.id
        LEFT JOIN conductor c ON c.id = s.conductor_id
        LEFT JOIN vehiculo ve ON ve.conductor_id = c.id
+       LEFT JOIN conductor ce ON ce.id = s.conductor_elegido_id
+       LEFT JOIN vehiculo vel ON vel.conductor_id = ce.id
        WHERE s.id = $1 AND s.dispositivo_cliente_id = $2`,
       [solicitudId, dispositivoId],
     );
@@ -640,6 +644,43 @@ export function crearServidor(
       }
     }
 
+    // El coche que el pasajero eligió al pedir (migración 062), y si se lo
+    // quedó o no.
+    //
+    // Elegir es una PREFERENCIA, no una reserva: el coche elegido tiene la
+    // carrera en exclusiva veinte segundos y, si no la coge, empieza el
+    // reparto de siempre. Eso no se puede cambiar —a un taxista no se le
+    // obliga a aceptar— pero hasta ahora el pasajero no se enteraba: elegía un
+    // coche y le aparecía otro sin una palabra. Decirlo no cuesta nada y
+    // evita la sospecha de que la elección no sirve para nada.
+    let elegido: {
+      nombre: string; matricula: string | null;
+      estado: 'esperando' | 'es_el_tuyo' | 'no_la_cogio';
+    } | null = null;
+    if (fila.conductor_elegido_id !== null) {
+      let cual: 'esperando' | 'es_el_tuyo' | 'no_la_cogio' = 'esperando';
+      if (fila.conductor_id !== null) {
+        cual = Number(fila.conductor_id) === Number(fila.conductor_elegido_id)
+          ? 'es_el_tuyo' : 'no_la_cogio';
+      } else {
+        // Todavía sin taxi: la elección ya ha fallado si la carrera pasó de la
+        // oleada 0 (la exclusiva) o si el elegido contestó que no.
+        const paso = await pool.query(
+          `SELECT 1 FROM oferta
+           WHERE solicitud_id = $1
+             AND (oleada > 0 OR (conductor_id = $2 AND resultado IS NOT NULL))
+           LIMIT 1`,
+          [fila.id, fila.conductor_elegido_id],
+        );
+        if ((paso.rowCount ?? 0) > 0) cual = 'no_la_cogio';
+      }
+      elegido = {
+        nombre: fila.elegido_nombre,
+        matricula: fila.elegido_matricula ?? null,
+        estado: cual,
+      };
+    }
+
     // Segundos que quedan para poder cancelar sin que cueste un aviso.
     //
     // Se calcula aquí y no en el teléfono a propósito: el reloj de un móvil
@@ -681,6 +722,7 @@ export function crearServidor(
       // recogida, no dependa o no del GPS del pasajero.
       taxiHaLlegado: fila.llegado_en !== null,
       compartido,
+      elegido,
       taxi,
       llegada,
       reputacion,

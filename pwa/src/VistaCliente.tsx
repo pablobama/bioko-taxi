@@ -256,6 +256,17 @@ export default function VistaCliente({
           <p className="nota">
             {detalle ? t('esperando.hacia', { destino: detalle.destino }) : ''}
           </p>
+          {/* El coche elegido no la cogió y la carrera sigue su camino normal.
+              Se dice en cuanto pasa, no al final: quien eligió un coche está
+              esperando ESE coche, y merece saber que ya no viene mientras
+              todavía puede decidir si sigue esperando o cancela. */}
+          {detalle?.elegido?.estado === 'no_la_cogio' && (
+            <p className="aviso-elegido">
+              {t('coches.buscandoOtro', {
+                coche: detalle.elegido.matricula ?? detalle.elegido.nombre,
+              })}
+            </p>
+          )}
           {/* Un toque sin querer en «Pedir taxi» crea una solicitud de verdad.
               Durante unos segundos el botón de salir se ofrece grande y con el
               nombre de lo que la persona quiere hacer —deshacer— en vez de
@@ -321,6 +332,16 @@ export default function VistaCliente({
               <span className="pin-etiqueta">{t('pin.etiqueta')}</span>
               <span className="pin-numero">{detalle.pin}</span>
             </div>
+          )}
+
+          {/* Ya hay taxi, pero no el que eligió. Una línea y se acabó: el
+              coche que viene es el de la ficha de abajo. */}
+          {detalle.elegido?.estado === 'no_la_cogio' && (
+            <p className="aviso-elegido">
+              {t('coches.noLaCogio', {
+                coche: detalle.elegido.matricula ?? detalle.elegido.nombre,
+              })}
+            </p>
           )}
 
           <div className="ficha">
