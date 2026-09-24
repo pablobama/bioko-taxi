@@ -47,6 +47,12 @@ class ServicioEnServicio : Service() {
                     Api.heartbeat(this@ServicioEnServicio, posicion)
                     // El latido ha salido: hay red. Es el momento de vaciar lo
                     // que se apuntó mientras no la había.
+                    //
+                    // Primero las ACCIONES y después el recorrido, y el orden
+                    // importa: el servidor solo acepta puntos que caigan dentro
+                    // de un turno que ya conozca, y entre las acciones
+                    // guardadas puede estar «entrar en servicio».
+                    ColaAcciones.vaciar(this@ServicioEnServicio)
                     subirRecorridoPendiente()
                 } catch (_: Exception) {
                     // Sin red: el siguiente latido lo reintenta, y el recorrido

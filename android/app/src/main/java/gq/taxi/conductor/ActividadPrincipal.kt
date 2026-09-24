@@ -18,7 +18,9 @@ import android.widget.LinearLayout
 import android.widget.Spinner
 import android.widget.TextView
 import com.google.firebase.messaging.FirebaseMessaging
+import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Date
 import java.util.concurrent.Executors
 
 // Pantalla única del conductor. El estado de verdad vive en el servidor:
@@ -33,6 +35,11 @@ class ActividadPrincipal : Activity() {
     private var zonas: List<Pair<Long, String>> = emptyList()
     private var enServicio = false
     private var solicitudActiva: Long = -1
+    // Lo último que dijo el servidor. Se guarda para poder repintar con una
+    // acción hecha SIN RED ya aplicada encima: sin cobertura no hay estado
+    // nuevo que pedir, y la pantalla tiene que reflejar lo que el taxista
+    // acaba de pulsar o parecerá que el botón no hizo nada.
+    private var ultimoEstado: JSONObject? = null
 
     private val receptorFcm = object : BroadcastReceiver() {
         override fun onReceive(contexto: Context?, intent: Intent?) {
@@ -167,6 +174,80 @@ class ActividadPrincipal : Activity() {
         accionSobre(solicitud, accion)
     }
 
+    // Una acción del viaje que SE PUEDE GUARDAR si no hay red (migración 057).
+    //
+    // La diferencia con `accionSobre` es qué se hace cuando la petición no
+    // llega. Si el servidor CONTESTA —aunque sea con un error— se enseña su
+    // mensaje, porque sabe algo que aquí no se sabe. Si no contesta, es que no
+    // hay cobertura: la acción es un hecho que ya ocurrió en la calle, así que
+    // se guarda con su hora, la pantalla avanza como si hubiera llegado, y
+    // sale sola en el siguiente latido con red.
+    private fun accionGuardable(
+        solicitudId: Long,
+        nombreAccion: String,
+        cuerpo: JSONObject,
+        descripcion: String,
+        llamada: (Long) -> JSONObject,
+    ) {
+        ejecutor.execute {
+            try {
+                llamada(solicitudId)
+                principal.post {
+                    avisar("")
+                    refrescar()
+                }
+            } catch (error: Api.ErrorApi) {
+                principal.post {
+                    avisar(error.message ?: "No se pudo.")
+                    refrescar()
+                }
+            } catch (_: Exception) {
+                val guardada = ColaAcciones.encolar(
+                    this,
+                    Api.rutaAccion(solicitudId, nombreAccion),
+                    cuerpo,
+                    descripcion,
+                )
+                principal.post {
+                    if (guardada) {
+                        avanzarSinRed(solicitudId, nombreAccion)
+                        avisar(getString(R.string.sin_red_guardada))
+                    } else {
+                        avisar(getString(R.string.sin_red_no_guardada))
+                    }
+                }
+            }
+        }
+    }
+
+    // Lo que la pantalla enseña tras una acción guardada sin red, sin esperar
+    // a que el servidor la confirme. Se toca la última respuesta del servidor
+    // y se repinta; cuando llegue una nueva de verdad, esto desaparece solo.
+    private fun avanzarSinRed(solicitudId: Long, accion: String) {
+        val estado = ultimoEstado ?: return
+        val pasajeros = estado.optJSONArray("pasajeros") ?: return
+        val quedan = JSONArray()
+        for (i in 0 until pasajeros.length()) {
+            val pasajero = pasajeros.getJSONObject(i)
+            if (pasajero.optLong("solicitudId") != solicitudId) {
+                quedan.put(pasajero)
+                continue
+            }
+            when (accion) {
+                "salir" -> quedan.put(pasajero.put("estado", "EN_CAMINO"))
+                "he-llegado" -> quedan.put(
+                    pasajero.put("llegadoEn", ColaRastro.ISO.format(Date())),
+                )
+                "recoger" -> quedan.put(pasajero.put("estado", "RECOGIDO"))
+                // «completar» y «cliente-ausente» sacan al pasajero del coche:
+                // no se vuelve a añadir, y su plaza cuenta otra vez como libre.
+                else -> estado.put("plazasLibres", estado.optInt("plazasLibres") + 1)
+            }
+        }
+        estado.put("pasajeros", quedan)
+        pintar(estado)
+    }
+
     private fun accionSobre(solicitudId: Long, accion: (Long) -> JSONObject) {
         ejecutor.execute {
             try {
@@ -175,13 +256,17 @@ class ActividadPrincipal : Activity() {
                     avisar("")
                     refrescar()
                 }
-            } catch (error: Exception) {
+            } catch (error: Api.ErrorApi) {
                 // Errores con mensaje útil: «expiró hace N segundos», «PIN
                 // incorrecto», «quedan N segundos»… se muestran tal cual.
                 principal.post {
                     avisar(error.message ?: "No se pudo.")
                     refrescar()
                 }
+            } catch (_: Exception) {
+                // Sin red. Por aquí pasan solo aceptar y rechazar, que NO se
+                // guardan para después: valen ahora o nunca.
+                principal.post { avisar(getString(R.string.sin_red_necesita_red)) }
             }
         }
     }
@@ -192,6 +277,10 @@ class ActividadPrincipal : Activity() {
         if (!Sesion.registrado(this)) return
         ejecutor.execute {
             try {
+                // Lo que se hizo sin red, ANTES de pedir el estado: si no, el
+                // estado de ahora —que todavía no sabe que se pulsó
+                // «recogido»— pisaría en pantalla lo que el taxista ya hizo.
+                ColaAcciones.vaciar(this)
                 val estado = Api.estado(this)
                 principal.post { pintar(estado) }
             } catch (_: Exception) {
@@ -220,13 +309,19 @@ class ActividadPrincipal : Activity() {
     }
 
     private fun pintar(estado: JSONObject) {
+        ultimoEstado = estado
         vista<View>(R.id.seccion_registro).visibility = View.GONE
         vista<View>(R.id.seccion_principal).visibility = View.VISIBLE
 
         enServicio = estado.optString("estado") != "DESCONECTADO"
         vista<TextView>(R.id.texto_saldo).text = "Saldo: ${estado.optLong("saldoXaf")} XAF"
+        // Con cuántas acciones esperan a la red para salir. Sin esto,
+        // «guardada» se ve un momento y luego nada, y no queda forma de saber
+        // si falta algo por mandar.
+        val esperando = ColaAcciones.cuantas(this)
+        val cola = if (esperando > 0) " · " + getString(R.string.sin_red_pendientes, esperando) else ""
         vista<TextView>(R.id.texto_estado).text =
-            "Estado: ${estado.optString("estado")}${estado.optString("zona").let { if (it.isEmpty() || it == "null") "" else " · $it" }}"
+            "Estado: ${estado.optString("estado")}${estado.optString("zona").let { if (it.isEmpty() || it == "null") "" else " · $it" }}$cola"
         vista<Button>(R.id.boton_servicio).text =
             getString(if (enServicio) R.string.accion_salir_servicio else R.string.accion_entrar_servicio)
         vista<Spinner>(R.id.selector_zona).visibility = if (enServicio) View.GONE else View.VISIBLE
@@ -305,7 +400,9 @@ class ActividadPrincipal : Activity() {
 
         if (estadoViaje == "ACEPTADO") {
             bloque.addView(boton(getString(R.string.accion_salir)) {
-                accionSobre(solicitudId) { Api.salir(this, it) }
+                accionGuardable(
+                    solicitudId, "salir", JSONObject(), getString(R.string.accion_salir),
+                ) { Api.salir(this, it) }
             })
         }
 
@@ -313,9 +410,13 @@ class ActividadPrincipal : Activity() {
             if (!llegado) {
                 bloque.addView(boton(getString(R.string.accion_llegado)) {
                     val posicion = Ubicacion.actual(this)
-                    accionSobre(solicitudId) {
-                        Api.heLlegado(this, it, posicion?.latitude, posicion?.longitude)
+                    val cuerpo = JSONObject()
+                    if (posicion != null) {
+                        cuerpo.put("lat", posicion.latitude).put("lng", posicion.longitude)
                     }
+                    accionGuardable(
+                        solicitudId, "he-llegado", cuerpo, getString(R.string.accion_llegado),
+                    ) { Api.heLlegado(this, it, posicion?.latitude, posicion?.longitude) }
                 })
             } else {
                 bloque.addView(TextView(this).apply {
@@ -323,21 +424,30 @@ class ActividadPrincipal : Activity() {
                     textSize = 15f
                 })
                 bloque.addView(boton(getString(R.string.accion_ausente)) {
-                    accionSobre(solicitudId) { Api.clienteAusente(this, it) }
+                    accionGuardable(
+                        solicitudId, "cliente-ausente", JSONObject(),
+                        getString(R.string.accion_ausente),
+                    ) { Api.clienteAusente(this, it) }
                 })
             }
             // Confirmación manual: respaldo de la recogida automática por GPS.
             bloque.addView(boton(getString(R.string.accion_recoger)) {
                 val posicion = Ubicacion.actual(this)
-                accionSobre(solicitudId) {
-                    Api.recoger(this, it, null, posicion?.latitude, posicion?.longitude)
+                val cuerpo = JSONObject()
+                if (posicion != null) {
+                    cuerpo.put("lat", posicion.latitude).put("lng", posicion.longitude)
                 }
+                accionGuardable(
+                    solicitudId, "recoger", cuerpo, getString(R.string.accion_recoger),
+                ) { Api.recoger(this, it, null, posicion?.latitude, posicion?.longitude) }
             })
         }
 
         if (estadoViaje == "RECOGIDO") {
             bloque.addView(boton(getString(R.string.accion_completar)) {
-                accionSobre(solicitudId) { Api.completar(this, it) }
+                accionGuardable(
+                    solicitudId, "completar", JSONObject(), getString(R.string.accion_completar),
+                ) { Api.completar(this, it) }
             })
         }
         return bloque

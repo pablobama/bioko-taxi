@@ -16,6 +16,16 @@
     <string name="accion_recoger">PASAJERO RECOGIDO</string>
     <string name="accion_completar">VIAJE TERMINADO</string>
     <string name="ocupacion">Pasajeros: %1$d de %2$d plazas</string>
+    <!-- Sin cobertura (migración 057). La PWA ya lo hacía y esta app no:
+         «pasajero recogido» sin red daba un error y no se guardaba en ningún
+         sitio, con el viaje quedándose abierto y la hora perdida. Ahora se
+         guarda con su hora y sale sola al volver la red. -->
+    <string name="sin_red_guardada">Sin cobertura: guardado. Se enviará solo al volver la red.</string>
+    <string name="sin_red_no_guardada">Sin cobertura y no se pudo guardar. Vuelve a intentarlo.</string>
+    <string name="sin_red_pendientes">%1$d por enviar</string>
+    <!-- Aceptar y rechazar NO se guardan: valen ahora. Una aceptación de hace
+         veinte minutos le quitaría la carrera a otro taxista que ya la hizo. -->
+    <string name="sin_red_necesita_red">Para aceptar o rechazar una carrera hace falta red.</string>
     <string name="canal_ofertas">Ofertas de carrera</string>
     <string name="canal_servicio">En servicio</string>
     <!-- La notificación dice que se está grabando el recorrido. No es un

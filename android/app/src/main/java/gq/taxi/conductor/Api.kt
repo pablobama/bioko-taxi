@@ -90,23 +90,35 @@ object Api {
     fun estado(contexto: Context): JSONObject =
         peticion(contexto, "GET", "/api/conductor/estado", null)
 
+    // Una acción guardada sin red, tal como se guardó (migración 057). La ruta
+    // y el cuerpo vienen de la cola; el cuerpo ya lleva dentro la hora en que
+    // se pulsó, que es lo que hace que el viaje quede registrado a su hora y no
+    // a la de la reconexión.
+    fun enviarPendiente(contexto: Context, ruta: String, cuerpo: JSONObject): JSONObject =
+        peticion(contexto, "POST", ruta, cuerpo)
+
     fun aceptar(contexto: Context, solicitudId: Long): JSONObject =
         peticion(contexto, "POST", "/api/conductor/solicitudes/$solicitudId/aceptar", JSONObject())
 
     fun rechazar(contexto: Context, solicitudId: Long): JSONObject =
         peticion(contexto, "POST", "/api/conductor/solicitudes/$solicitudId/rechazar", JSONObject())
 
+    // Las rutas de las acciones del viaje, en un solo sitio: las usa tanto la
+    // llamada directa como la cola de sin red, y dos copias se separarían.
+    fun rutaAccion(solicitudId: Long, accion: String) =
+        "/api/conductor/solicitudes/$solicitudId/$accion"
+
     fun salir(contexto: Context, solicitudId: Long): JSONObject =
-        peticion(contexto, "POST", "/api/conductor/solicitudes/$solicitudId/salir", JSONObject())
+        peticion(contexto, "POST", rutaAccion(solicitudId, "salir"), JSONObject())
 
     fun heLlegado(contexto: Context, solicitudId: Long, lat: Double?, lng: Double?): JSONObject {
         val cuerpo = JSONObject()
         if (lat != null && lng != null) cuerpo.put("lat", lat).put("lng", lng)
-        return peticion(contexto, "POST", "/api/conductor/solicitudes/$solicitudId/he-llegado", cuerpo)
+        return peticion(contexto, "POST", rutaAccion(solicitudId, "he-llegado"), cuerpo)
     }
 
     fun clienteAusente(contexto: Context, solicitudId: Long): JSONObject =
-        peticion(contexto, "POST", "/api/conductor/solicitudes/$solicitudId/cliente-ausente", JSONObject())
+        peticion(contexto, "POST", rutaAccion(solicitudId, "cliente-ausente"), JSONObject())
 
     // Confirmación manual de recogida. El PIN es opcional (si el operador
     // pide usarlo en algún caso, el servidor lo exige coincidir).
@@ -114,10 +126,10 @@ object Api {
         val cuerpo = JSONObject()
         if (pin != null) cuerpo.put("pin", pin)
         if (lat != null && lng != null) cuerpo.put("lat", lat).put("lng", lng)
-        return peticion(contexto, "POST", "/api/conductor/solicitudes/$solicitudId/recoger", cuerpo)
+        return peticion(contexto, "POST", rutaAccion(solicitudId, "recoger"), cuerpo)
     }
 
     // Cierre sin precio: la plataforma no registra cuánto se pagó.
     fun completar(contexto: Context, solicitudId: Long): JSONObject =
-        peticion(contexto, "POST", "/api/conductor/solicitudes/$solicitudId/completar", JSONObject())
+        peticion(contexto, "POST", rutaAccion(solicitudId, "completar"), JSONObject())
 }

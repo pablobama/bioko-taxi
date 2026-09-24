@@ -35,14 +35,16 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   los nombres no comprimen tan bien como las coordenadas. Antes de pagarlo,
   merece la pena preguntar a un taxista si le sirve de algo.
 
-- **[P57-01] La app nativa Android todavía no guarda acciones sin red.** La
-  PWA sí (migración 057): los botones del viaje y entrar o salir de servicio
-  se guardan con su hora y salen al volver la cobertura. La app Android graba
-  el recorrido sin red desde la 051, pero sus BOTONES siguen llamando a la API
-  directamente: sin cobertura, «pasajero recogido» da error como antes. El
-  servidor ya está listo —acepta `ocurridoEn` y trata cada acción como
-  repetible—, así que falta solo el lado del teléfono: una cola como
-  `ColaRastro` para las acciones, vaciada en el latido antes del recorrido.
+- **[P57-04] La cola sin red de Android no se ha probado en un teléfono.**
+  El código está (`ColaAcciones`, 24/09) y el APK compila, pero lo único que se
+  ha comprobado de verdad es que compila: aquí no hay ni teléfono ni forma de
+  cortarle la cobertura a un emulador y ver qué hace el servicio en primer
+  plano. La lógica es la misma que la de la PWA, que sí está probada
+  (`sinRed.prueba.ts`, cinco pruebas) y verificada en el navegador. Lo que hay
+  que probar en la calle, en este orden: pulsar «pasajero recogido» en modo
+  avión y ver que la pantalla avanza y aparece «1 por enviar»; volver a tener
+  red y ver que el viaje queda con la hora del clic, no la de la reconexión; y
+  lo mismo con la pantalla bloqueada, que es para lo que existe esta app.
 
 - **[P57-02] El panel del operador no funciona sin red.** Ni guarda lo último
   que vio ni sus acciones esperan. Es un puesto de trabajo que normalmente
