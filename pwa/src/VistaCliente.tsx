@@ -85,14 +85,23 @@ export interface PropiedadesVistaCliente {
   sinRed?: { datosDe: string | null; pendientes: number } | null;
 }
 
-function Estrellas({ media, valoraciones, t }: { media: number | null; valoraciones: number; t: T }) {
+// `compacta`: una sola estrella y el número, en vez de las cinco. Las cinco
+// están muy bien donde hay sitio —se leen sin contar—, pero en la ficha del
+// taxi se llevaban ochenta píxeles de un ancho que no llega a trescientos, y
+// por ochenta píxeles el nombre del taxista se partía en dos líneas. La nota
+// dice lo mismo con un símbolo.
+function Estrellas({ media, valoraciones, t, compacta = false }: {
+  media: number | null; valoraciones: number; t: T; compacta?: boolean;
+}) {
   if (media === null) {
     return <span className="reputacion nueva">{t('reputacion.nueva')}</span>;
   }
   const llenas = Math.round(media);
   return (
     <span className="reputacion">
-      <span className="estrellas">{'★'.repeat(llenas)}{'☆'.repeat(5 - llenas)}</span>
+      <span className="estrellas">
+        {compacta ? '★' : `${'★'.repeat(llenas)}${'☆'.repeat(5 - llenas)}`}
+      </span>
       {media.toFixed(1)} <small>({valoraciones})</small>
     </span>
   );
@@ -228,7 +237,7 @@ export default function VistaCliente({
                   <li key={coche.conductorId}>
                     <button
                       type="button"
-                      className={elegido === coche.conductorId ? 'coche elegido' : 'coche'}
+                      className={elegido === coche.conductorId ? 'coche-opcion elegido' : 'coche-opcion'}
                       aria-pressed={elegido === coche.conductorId}
                       onClick={() => acciones.alElegirCoche(coche.conductorId)}
                     >
@@ -357,31 +366,45 @@ export default function VistaCliente({
             </p>
           )}
 
+          {/* La ficha del taxi en DOS líneas, no en cuatro. Antes el nombre,
+              el coche, las insignias y la nota iban cada uno en su fila, y
+              entre las cuatro empujaban fuera de pantalla lo que de verdad se
+              busca en un taxi que viene: el tiempo, el PIN y el botón de
+              llamar. Lo que va junto es lo que se lee junto: quién conduce con
+              su nota al lado, y qué coche es con sus insignias al lado. */}
           <div className="ficha">
-            <span className="matricula">{detalle.matricula ?? '—'}</span>
-            <div className="ficha-datos">
-              <span className="nombre-propio">{detalle.conductor}</span>
-              <span className="coche">
-                {[detalle.marca, detalle.color].filter(Boolean).join(' · ')}
-              </span>
-              {(detalle.aireAcondicionado || detalle.seguro) && (
-                <div className="insignias">
-                  {detalle.aireAcondicionado && (
-                    <span className="insignia">✓ {t('vehiculo.aireAcondicionadoCorto')}</span>
-                  )}
-                  {detalle.seguro && (
-                    <span className="insignia">✓ {t('vehiculo.seguroCorto')}</span>
-                  )}
-                </div>
-              )}
+            {/* La matrícula ocupa su fila entera con la nota al otro extremo.
+                Al lado de los datos —como estaba— se llevaba dos tercios del
+                ancho y el nombre y el coche se partían en dos líneas cada uno:
+                cuatro filas para tres datos. Medido en la galería: de 234 px
+                de alto a la mitad. */}
+            <div className="ficha-linea">
+              <span className="matricula">{detalle.matricula ?? '—'}</span>
               {detalle.reputacion && (
                 <Estrellas
                   media={detalle.reputacion.media}
                   valoraciones={detalle.reputacion.valoraciones}
                   t={t}
+                  compacta
                 />
               )}
             </div>
+            <div className="ficha-linea ficha-quien">
+              <span className="nombre-propio">{detalle.conductor}</span>
+              <span className="coche">
+                {[detalle.marca, detalle.color].filter(Boolean).join(' · ')}
+              </span>
+            </div>
+            {(detalle.aireAcondicionado || detalle.seguro) && (
+              <div className="insignias">
+                {detalle.aireAcondicionado && (
+                  <span className="insignia">✓ {t('vehiculo.aireAcondicionadoCorto')}</span>
+                )}
+                {detalle.seguro && (
+                  <span className="insignia">✓ {t('vehiculo.seguroCorto')}</span>
+                )}
+              </div>
+            )}
           </div>
 
           {detalle.compartido && detalle.compartido.ruta.length > 1 && (

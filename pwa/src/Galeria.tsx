@@ -15,8 +15,9 @@
 import { useState } from 'react';
 import type {
   DatosConductor, DestinoSugerido, DetalleSolicitud, EstadoConductor, ReferenciaSugerida,
-  TaxisCerca, ValoracionPendiente, Zona,
+  TaxiElegible, TaxisCerca, ValoracionPendiente, Zona,
 } from './api';
+import Coche from './Coche';
 import FondoMapa from './FondoMapa';
 import { crearT } from './i18n';
 import VistaCliente, { type AccionesCliente, type FaseCliente } from './VistaCliente';
@@ -228,6 +229,8 @@ export default function Galeria() {
       gpsResuelto={props.gpsResuelto ?? true}
       hayCoordenadas={props.hayCoordenadas ?? true}
       valorada={props.valorada ?? false}
+      elegibles={props.elegibles ?? []}
+      elegido={props.elegido ?? null}
       valoracionPendiente={props.valoracionPendiente ?? null}
       importeElegido={props.importeElegido ?? null}
       cobroDeMas={props.cobroDeMas ?? false}
@@ -295,6 +298,36 @@ export default function Galeria() {
           ))}
         </nav>
       </header>
+
+      {/* El coche del plano, en grande y a tamaño real. Va el primero porque
+          es lo que más se mira y lo que menos se puede juzgar dentro del mapa:
+          ahí mide treinta píxeles y no se ve si las ruedas asoman o si el
+          salpicadero se lee. Ampliado se ven los errores; al lado, a tamaño
+          real, se comprueba que lo que se lee ampliado se sigue leyendo. */}
+      <section className="galeria-grupo">
+        <h2>El coche del plano</h2>
+        <div className="galeria-coches">
+          {[
+            { titulo: 'Ampliado ×6', escala: 6, fondo: '#12141c' },
+            { titulo: 'Tamaño real', escala: 0.95, fondo: '#12141c' },
+            { titulo: 'Girando 45°', escala: 3, fondo: '#12141c', giro: 45 },
+            { titulo: 'Faros apagados', escala: 3, fondo: '#12141c', faros: false },
+          ].map((caso) => (
+            <figure className="coche-muestra" key={caso.titulo}>
+              <svg viewBox="-70 -70 140 140" width={140} height={140} style={{ background: caso.fondo }}>
+                <g transform={`rotate(${caso.giro ?? 0})`}>
+                  <Coche
+                    escala={caso.escala}
+                    faros={caso.faros ?? true}
+                    sufijo={`-g${caso.titulo.replace(/\W/g, '')}`}
+                  />
+                </g>
+              </svg>
+              <figcaption>{caso.titulo}</figcaption>
+            </figure>
+          ))}
+        </div>
+      </section>
 
       {rol !== 'conductor' && (
         <section className="galeria-grupo">
@@ -392,6 +425,36 @@ export default function Galeria() {
                   elegido: { nombre: 'Juan Obama', matricula: 'GE-4820-B', estado: 'no_la_cogio' },
                 }),
                 segundosGracia: 47,
+              })}
+            </Marco>
+
+            {/* El elegir coche (migración 062) no estaba en la galería, y por
+                eso nadie vio que su clase CSS se llamaba igual que el texto
+                «marca · color» de la ficha del taxi: el texto salía pintado
+                como un botón, con su borde y su relleno. Lo que no se mira, no
+                se ve. */}
+            <Marco
+              titulo="Elegir coche"
+              descripcion="Los que podrían venir, con su tiempo estimado y su nota. Nunca su posición: se elige un coche, no se sigue a un taxista."
+            >
+              {cliente('destino', {
+                origen: mercado,
+                destino: catedral,
+                elegibles: [
+                  {
+                    conductorId: 1, marca: 'Hyundai Accent', color: 'azul',
+                    carroceria: 'turismo', plazas: 4, aireAcondicionado: true, seguro: true,
+                    valoracion: 4.6, valoraciones: 37, etaMin: 3, distanciaM: 900,
+                    enTuZona: true,
+                  },
+                  {
+                    conductorId: 2, marca: 'Toyota Corolla', color: 'blanco',
+                    carroceria: 'turismo', plazas: 4, aireAcondicionado: false, seguro: true,
+                    valoracion: null, valoraciones: 0, etaMin: 7, distanciaM: 2400,
+                    enTuZona: false,
+                  },
+                ],
+                elegido: 1,
               })}
             </Marco>
 
@@ -773,6 +836,8 @@ interface PropiedadesGaleriaCliente {
   gpsResuelto: boolean;
   hayCoordenadas: boolean;
   valorada: boolean;
+  elegibles?: TaxiElegible[];
+  elegido?: number | null;
   valoracionPendiente?: ValoracionPendiente | null;
   importeElegido?: number | null;
   cobroDeMas?: boolean;
