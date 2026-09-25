@@ -29,6 +29,9 @@ object Api {
         conexion.connectTimeout = 10_000
         conexion.readTimeout = 15_000
         conexion.setRequestProperty("x-dispositivo", Sesion.uuidDispositivo(contexto))
+        // Solo si lo hay: un teléfono que se registró antes de la migración
+        // 069 no tiene secreto, y el servidor no se lo exige.
+        Sesion.secreto(contexto)?.let { conexion.setRequestProperty("x-secreto", it) }
         if (cuerpo != null) {
             conexion.setRequestProperty("content-type", "application/json")
             conexion.doOutput = true
@@ -59,6 +62,24 @@ object Api {
             contexto, "POST", "/api/conductor/servicio",
             JSONObject().put("enServicio", enServicio).put("zonaId", zonaId),
         )
+
+    // Pide el secreto de este dispositivo si todavía no lo tiene (migración
+    // 069). Se llama al arrancar, después del registro: a partir de ahí,
+    // conocer el uuid ya no basta para ser este taxista.
+    //
+    // Falla en silencio a propósito: sin red, o si el servidor ya emitió uno
+    // (409), la aplicación sigue funcionando como antes de la 069. Insistir
+    // aquí dejaría al taxista sin poder trabajar por algo que se reintenta
+    // solo en la siguiente apertura.
+    fun asegurarSecreto(contexto: Context) {
+        if (Sesion.secreto(contexto) != null) return
+        try {
+            val res = peticion(contexto, "POST", "/api/sesion/secreto", JSONObject())
+            val secreto = res.optString("secreto", "")
+            if (secreto.isNotEmpty()) Sesion.guardarSecreto(contexto, secreto)
+        } catch (_: Exception) {
+        }
+    }
 
     // El heartbeat lleva la posición: el servidor solo la guarda si hay viaje
     // activo (GPS continuo durante el viaje, nunca fuera de él).

@@ -24,6 +24,16 @@ object Sesion {
 
     fun urlBase(contexto: Context): String? = prefs(contexto).getString("urlBase", null)
 
+    // El secreto de sesión (migración 069, P15-04). El uuid dice quién dices
+    // ser; esto es lo que lo demuestra. Se pide una vez al servidor y se
+    // guarda aquí: si se borran los datos de la aplicación se pierden los dos
+    // y el teléfono vuelve como dispositivo nuevo, que es lo correcto.
+    fun secreto(contexto: Context): String? = prefs(contexto).getString("secreto", null)
+
+    fun guardarSecreto(contexto: Context, secreto: String) {
+        prefs(contexto).edit().putString("secreto", secreto).apply()
+    }
+
     fun telefono(contexto: Context): String? = prefs(contexto).getString("telefono", null)
 
     fun zonaId(contexto: Context): Long = prefs(contexto).getLong("zonaId", -1L)

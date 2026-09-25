@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react';
 import {
   api,
-  type BandaOperador, type ConductorOperador, type EstadisticasOperador,
+  type BandaOperador, type CambioOperador, type ConductorOperador, type EstadisticasOperador,
   type FichaConductorOperador, type FichaPasajeroOperador, type IncidenciaOperador,
   type ParametroOperador, type PasajeroOperador, type PeriodoRecorrido,
   type RecargaOperador, type RecorridoOperador, type ReferenciaOperador,
@@ -1215,6 +1215,10 @@ function Ajustes() {
   const [zonas, setZonas] = useState<ZonaOperador[]>([]);
   const [parametros, setParametros] = useState<ParametroOperador[] | null>(null);
   const [verParametros, setVerParametros] = useState(false);
+  // Quién tocó qué (migración 067). Un registro que nadie puede leer no
+  // sirve de nada, así que vive justo debajo de lo que vigila.
+  const [cambios, setCambios] = useState<CambioOperador[] | null>(null);
+  const [verCambios, setVerCambios] = useState(false);
 
   useEffect(() => {
     api.zonasOperador().then((r) => setZonas(r.zonas)).catch(() => undefined);
@@ -1223,6 +1227,10 @@ function Ajustes() {
     api.parametrosOperador().then((r) => setParametros(r.parametros)).catch(() => undefined);
   }
   useEffect(cargarParametros, []);
+  useEffect(() => {
+    if (!verCambios) return;
+    api.cambiosOperador().then((r) => setCambios(r.cambios)).catch(() => undefined);
+  }, [verCambios]);
 
   return (
     <>
@@ -1240,6 +1248,33 @@ function Ajustes() {
           </p>
           {parametros?.map((p) => (
             <FilaParametro key={p.clave} parametro={p} alGuardado={cargarParametros} />
+          ))}
+        </>
+      )}
+
+      {/* P25-01: un agente de campo podía cambiar precios sin dejar rastro.
+          Ahora queda apuntado quién, cuándo y qué había antes, y se lee aquí.
+          Solo el operador: quién vigila a los agentes no es un agente. */}
+      <button type="button" className="secundario" onClick={() => setVerCambios(!verCambios)}>
+        {verCambios ? 'Ocultar quién tocó qué' : 'Quién tocó qué'}
+      </button>
+      {verCambios && (
+        <>
+          <p className="nota">
+            Últimos cambios de precios y parámetros. No se puede editar ni
+            borrar: un registro que se puede tocar no sirve de registro.
+          </p>
+          {cambios?.length === 0 && <p className="nota">Nadie ha tocado nada todavía.</p>}
+          {cambios?.map((c) => (
+            <div className="fila-parametro" key={c.id}>
+              <div className="oferta-ruta parametro-clave">
+                {c.ambito === 'parametro' ? c.clave : `banda ${c.clave}`}
+              </div>
+              <div className="nota">
+                {c.antes ?? '—'} → {c.ahora ?? 'borrada'} · {c.quien} ·{' '}
+                {new Date(c.cuando).toLocaleString()}
+              </div>
+            </div>
           ))}
         </>
       )}
@@ -1743,10 +1778,18 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   }
 
   async function confirmarPago(referencia: string) {
+    // El identificador del pago, antes de tocar el saldo (migración 068). No
+    // demuestra que el dinero entró —eso solo lo diría una API de Muni Dinero,
+    // que no existe— pero deja la afirmación cotejable contra el extracto, y
+    // el mismo comprobante no puede dar saldo dos veces.
+    const comprobante = window.prompt(
+      'Identificador del pago (transferencia de Muni Dinero, o número del recibo):',
+    );
+    if (!comprobante?.trim()) return;
     setOcupadoId(referencia);
     setError('');
     try {
-      await api.confirmarRecarga(referencia);
+      await api.confirmarRecarga(referencia, comprobante.trim());
       cargarRecargas();
       cargarStats();
     } catch (e) {

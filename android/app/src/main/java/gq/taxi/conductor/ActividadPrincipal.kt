@@ -277,6 +277,10 @@ class ActividadPrincipal : Activity() {
         if (!Sesion.registrado(this)) return
         ejecutor.execute {
             try {
+                // El secreto de sesión, si todavía no lo tiene (migración 069).
+                // Va aquí porque `refrescar` es lo primero que corre con el
+                // registro ya hecho, y es una sola vez en la vida del teléfono.
+                Api.asegurarSecreto(this)
                 // Lo que se hizo sin red, ANTES de pedir el estado: si no, el
                 // estado de ahora —que todavía no sabe que se pulsó
                 // «recogido»— pisaría en pantalla lo que el taxista ya hizo.

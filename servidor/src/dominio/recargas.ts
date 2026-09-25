@@ -3,6 +3,12 @@
 // Recordatorio permanente: aquí NO se comprueba ningún pago. Una recarga
 // pendiente no toca el saldo. El saldo solo sube cuando una persona confirma
 // que ha visto el dinero, y esa confirmación es la que crea el apunte.
+//
+// Desde la migración 068 esa persona tiene que escribir el COMPROBANTE del
+// pago —el identificador que da Muni Dinero, o el número del recibo—, y el
+// mismo comprobante no puede confirmar dos recargas. Sigue sin demostrar que
+// el dinero entró: lo que hace es que la afirmación se pueda cotejar después
+// contra el extracto, y que un pago no pueda convertirse en dos saldos.
 
 import { randomInt } from 'node:crypto';
 import type pg from 'pg';
@@ -156,6 +162,8 @@ export async function confirmarRecarga(
   cliente: pg.ClientBase,
   referencia: string,
   quienConfirma: string,
+  // El identificador del pago que dice haber visto (migración 068).
+  comprobante: string | null = null,
 ): Promise<ResultadoConfirmacion> {
   const fila = await cliente.query(
     `SELECT id, conductor_id, importe_xaf, estado, apunte_id
@@ -183,6 +191,30 @@ export async function confirmarRecarga(
     throw new Error(`La recarga ${referencia} está ${recarga.estado}: no se puede confirmar.`);
   }
 
+  const limpio = comprobante?.trim() ?? '';
+  if ((await leerParametroEntero(cliente, 'recarga_exige_comprobante')) === 1 && limpio === '') {
+    throw new Error(
+      'Falta el comprobante del pago: el identificador de la transferencia o del recibo. '
+      + 'Sin él, confirmar es dar saldo de palabra.',
+    );
+  }
+  if (limpio !== '') {
+    // Un pago confirma UNA recarga. Se comprueba aquí para poder decirlo con
+    // palabras; el índice único de la 068 es el que lo garantiza de verdad,
+    // incluso con dos operadores confirmando a la vez.
+    const repetido = await cliente.query(
+      `SELECT referencia FROM recarga
+       WHERE comprobante IS NOT NULL AND upper(comprobante) = upper($1) AND id <> $2`,
+      [limpio, recarga.id],
+    );
+    if ((repetido.rowCount ?? 0) > 0) {
+      throw new Error(
+        `Ese comprobante ya confirmó la recarga ${repetido.rows[0].referencia}. `
+        + 'Un pago no puede dar saldo dos veces.',
+      );
+    }
+  }
+
   const apunte = await registrarApunte(cliente, {
     conductorId: recarga.conductor_id,
     tipo: 'recarga',
@@ -192,9 +224,10 @@ export async function confirmarRecarga(
 
   await cliente.query(
     `UPDATE recarga
-     SET estado = 'confirmada', resuelta_en = now(), resuelta_por = $2, apunte_id = $3
+     SET estado = 'confirmada', resuelta_en = now(), resuelta_por = $2, apunte_id = $3,
+         comprobante = $4
      WHERE id = $1`,
-    [recarga.id, quienConfirma, apunte.apunteId],
+    [recarga.id, quienConfirma, apunte.apunteId, limpio === '' ? null : limpio],
   );
 
   return {

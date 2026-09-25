@@ -177,6 +177,12 @@ const es: Diccionario = {
   'gracias.titulo': '¡Buen viaje!',
   'gracias.comoFue': '¿Cómo fue con {conductor}?',
   'gracias.gracias': '¡Gracias por valorar!',
+  'gracias.deTuViaje': 'Tu último viaje',
+  'gracias.viajeAnterior': 'El viaje a {destino} quedó sin valorar.',
+  'gracias.cuantoPagaste': '¿Cuánto pagaste? (opcional)',
+  'gracias.xaf': '{n} XAF',
+  'gracias.cobroDeMas': 'Me cobró de más',
+  'accion.ahoraNo': 'Ahora no',
   'accion.pedirOtroTaxi': 'Pedir otro taxi',
 
   // Estadísticas
@@ -515,6 +521,12 @@ const fr: Diccionario = {
   'gracias.titulo': 'Bon voyage !',
   'gracias.comoFue': 'Comment ça s’est passé avec {conductor} ?',
   'gracias.gracias': 'Merci pour ton avis !',
+  'gracias.deTuViaje': 'Ton dernier trajet',
+  'gracias.viajeAnterior': "Le trajet vers {destino} n'a pas été noté.",
+  'gracias.cuantoPagaste': 'Combien as-tu payé ? (facultatif)',
+  'gracias.xaf': '{n} XAF',
+  'gracias.cobroDeMas': "Il m'a fait payer trop cher",
+  'accion.ahoraNo': 'Pas maintenant',
   'accion.pedirOtroTaxi': 'Commander un autre taxi',
 
   'stats.titulo': 'Tes chiffres',
@@ -836,6 +848,12 @@ const en: Diccionario = {
   'gracias.titulo': 'Have a good trip!',
   'gracias.comoFue': 'How was it with {conductor}?',
   'gracias.gracias': 'Thanks for rating!',
+  'gracias.deTuViaje': 'Your last trip',
+  'gracias.viajeAnterior': 'The trip to {destino} was never rated.',
+  'gracias.cuantoPagaste': 'How much did you pay? (optional)',
+  'gracias.xaf': '{n} XAF',
+  'gracias.cobroDeMas': 'He overcharged me',
+  'accion.ahoraNo': 'Not now',
   'accion.pedirOtroTaxi': 'Order another taxi',
 
   'stats.titulo': 'Your numbers',

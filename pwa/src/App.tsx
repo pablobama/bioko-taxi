@@ -15,7 +15,7 @@
 
 import { useEffect, useState } from 'react';
 import {
-  api, enPruebasLocales, uuidDispositivo,
+  api, asegurarSecreto, enPruebasLocales, uuidDispositivo,
   type DatosConductor, type Perfil, type PuntoMapa,
 } from './api';
 import { mensajeDeError, useConexion } from './conexion';
@@ -200,6 +200,12 @@ export default function App() {
   async function cargarSesion() {
     try {
       const sesion = await api.sesion();
+      // El secreto de este dispositivo (migración 069, P15-04). Se pide
+      // DESPUÉS de la sesión porque hasta entonces el dispositivo puede no
+      // existir en el servidor, y una sola vez en toda su vida: a partir de
+      // aquí, conocer el uuid ya no basta para ser tú. Las peticiones que
+      // salgan mientras tanto lo esperan solas (ver `asegurarSecreto`).
+      void asegurarSecreto();
       // Se guarda para poder abrir sin cobertura. Quién eres y qué eres no
       // cambia de un minuto a otro, al revés que el estado de un viaje: esto
       // sí se puede recordar sin mentirle a nadie.

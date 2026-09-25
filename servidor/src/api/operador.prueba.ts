@@ -310,7 +310,13 @@ test('salud: el cuadro de mandos evalúa las alarmas y detecta la zona que se qu
   assert.equal(salud.statusCode, 200, salud.body);
   const datos = salud.json();
   assert.ok(Array.isArray(datos.taxisPorZona));
-  assert.equal(datos.alarmas.length, 5, 'las cinco alarmas de la sección 11');
+  // Cinco de la sección 11 más la de tarifa abusiva, que volvió a ser
+  // posible con la migración 066 (R5, P12-02).
+  assert.equal(datos.alarmas.length, 6, 'las cinco de la sección 11 y la de tarifa');
+  assert.ok(
+    datos.alarmas.some((a: { clave: string }) => a.clave === 'alarma_cobros_de_mas'),
+    'la vigilancia de tarifa tiene que estar en el cuadro de mandos',
+  );
 
   const sinTaxi = datos.alarmas.find((a: { clave: string }) => a.clave === 'alarma_tasa_sin_oferta_max');
   assert.equal(sinTaxi.disparada, true);
@@ -367,6 +373,104 @@ test('central: crear una solicitud por teléfono le da dispositivo propio al que
     'la solicitud de la central tiene que salir en su listado',
   );
   }));
+});
+
+// --- Migración 067: quién tocó los precios y los parámetros ----------------
+
+test('cambiar una banda deja rastro de quién, cuándo y qué había antes', async () => {
+  const { zonaId } = await crearZonaConReferencias();
+  const otra = await crearZonaConReferencias();
+
+  const poner = (p25: number, p50: number, p75: number) => app.inject({
+    method: 'POST', url: '/api/operador/bandas', headers: cabeceras(UUID_OPERADOR),
+    payload: { zonaOrigenId: zonaId, zonaDestinoId: otra.zonaId, p25, p50, p75 },
+  });
+
+  assert.equal((await poner(1000, 1500, 2000)).statusCode, 200);
+  assert.equal((await poner(2000, 2500, 3000)).statusCode, 200);
+
+  const cambios = await app.inject({
+    method: 'GET', url: '/api/operador/cambios', headers: cabeceras(UUID_OPERADOR),
+  });
+  assert.equal(cambios.statusCode, 200);
+  const mios = cambios.json().cambios.filter(
+    (c: { clave: string }) => c.clave === `${zonaId}→${otra.zonaId}`,
+  );
+  assert.equal(mios.length, 2, 'los dos cambios, no solo el último');
+  // El más reciente primero, y con lo que había antes: se puede deshacer sin
+  // adivinar.
+  assert.equal(mios[0].antes, '1000/1500/2000');
+  assert.equal(mios[0].ahora, '2000/2500/3000');
+  assert.equal(mios[1].antes, null, 'la primera vez no había nada');
+  assert.equal(mios[0].quien, 'operador');
+});
+
+test('cambiar un parámetro también deja rastro', async () => {
+  const antes = await app.inject({
+    method: 'GET', url: '/api/operador/parametros', headers: cabeceras(UUID_OPERADOR),
+  });
+  const parametro = antes.json().parametros.find(
+    (p: { clave: string }) => p.clave === 'oleada_2_seg',
+  );
+  const valorOriginal = parametro.valor;
+  try {
+    await app.inject({
+      method: 'POST', url: '/api/operador/parametros/oleada_2_seg',
+      headers: cabeceras(UUID_OPERADOR), payload: { valor: '22' },
+    });
+    const cambios = await app.inject({
+      method: 'GET', url: '/api/operador/cambios', headers: cabeceras(UUID_OPERADOR),
+    });
+    const mio = cambios.json().cambios.find(
+      (c: { clave: string; ahora: string }) => c.clave === 'oleada_2_seg' && c.ahora === '22',
+    );
+    assert.ok(mio, 'un parámetro cambia el comportamiento entero sin desplegar: tiene que constar');
+    assert.equal(mio.antes, valorOriginal);
+  } finally {
+    await app.inject({
+      method: 'POST', url: '/api/operador/parametros/oleada_2_seg',
+      headers: cabeceras(UUID_OPERADOR), payload: { valor: valorOriginal },
+    });
+  }
+});
+
+test('el registro de cambios no se puede editar ni borrar', async () => {
+  const { zonaId } = await crearZonaConReferencias();
+  const otra = await crearZonaConReferencias();
+  await app.inject({
+    method: 'POST', url: '/api/operador/bandas', headers: cabeceras(UUID_OPERADOR),
+    payload: { zonaOrigenId: zonaId, zonaDestinoId: otra.zonaId, p25: 100, p50: 200, p75: 300 },
+  });
+  // El mismo candado que `transicion` y `apunte`: un registro de auditoría que
+  // se puede editar no es un registro de auditoría.
+  await assert.rejects(
+    () => pool.query(`UPDATE cambio_ajuste SET valor_nuevo = '0/0/0' WHERE clave = $1`,
+      [`${zonaId}→${otra.zonaId}`]),
+  );
+  await assert.rejects(
+    () => pool.query('DELETE FROM cambio_ajuste WHERE clave = $1', [`${zonaId}→${otra.zonaId}`]),
+  );
+});
+
+test('el listado de cambios es solo del operador: quién vigila a los agentes no es un agente', async () => {
+  const agente = await enTransaccion(pool, async (c) => {
+    const conductor = await c.query(
+      `INSERT INTO conductor (telefono, nombre, estado_verificacion, es_agente)
+       VALUES ($1, 'Taxi CAM', 'verificado', true) RETURNING id`,
+      [telefonoUnico()],
+    );
+    const uuid = randomUUID();
+    await c.query(
+      `INSERT INTO dispositivo (uuid_persistente, tipo, conductor_id)
+       VALUES ($1, 'conductor', $2)`,
+      [uuid, conductor.rows[0].id],
+    );
+    return uuid;
+  });
+  const res = await app.inject({
+    method: 'GET', url: '/api/operador/cambios', headers: cabeceras(agente),
+  });
+  assert.equal(res.statusCode, 403);
 });
 
 test('gazetteer: crear, desactivar (visible para el operador), alias y su quitado ruidoso', async () => {

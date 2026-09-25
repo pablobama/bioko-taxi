@@ -31,6 +31,66 @@ export function uuidDispositivo(): string {
   return uuid;
 }
 
+// El secreto de este dispositivo (migración 069, P15-04). El uuid dice quién
+// dices ser; esto es lo que lo demuestra. Se pide una vez y se guarda junto al
+// uuid: si se borran los datos del navegador se pierden los dos, y el
+// dispositivo vuelve como nuevo, que es lo correcto.
+//
+// Nota para quien lea esto buscando dónde está el agujero: sigue estando en
+// que no es una cuenta. Un teléfono en manos de otro es su sesión, igual que
+// su WhatsApp. Esto solo cierra la puerta de «sé tu uuid, luego soy tú».
+export function secretoDispositivo(): string | null {
+  return localStorage.getItem(`secreto:${uuidDispositivo()}`);
+}
+
+// Para las URL de SSE, que no admiten cabeceras. Cadena vacía si no hay
+// secreto: la URL queda exactamente como antes.
+function sufijoSecreto(): string {
+  const secreto = secretoDispositivo();
+  return secreto === null ? '' : `&secreto=${encodeURIComponent(secreto)}`;
+}
+
+function guardarSecreto(secreto: string): void {
+  localStorage.setItem(`secreto:${uuidDispositivo()}`, secreto);
+}
+
+// Se llama al arrancar y, por si acaso, antes de cualquier petición que salga
+// sin secreto. Si ya hay uno guardado no se pide otro; si el servidor dice que
+// ya emitió uno tampoco se insiste: o lo tenemos, o esta sesión se empieza de
+// cero.
+//
+// UNA sola promesa para toda la aplicación. Al abrir salen media docena de
+// peticiones a la vez y la emisión tarda su viaje de ida y vuelta: sin esto,
+// unas cuantas salían sin secreto contra un servidor que acababa de empezar a
+// exigirlo, y se llevaban un 401. Le pasó a la conexión viva del taxista, que
+// es la que trae las carreras — se vio probándolo en el navegador.
+let emision: Promise<void> | null = null;
+
+export function asegurarSecreto(): Promise<void> {
+  if (secretoDispositivo() !== null) return Promise.resolve();
+  if (emision === null) emision = pedirSecreto();
+  return emision;
+}
+
+async function pedirSecreto(): Promise<void> {
+  try {
+    // `fetch` directo y no `pedirJson`: esta es la petición que las demás
+    // esperan, y pasar por el mismo sitio sería esperarse a sí misma.
+    const respuesta = await fetch('/api/sesion/secreto', {
+      method: 'POST',
+      headers: { 'x-dispositivo': uuidDispositivo(), 'content-type': 'application/json' },
+      body: '{}',
+    });
+    if (!respuesta.ok) return;
+    const { secreto } = await respuesta.json() as { secreto?: string };
+    if (secreto) guardarSecreto(secreto);
+  } catch {
+    // Sin red: se sigue funcionando igual que antes de la migración 069, y se
+    // reintenta en la siguiente apertura. Romper el arranque por esto sería
+    // dejar a un taxista sin trabajar por una credencial que aún no necesita.
+  }
+}
+
 interface OpcionesPeticion extends RequestInit {
   // Reintentos extra si la petición muere EN LA RED (nunca si el servidor
   // respondió algo). Los GET reintentan una vez solos; un POST solo si quien
@@ -39,12 +99,18 @@ interface OpcionesPeticion extends RequestInit {
 }
 
 async function pedirJsonUnaVez<T>(ruta: string, opciones: RequestInit): Promise<T> {
+  // Si la emisión del secreto está en vuelo, esta petición la espera: salir
+  // sin él contra un servidor que ya lo tiene es un 401 seguro.
+  if (secretoDispositivo() === null && emision !== null) await emision;
   let respuesta: Response;
   try {
     respuesta = await fetch(ruta, {
       ...opciones,
       headers: {
         'x-dispositivo': uuidDispositivo(),
+        // Solo si lo hay: un dispositivo de antes de la migración 069 no
+        // tiene, y el servidor no se lo exige.
+        ...(secretoDispositivo() !== null ? { 'x-secreto': secretoDispositivo()! } : {}),
         'content-type': 'application/json',
         ...(opciones.headers ?? {}),
       },
@@ -120,6 +186,18 @@ export interface PuntoMapa {
   zonaId: number;
   usos: number;
   categoria: string;
+}
+
+// Un viaje terminado al que le falta la valoración del pasajero (P7-03).
+export interface ValoracionPendiente {
+  solicitudId: number;
+  conductor: string;
+  destino: string;
+  cuando: string;
+  // Tres importes de un toque, sacados de la banda de esa ruta. Vacío si la
+  // ruta no tiene banda: entonces no se pregunta el precio, porque inventarse
+  // las cifras sería sugerirle un precio.
+  importesSugeridos: number[];
 }
 
 export interface Reputacion {
@@ -501,6 +579,17 @@ export interface ParametroOperador {
   descripcion: string | null;
 }
 
+// Un cambio de precio o de parámetro, con nombre y hora (migración 067).
+export interface CambioOperador {
+  id: number;
+  ambito: string;
+  clave: string;
+  antes: string | null;
+  ahora: string | null;
+  quien: string;
+  cuando: string;
+}
+
 // Cobertura agregada (migración 023). Conteos por zona, nunca posiciones.
 // Un coche que podría venir, para elegirlo (migración 062). Sin posiciones:
 // qué coche es, cómo lo valoran y cuánto tardaría.
@@ -769,11 +858,23 @@ export const api = {
 
   mapa: () => pedirJson<{ referencias: PuntoMapa[]; zonas: unknown[] }>('/api/mapa'),
 
-  valorar: (solicitudId: number, puntuacion: number) =>
+  // `extras` son las dos respuestas voluntarias de la migración 066: lo que
+  // pagó y si le cobraron de más. Van con la nota porque son la misma
+  // respuesta, y así la cola sin red las arrastra sin código nuevo.
+  valorar: (
+    solicitudId: number,
+    puntuacion: number,
+    extras: { importeXaf?: number; cobroDeMas?: boolean } = {},
+  ) =>
     pedirJson<{ guardada: boolean }>(`/api/solicitudes/${solicitudId}/valoracion`, {
       method: 'POST',
-      body: JSON.stringify({ puntuacion }),
+      body: JSON.stringify({ puntuacion, ...extras }),
     }),
+
+  // El viaje que cerró sin valorar (P7-03). Se pregunta al abrir, porque quien
+  // se baja del taxi cierra la aplicación y antes no se le preguntaba nunca.
+  valoracionPendiente: () =>
+    pedirJson<{ pendiente: ValoracionPendiente | null }>('/api/valoracion-pendiente'),
 
   // El teléfono lo toma el servidor del perfil; no hace falta enviarlo.
   pedirTaxi: (
@@ -895,10 +996,13 @@ export const api = {
       `/api/operador/recargas${estado ? `?estado=${encodeURIComponent(estado)}` : ''}`,
     ),
 
-  confirmarRecarga: (referencia: string) =>
+  // `comprobante`: el identificador del pago que el operador dice haber visto
+  // (migración 068). Sin él el servidor no confirma: dar saldo de palabra era
+  // exactamente lo que P18-01 señalaba.
+  confirmarRecarga: (referencia: string, comprobante: string) =>
     pedirJson<{ recargaId: number; importeXaf: number; saldoXaf: number; yaEstaba: boolean }>(
       `/api/operador/recargas/${referencia}/confirmar`,
-      { method: 'POST', body: '{}', reintentos: 1 },
+      { method: 'POST', body: JSON.stringify({ comprobante }), reintentos: 1 },
     ),
 
   rechazarRecarga: (referencia: string, motivo: string) =>
@@ -1030,6 +1134,9 @@ export const api = {
       '/api/operador/bandas',
       { method: 'POST', body: JSON.stringify(datos), reintentos: 1 },
     ),
+
+  cambiosOperador: () =>
+    pedirJson<{ cambios: CambioOperador[] }>('/api/operador/cambios'),
 
   parametrosOperador: () =>
     pedirJson<{ parametros: ParametroOperador[] }>('/api/operador/parametros'),
@@ -1171,17 +1278,37 @@ export function abrirEventos(
   solicitudId: number,
   alRecibir: (evento: EventoSse) => void,
 ): () => void {
-  const fuente = new EventSource(
-    `/api/solicitudes/${solicitudId}/eventos?dispositivo=${uuidDispositivo()}`,
+  return abrirFlujo(
+    () => `/api/solicitudes/${solicitudId}/eventos?dispositivo=${uuidDispositivo()}${sufijoSecreto()}`,
+    alRecibir,
   );
-  fuente.onmessage = (mensaje) => {
-    try {
-      alRecibir(JSON.parse(mensaje.data));
-    } catch {
-      // Carga malformada: se ignora; el estado real siempre se puede pedir.
-    }
+}
+
+// El trozo común de las dos conexiones vivas. Espera al secreto antes de
+// abrir: la URL se compone con él dentro, y si se compusiera antes de tenerlo
+// el servidor cerraría la conexión con un 401 y el taxista se quedaría sin
+// enterarse de las carreras hasta recargar.
+function abrirFlujo(
+  url: () => string,
+  alRecibir: (evento: EventoSse) => void,
+): () => void {
+  let fuente: EventSource | null = null;
+  let cerrado = false;
+  void asegurarSecreto().then(() => {
+    if (cerrado) return;
+    fuente = new EventSource(url());
+    fuente.onmessage = (mensaje) => {
+      try {
+        alRecibir(JSON.parse(mensaje.data));
+      } catch {
+        // Carga malformada: se ignora; el estado real siempre se puede pedir.
+      }
+    };
+  });
+  return () => {
+    cerrado = true;
+    fuente?.close();
   };
-  return () => fuente.close();
 }
 
 // Conexión viva del taxista: las carreras llegan en el momento, sin esperar al
@@ -1189,15 +1316,8 @@ export function abrirEventos(
 export function abrirEventosConductor(
   alRecibir: (evento: EventoSse) => void,
 ): () => void {
-  const fuente = new EventSource(
-    `/api/conductor/eventos?dispositivo=${uuidDispositivo()}`,
+  return abrirFlujo(
+    () => `/api/conductor/eventos?dispositivo=${uuidDispositivo()}${sufijoSecreto()}`,
+    alRecibir,
   );
-  fuente.onmessage = (mensaje) => {
-    try {
-      alRecibir(JSON.parse(mensaje.data));
-    } catch {
-      // Carga malformada: el estado real siempre se puede volver a pedir.
-    }
-  };
-  return () => fuente.close();
 }

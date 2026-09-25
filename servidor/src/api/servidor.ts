@@ -19,6 +19,8 @@ import { ocupacionDe, rutaDe } from '../dominio/ocupacion.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
 import { registrarPosicion } from '../dominio/proximidad.js';
 import { puntoDeRecogida } from '../dominio/recogida.js';
+import { declararPrecio, recalcularBandaDe } from '../dominio/precios.js';
+import { emitirSecreto, secretoValido } from '../dominio/secretos.js';
 import { llegadaDeViaje } from '../dominio/llegada.js';
 import { reputacionDe, valorarViaje } from '../dominio/reputacion.js';
 import {
@@ -79,6 +81,37 @@ export function crearServidor(
     void respuesta.header('content-length', comprimido.length);
     void respuesta.header('vary', 'accept-encoding');
     return comprimido;
+  });
+
+  // El secreto del dispositivo (migración 069, P15-04). Va como gancho global
+  // y no dentro de cada resolvedor de identidad a propósito: hay cuatro sitios
+  // donde se resuelve quién llama —pasajero, conductor, llamadas, operador— y
+  // lo que menos falta hace en una comprobación de identidad es que existan
+  // cuatro copias que puedan divergir. Aquí pasa TODA petición.
+  //
+  // Solo se exige a quien tiene secreto emitido: una aplicación vieja, que no
+  // sabe pedirlo, sigue funcionando igual. Ver la migración 069.
+  app.addHook('preHandler', async (req, reply) => {
+    const uuid = (req.headers['x-dispositivo'] as string | undefined)
+      ?? (req.query as Record<string, string | undefined>).dispositivo;
+    if (!uuid || !PATRON_UUID.test(uuid)) return;
+    const fila = await pool.query(
+      'SELECT secreto_hash FROM dispositivo WHERE uuid_persistente = $1',
+      [uuid.toLowerCase()],
+    );
+    const guardado = fila.rows[0]?.secreto_hash as string | null | undefined;
+    if (!guardado) return;
+    // El secreto viaja en cabecera, y por la URL solo donde no queda otra: la
+    // conexión SSE no admite cabeceras. Es el mismo compromiso que ya se hacía
+    // con el uuid, y por eso el secreto se puede cambiar sin perder la
+    // identidad el día que haga falta.
+    const presentado = (req.headers['x-secreto'] as string | undefined)
+      ?? (req.query as Record<string, string | undefined>).secreto;
+    if (typeof presentado === 'string' && secretoValido(guardado, presentado)) return;
+    void reply.status(401).send({
+      error: 'Esta sesión no es de este dispositivo. Vuelve a abrir la aplicación.',
+      codigo: 'secreto_invalido',
+    });
   });
 
   registrarRutasSesion(app, pool);
@@ -962,7 +995,9 @@ export function crearServidor(
 
   // Como `dispositivoDesde`, pero sin exigir que el móvil sea de pasajero:
   // quien sigue un viaje puede tener instalada la app de taxista.
-  async function dispositivoDeCualquiera(req: FastifyRequest): Promise<{ id: number }> {
+  async function dispositivoDeCualquiera(
+    req: FastifyRequest,
+  ): Promise<{ id: number; uuid: string }> {
     const uuid = (req.headers['x-dispositivo'] as string | undefined)
       ?? (req.query as Record<string, string | undefined>).dispositivo;
     if (!uuid || !PATRON_UUID.test(uuid)) {
@@ -975,7 +1010,7 @@ export function crearServidor(
        RETURNING id`,
       [uuid.toLowerCase()],
     );
-    return { id: res.rows[0].id };
+    return { id: res.rows[0].id, uuid: uuid.toLowerCase() };
   }
 
   // El teléfono verificado de este dispositivo, o null. Vale tanto el de un
@@ -1093,7 +1128,12 @@ export function crearServidor(
     const dispositivo = await dispositivoDesde(req);
     const solicitudId = Number((req.params as { id: string }).id);
     const detalle = await solicitudPropia(solicitudId, dispositivo.id);
-    const cuerpo = req.body as { puntuacion?: number; motivo?: string };
+    const cuerpo = req.body as {
+      puntuacion?: number; motivo?: string;
+      // Los dos voluntarios (migración 066): la casilla de «me cobró de más» y
+      // lo que pagó. Sin ellos la valoración se guarda igual.
+      cobroDeMas?: boolean; importeXaf?: number;
+    };
 
     if (detalle.viajeId === null) {
       throw errorHttp(409, 'Esta solicitud no llegó a tener viaje: no hay nada que valorar.');
@@ -1102,17 +1142,123 @@ export function crearServidor(
       throw errorHttp(409, `Aún no puedes valorar: la solicitud está en ${detalle.estado}.`);
     }
     try {
-      const resultado = await enTransaccion(pool, (c) => valorarViaje(
-        c, detalle.viajeId as number, 'cliente',
-        { puntuacion: cuerpo?.puntuacion as number, motivo: cuerpo?.motivo },
-      ));
+      const resultado = await enTransaccion(pool, async (c) => {
+        const valorada = await valorarViaje(
+          c, detalle.viajeId as number, 'cliente',
+          {
+            puntuacion: cuerpo?.puntuacion as number,
+            motivo: cuerpo?.motivo,
+            cobroDeMas: cuerpo?.cobroDeMas === true,
+          },
+        );
+        // El precio, si lo dijo. Va en la misma transacción que la valoración
+        // porque es la misma respuesta de la misma persona, y la banda se
+        // recalcula ahí mismo: es una consulta sobre decenas de filas, y
+        // hacerlo al vuelo evita un proceso periódico que habría que vigilar.
+        if (Number.isInteger(cuerpo?.importeXaf)) {
+          await declararPrecio(c, detalle.viajeId as number, 'cliente', Number(cuerpo.importeXaf));
+          await recalcularBandaDe(c, detalle.viajeId as number);
+        }
+        return valorada;
+      });
       return { guardada: resultado.guardada, repetida: !resultado.guardada };
     } catch (error) {
-      if (error instanceof Error && error.message.includes('Puntuación no válida')) {
+      if (error instanceof Error
+        && (error.message.includes('Puntuación no válida')
+          || error.message.includes('Importe no válido'))) {
         throw errorHttp(400, error.message);
       }
       throw error;
     }
+  });
+
+  // El secreto de este dispositivo (migración 069). Se pide una sola vez, en
+  // el primer arranque de la aplicación, y a partir de ahí acompaña a cada
+  // petición. Si ya había uno emitido NO se da otro: quien conociera el uuid
+  // pediría uno nuevo y se quedaría con la sesión, que es justo lo que esto
+  // impide.
+  app.post('/api/sesion/secreto', async (req, reply) => {
+    // A propósito NO se usa `dispositivoDeCualquiera`, que da de alta el
+    // dispositivo si no existe: el panel del operador no tiene fila en
+    // `dispositivo` —su identidad es una lista aparte— y pedir el secreto le
+    // crearía una de pasajero de la nada. Aquí solo se emite a quien ya es
+    // alguien; el resto recibe un 404 que el cliente ignora.
+    const uuid = (req.headers['x-dispositivo'] as string | undefined)
+      ?? (req.query as Record<string, string | undefined>).dispositivo;
+    if (!uuid || !PATRON_UUID.test(uuid)) {
+      throw errorHttp(400, 'Falta la cabecera x-dispositivo con un UUID válido.');
+    }
+    const emitido = await emitirSecreto(pool, uuid.toLowerCase());
+    if (emitido === null) throw errorHttp(404, 'Este dispositivo no existe todavía.');
+    if (emitido.yaTenia) {
+      return reply.status(409).send({
+        error: 'Este dispositivo ya tiene secreto. Si lo perdiste, la sesión se empieza de cero.',
+        codigo: 'secreto_ya_emitido',
+      });
+    }
+    return { secreto: emitido.secreto };
+  });
+
+  // El viaje que cerró sin valorar (P7-03).
+  //
+  // El enrutamiento siempre dijo que la valoración del pasajero es «diferida a
+  // próxima sesión», y nunca se le preguntaba: si cerraba la aplicación al
+  // bajarse —que es lo normal, se baja del coche y sigue con su vida— la
+  // valoración no se daba nunca. Y sin valoraciones, la reputación no dice
+  // nada y el único control sobre un taxista que cobra de más no existe.
+  //
+  // Se pregunta por el ÚLTIMO viaje completado sin valorar, y solo durante
+  // `valoracion_pendiente_dias`: preguntar por un viaje de hace tres semanas
+  // es pedirle que se invente un recuerdo.
+  app.get('/api/valoracion-pendiente', async (req) => {
+    const dispositivo = await dispositivoDesde(req);
+    const dias = await leerParametroEntero(pool, 'valoracion_pendiente_dias');
+    const res = await pool.query(
+      `SELECT s.id AS solicitud_id, v.id AS viaje_id, c.nombre AS conductor,
+              rd.nombre AS destino, s.creada_en,
+              COALESCE(zo.zona_padre_id, zo.id) AS zona_origen_id,
+              COALESCE(zd.zona_padre_id, zd.id) AS zona_destino_id
+       FROM solicitud s
+       JOIN viaje v ON v.solicitud_id = s.id
+       JOIN conductor c ON c.id = s.conductor_id
+       JOIN referencia ro ON ro.id = s.referencia_origen_id
+       JOIN referencia rd ON rd.id = s.referencia_destino_id
+       JOIN zona zo ON zo.id = ro.zona_id
+       JOIN zona zd ON zd.id = rd.zona_id
+       WHERE s.dispositivo_cliente_id = $1
+         AND s.estado = 'COMPLETADO'
+         AND s.creada_en >= now() - make_interval(days => $2)
+         AND NOT EXISTS (
+           SELECT 1 FROM valoracion val
+           WHERE val.viaje_id = v.id AND val.emisor = 'cliente')
+       ORDER BY s.creada_en DESC
+       LIMIT 1`,
+      [dispositivo.id, dias],
+    );
+    if (res.rowCount === 0) return { pendiente: null };
+    const fila = res.rows[0];
+    // Los tres importes de un toque salen de la banda de SU ruta. Sin banda no
+    // se ofrece ninguno y la pregunta del precio no aparece: inventarse tres
+    // cifras sería sugerirle un precio, que es justo lo que no se hace aquí.
+    const banda = await pool.query(
+      `SELECT p25, p50, p75 FROM banda_precio
+       WHERE zona_origen_id = $1 AND zona_destino_id = $2`,
+      [fila.zona_origen_id, fila.zona_destino_id],
+    );
+    const importes = banda.rowCount === 1
+      ? [Number(banda.rows[0].p25), Number(banda.rows[0].p50), Number(banda.rows[0].p75)]
+      : [];
+    return {
+      pendiente: {
+        solicitudId: Number(fila.solicitud_id),
+        conductor: fila.conductor,
+        destino: fila.destino,
+        cuando: fila.creada_en,
+        // Sin repetidos: con pocas muestras el p25 y el p50 salen iguales, y
+        // dos botones con el mismo número parecen un error de la aplicación.
+        importesSugeridos: [...new Set(importes)],
+      },
+    };
   });
 
   return app;

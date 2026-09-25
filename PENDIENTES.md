@@ -171,11 +171,6 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   apertura (49 KB). Un service worker con caché del cascarón la haría abrir
   sin conexión; se valorará tras medir en el piloto.
 
-- **[P7-03] Valoración del cliente (C6) sin interfaz.** El enrutamiento la
-  define como «diferida a próxima sesión», pero la PWA aún no pide valoración
-  al reabrir tras un viaje completado. Pendiente para el paso 9/10, junto con
-  la reputación visible del conductor.
-
 - **[P8-01] Aceptación del paso 8 pendiente de dispositivo real.** El criterio
   («recibe broadcast con la pantalla apagada y la app en segundo plano»)
   exige un teléfono Android físico y un proyecto Firebase real con
@@ -192,18 +187,6 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   varias solicitudes (no puede: el estado OFERTADO lo impide por diseño), la
   interfaz enseña la primera. Simplificación consciente alineada con la regla
   «un conductor OFERTADO no recibe otra oferta».
-
-- **[P12-01] `banda_precio` se quedó sin fuente de datos.** Al eliminar el
-  reporte de precio (migración 012) las bandas ya no pueden calcularse. El
-  conductor sigue viéndolas en el broadcast (R2: no aceptar a ciegas), pero
-  ahora las tiene que rellenar el operador a mano por par de zonas. Falta esa
-  pantalla en el panel del paso 9; hasta entonces el broadcast dice «sin
-  precio orientativo de esta ruta todavía».
-
-- **[P12-02] Sin precios no hay detección de abuso de tarifa.** La regla R5
-  contemplaba detectar conductores con divergencia sistemática de precio. Ya
-  no es posible; el control queda en las valoraciones del pasajero (pendiente
-  P7-03) y en las incidencias que abra el operador.
 
 - **[P12-03] Las pruebas y las pruebas manuales comparten base de datos.** La
   batería deja solicitudes a medias que el planificador ofrece a los
@@ -277,13 +260,18 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   «suprimido» —igual que una regla con canal_1 nulo— o desaparecer, en lugar
   de parecer una entrega buena en `evento_salida`.
 
-- **[P18-01] Ningún pago se verifica: la confirmación es un acto de fe del
-  operador.** No hay integración con Muni Dinero ni con ningún banco. El
-  conductor pide la recarga, la app le da una referencia, él paga por su
-  cuenta, y una PERSONA mira la cuenta y confirma. Confirmar sin haber visto
-  el dinero es regalar saldo, y nada en el sistema lo impide. Si Muni Dinero
-  publicara una API o exportara movimientos, casar la referencia sería
-  automático; hoy no.
+- **[P18-01] Ningún pago se verifica de verdad, pero ya no se confirma a
+  ciegas.** Sigue sin haber integración con Muni Dinero ni con ningún banco: el
+  dinero no pasa por aquí y quien dice que el pago llegó es una persona mirando
+  una cuenta. Lo que cambió el 2026-09-25 (migración 068) es que esa
+  afirmación dejó de ser anónima e irrepetible: al confirmar hay que escribir
+  el COMPROBANTE del pago —el identificador de la transferencia, o el número
+  del recibo—, y el mismo comprobante NO puede confirmar dos recargas (índice
+  único). Un pago, un saldo; y cualquiera puede cotejar después contra el
+  extracto. Queda pendiente lo de siempre: si Muni Dinero publicara una API o
+  exportara movimientos, casar la referencia sería automático. También queda
+  sin hacer el doble par de ojos para importes grandes — con un solo operador
+  bloquearía el trabajo, así que se deja escrito en vez de implementado.
 
 - **[P18-02] El taxista no se entera de que le han confirmado la recarga.** El
   saldo sube y lo ve la próxima vez que abre la app, pero no recibe aviso. Con
@@ -306,28 +294,21 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   tocarla no oirá el primer aviso. Por eso ningún aviso importante depende solo
   del sonido.
 
-- **[P15-04] El registro sigue SIN ser autenticación, aunque el teléfono ya
-  sea único.** Desde la migración 024 el número es la clave de identidad —
-  canónico, único por papel y unido al dispositivo que lo tiene ahora— y las
-  sanciones lo siguen: reinstalar ya no limpia un bloqueo, que era la puerta
-  de atrás. Pero **nadie verifica el número**: no se manda ningún código. Así
-  que el teléfono es una LLAVE (te devuelve tu cuenta), no una PRUEBA (no
-  demuestra que sea tuyo). Consecuencias que hay que tener presentes:
-  - Quien teclee el número de otro se lleva sus sanciones, que es un castigo
-    y no un premio: por ahí no hay incentivo. Pero sí puede conseguir que
-    bloqueen a un inocente. El operador puede desbloquear, así que es
-    reversible.
-  - El historial de viajes NO se hereda al reclamar un número, a propósito: si
-    viajara, cualquiera que conozca tu teléfono vería a dónde sueles ir con
-    solo teclearlo. Coste asumido: al reinstalar, «tus destinos de siempre»
-    empiezan de cero aunque el bloqueo te siga.
-  - Compartir teléfono (normal en Malabo) ahora significa que la cuenta se la
-    queda quien lo declaró último; el anterior conserva su fila y su historial
-    pero deja de tener el número vigente. Si molesta en el piloto, la salida
-    es una pantalla del operador para separarlos.
-  Si hace falta identidad de verdad, lo barato sigue siendo un código por
-  correo con SMTP propio (sin coste por mensaje); por SMS costaría dinero y lo
-  prohíbe la decisión 3.1.
+- **[P15-04] Sigue sin ser una cuenta, aunque ya no baste con saber tu uuid.**
+  Resuelto lo peor el 2026-09-25 (migración 069): cada dispositivo tiene un
+  secreto de 32 bytes que el servidor entrega una vez, guarda en hash y exige
+  en cada petición. Antes, quien conociera el uuid ERA esa persona —y el uuid
+  viaja en la URL del SSE, así que acaba en los registros de cualquier proxy—.
+  Lo que sigue abierto, y no lo arregla ningún código: esto no es una cuenta.
+  No hay contraseña ni recuperación, y un teléfono en manos de otro es la
+  sesión de su dueño, igual que su WhatsApp. El número verificado (migración
+  027) es lo que permite recuperar la identidad en un teléfono nuevo; el
+  secreto solo impide que alguien se cuele en la sesión que ya existe.
+  **Compatibilidad:** el secreto se exige solo a quien tiene uno emitido, y
+  solo se emite cuando el cliente lo pide. Una aplicación vieja sigue
+  funcionando igual — y eso significa que un taxista que no actualice se queda
+  con la protección antigua: conviene mirar en producción cuántos dispositivos
+  siguen sin secreto pasadas unas semanas.
 
 - **[P15-05] Se guardan edad y género sin haber definido para qué.** Son
   opcionales y el usuario puede no decirlos, pero recoger datos personales sin
@@ -440,13 +421,6 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   el conteo está sirviendo para encontrar taxis fuera de la aplicación. Hoy no
   se registra nada de eso.
 
-- **[P25-01] Un agente de campo puede cambiar precios sin dejar rastro.** El
-  papel de agente (migración 025) permite fijar las bandas de precio entre
-  zonas, y esos cambios no se registran en ninguna parte: no se sabe quién los
-  hizo ni cuándo. Con dos o tres agentes de confianza no es urgente, pero es
-  el tipo de cosa que solo se echa de menos cuando ya pasó. El operador puede
-  retirar el papel, así que el daño se corta; reconstruir lo que se tocó, no.
-
 - **[P25-02] La precisión del GPS** — resuelto el 2026-07-30. El teléfono
   espera a fijar (`watchPosition`, mostrando cómo mejora) en vez de coger la
   primera lectura, el servidor exige `coords.accuracy` y rechaza por encima
@@ -542,6 +516,44 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   trabajo para el operador, que los va confirmando.
 
 ## Resueltos
+
+- **[P7-03] La valoración del pasajero, por fin pedida** — resuelto el
+  2026-09-25. El enrutamiento siempre dijo «diferida a próxima sesión», y no se
+  pedía en ninguna: quien se baja del taxi cierra la aplicación. Ahora, al
+  abrir sin viaje en marcha, se pregunta por el último viaje completado sin
+  valorar (dentro de `valoracion_pendiente_dias`), diciendo de qué viaje se
+  habla. «Ahora no» se respeta para ese viaje y no se vuelve a insistir: una
+  pregunta que reaparece se contesta al azar, y una nota al azar es peor que
+  ninguna. Sin valoraciones no hay reputación (P14-04) ni forma de saber quién
+  cobra de más (P12-02), así que esto era la base de las dos.
+
+- **[P12-01] Las bandas de precio tienen fuente de datos otra vez** — resuelto
+  el 2026-09-25 (migración 066). La 012 quitó el reporte de precio por una
+  razón buena —fricción a cambio de nada, el dinero no pasa por aquí— y esa
+  razón se respeta: el conductor no declara nada y el pasajero no teclea. En la
+  pantalla de valoración se le ofrecen tres importes de un toque, sacados de la
+  banda de SU ruta, y puede no tocar ninguno. Con
+  `banda_muestras_minimas` respuestas o más, la banda se calcula sola de lo que
+  la gente dice que paga; con menos se respeta la que escribió el operador,
+  porque su criterio de campo vale más que tres cifras sueltas. `muestras` deja
+  a la vista cuál es cuál. Nunca es una tarifa: el precio se negocia.
+
+- **[P12-02] Vuelve a poder mirarse el abuso de tarifa** — resuelto el
+  2026-09-25 (migración 066, regla R5). Dos señales, y la primera es la que
+  vale: el pasajero puede marcar «me cobró de más», que no necesita ninguna
+  cifra y por eso la usa cualquiera; y los viajes cuyo precio declarado queda
+  por encima del p75 de su ruta. Un viaje así no dice nada —una noche, lluvia,
+  maletas—; lo que dice algo es que sean casi todos. Sale como alarma en el
+  cuadro de mandos del operador pasadas `alarma_cobros_de_mas` marcas en 30
+  días, con los dos números delante: decide el operador, no la alarma.
+
+- **[P25-01] Los cambios de precio dejan rastro** — resuelto el 2026-09-25
+  (migración 067). Quién cambió una banda o un parámetro del sistema, cuándo, y
+  qué había antes. La tabla es append-only con el mismo candado que
+  `transicion` y `apunte`: un registro de auditoría que se puede editar no es
+  un registro de auditoría. Se lee desde el panel («Quién tocó qué») y solo lo
+  ve el operador: quién vigila a los agentes no es un agente. Se auditan
+  también los parámetros, que cambian el comportamiento entero sin desplegar.
 
 - **[P14-04] La reputación cuenta en el reparto** — resuelto el 2026-09-24
   (migración 065). Entra en el ORDEN de los candidatos, con tres cuidados:

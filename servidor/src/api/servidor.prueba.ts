@@ -322,15 +322,22 @@ test('recarga: pedirla NO sube el saldo; solo lo hace la confirmación del opera
   assert.equal(repetida.json().referencia, recarga.referencia);
   assert.equal(repetida.json().importeXaf, 6000, 'no se cambia el importe de una pendiente');
 
-  // El operador confirma: ahora sí.
+  // El operador confirma: ahora sí, y con el comprobante del pago delante
+  // (migración 068).
+  const comprobante = `MD-${randomUUID()}`;
+  await assert.rejects(
+    () => enTransaccion(pool, (c) => confirmarRecarga(c, recarga.referencia, 'operador-prueba')),
+    /comprobante/,
+    'sin comprobante no se confirma: dar saldo de palabra es lo que se quería evitar',
+  );
   const confirmada = await enTransaccion(pool, (c) =>
-    confirmarRecarga(c, recarga.referencia, 'operador-prueba'));
+    confirmarRecarga(c, recarga.referencia, 'operador-prueba', comprobante));
   assert.equal(confirmada.yaEstaba, false);
   assert.equal(confirmada.saldoXaf, 6000);
 
   // Confirmar dos veces no duplica el dinero.
   const otraVez = await enTransaccion(pool, (c) =>
-    confirmarRecarga(c, recarga.referencia, 'operador-prueba'));
+    confirmarRecarga(c, recarga.referencia, 'operador-prueba', comprobante));
   assert.equal(otraVez.yaEstaba, true);
   assert.equal(otraVez.saldoXaf, 6000);
 
@@ -340,6 +347,41 @@ test('recarga: pedirla NO sube el saldo; solo lo hace la confirmación del opera
     [conductorId.rows[0].id],
   );
   assert.equal(apuntes.rows[0].n, 1);
+});
+
+test('un mismo pago no puede dar saldo dos veces', async () => {
+  // Dos taxistas, dos recargas, un solo comprobante: el fraude obvio del
+  // sistema de confirmación a ojo (P18-01), y hasta la migración 068 nada lo
+  // impedía.
+  const pedirRecarga = async () => {
+    const uuid = randomUUID();
+    await app.inject({
+      method: 'POST', url: '/api/conductor/alta', headers: cabeceras(uuid),
+      payload: {
+        nombre: 'Doble Cobro', telefono: telefonoUnico(),
+        matricula: `GE-D${sufijoUnico()}`, marca: 'Kia', carroceria: 'turismo',
+      },
+    });
+    const pedida = await app.inject({
+      method: 'POST', url: '/api/conductor/recargas', headers: cabeceras(uuid),
+      payload: { importeXaf: 6000, metodo: 'muni_dinero' },
+    });
+    return pedida.json().referencia as string;
+  };
+
+  const primera = await pedirRecarga();
+  const segunda = await pedirRecarga();
+  const comprobante = `MD-${randomUUID()}`;
+
+  await enTransaccion(pool, (c) => confirmarRecarga(c, primera, 'operador-prueba', comprobante));
+  await assert.rejects(
+    () => enTransaccion(pool, (c) => confirmarRecarga(c, segunda, 'operador-prueba', comprobante)),
+    /ya confirmó la recarga/,
+  );
+
+  // Y la segunda se queda pendiente: nadie le ha regalado saldo.
+  const estado = await pool.query('SELECT estado FROM recarga WHERE referencia = $1', [segunda]);
+  assert.equal(estado.rows[0].estado, 'pendiente');
 });
 
 test('recarga: por debajo del mínimo se rechaza con el motivo', async () => {
@@ -506,6 +548,110 @@ test('pedir taxi toma el teléfono del perfil sin repetirlo, y falla claro si no
   });
   assert.equal(sinTelefono.statusCode, 400);
   assert.match(sinTelefono.json().error, /teléfono/);
+});
+
+// --- Migración 069: saber tu uuid deja de bastar para ser tú (P15-04) ------
+
+test('con secreto emitido, el uuid solo ya no abre la sesión', async () => {
+  const uuid = randomUUID();
+  // Primero existir: el secreto se emite a un dispositivo que ya está.
+  await app.inject({ method: 'GET', url: '/api/sesion', headers: cabeceras(uuid) });
+  await pedirTaxi(uuid);
+
+  const emitido = await app.inject({
+    method: 'POST', url: '/api/sesion/secreto', headers: cabeceras(uuid), payload: {},
+  });
+  assert.equal(emitido.statusCode, 200, emitido.body);
+  const secreto = emitido.json().secreto as string;
+  assert.ok(secreto.length >= 32, 'un secreto corto no es un secreto');
+
+  // El ladrón tiene el uuid —viaja en la URL del SSE, acaba en cualquier
+  // registro— y ya no le sirve de nada.
+  const suplantador = await app.inject({
+    method: 'GET', url: '/api/perfil', headers: cabeceras(uuid),
+  });
+  assert.equal(suplantador.statusCode, 401);
+  assert.equal(suplantador.json().codigo, 'secreto_invalido');
+
+  // Con un secreto inventado, tampoco.
+  const inventado = await app.inject({
+    method: 'GET',
+    url: '/api/perfil',
+    headers: { ...cabeceras(uuid), 'x-secreto': 'lo-que-sea' },
+  });
+  assert.equal(inventado.statusCode, 401);
+
+  // Y el dueño sigue entrando.
+  const dueno = await app.inject({
+    method: 'GET', url: '/api/perfil', headers: { ...cabeceras(uuid), 'x-secreto': secreto },
+  });
+  assert.equal(dueno.statusCode, 200);
+});
+
+test('el secreto se emite UNA vez: pedir otro no roba la sesión', async () => {
+  const uuid = randomUUID();
+  await app.inject({ method: 'GET', url: '/api/sesion', headers: cabeceras(uuid) });
+  await pedirTaxi(uuid);
+  const primero = await app.inject({
+    method: 'POST', url: '/api/sesion/secreto', headers: cabeceras(uuid), payload: {},
+  });
+  const secreto = primero.json().secreto as string;
+
+  // Quien conozca el uuid podría pedir uno nuevo y quedarse con la sesión: es
+  // la puerta de atrás entera. Ni siquiera llega a la ruta — el propio
+  // guardián de la sesión lo para antes, porque ya hay secreto y él no lo
+  // trae.
+  const ladron = await app.inject({
+    method: 'POST', url: '/api/sesion/secreto', headers: cabeceras(uuid), payload: {},
+  });
+  assert.equal(ladron.statusCode, 401);
+  assert.equal(ladron.json().codigo, 'secreto_invalido');
+
+  // Y el dueño, que sí lo trae, tampoco recibe uno nuevo: se le dice que ya
+  // tiene. Si lo hubiera perdido, esta sesión se empieza de cero.
+  const dueno = await app.inject({
+    method: 'POST',
+    url: '/api/sesion/secreto',
+    headers: { ...cabeceras(uuid), 'x-secreto': secreto },
+    payload: {},
+  });
+  assert.equal(dueno.statusCode, 409);
+  assert.equal(dueno.json().codigo, 'secreto_ya_emitido');
+
+  // Y el primero sigue valiendo: no se ha invalidado nada por intentarlo.
+  const sigue = await app.inject({
+    method: 'GET', url: '/api/perfil', headers: { ...cabeceras(uuid), 'x-secreto': secreto },
+  });
+  assert.equal(sigue.statusCode, 200);
+});
+
+test('el SSE lo lleva en la URL, que es donde puede llevarlo', async () => {
+  const uuid = randomUUID();
+  await app.inject({ method: 'GET', url: '/api/sesion', headers: cabeceras(uuid) });
+  const { solicitudId } = await pedirTaxi(uuid);
+  await app.inject({
+    method: 'POST', url: '/api/sesion/secreto', headers: cabeceras(uuid), payload: {},
+  });
+
+  // Sin él, la conexión viva del pasajero se rechaza. Solo se comprueba este
+  // lado: una conexión SSE aceptada no termina nunca por definición, y
+  // `inject` se quedaría esperando a un flujo que no se cierra. Que el caso
+  // bueno funciona lo dicen las pruebas de SSE de siempre, que corren sin
+  // secreto emitido.
+  const sinSecreto = await app.inject({
+    method: 'GET', url: `/api/solicitudes/${solicitudId}/eventos?dispositivo=${uuid}`,
+  });
+  assert.equal(sinSecreto.statusCode, 401);
+  assert.equal(sinSecreto.json().codigo, 'secreto_invalido');
+});
+
+test('quien no pidió secreto sigue entrando igual: una app vieja no se queda fuera', async () => {
+  // Es la promesa de compatibilidad de la migración 069, y sin ella un
+  // despliegue dejaría sin trabajar a cualquiera que no haya actualizado.
+  const uuid = randomUUID();
+  await app.inject({ method: 'GET', url: '/api/sesion', headers: cabeceras(uuid) });
+  const res = await app.inject({ method: 'GET', url: '/api/perfil', headers: cabeceras(uuid) });
+  assert.equal(res.statusCode, 200);
 });
 
 test('API: sin cabecera x-dispositivo, 400 explícito', async () => {
@@ -679,6 +825,106 @@ test('API: valoración del conductor, idempotente y reflejada en su reputación'
   });
   assert.equal(detalle.json().reputacion.media, 4);
   assert.ok(reclamacion.viajeId! > 0);
+});
+
+// --- P7-03 y migración 066: la valoración que quedó pendiente --------------
+
+test('al abrir se pregunta por el viaje que cerró sin valorar, y con el precio de un toque', async () => {
+  const conductorId = await crearConductorEnZona();
+  const uuid = randomUUID();
+  const { solicitudId } = await pedirTaxi(uuid);
+  await reclamarSolicitud(pool, emisor, solicitudId, conductorId);
+  await enTransaccion(pool, (c) => transicionarSolicitud(c, solicitudId, 'EN_CAMINO', 'conductor'));
+  await enTransaccion(pool, (c) => transicionarSolicitud(c, solicitudId, 'RECOGIDO', 'conductor'));
+  await enTransaccion(pool, (c) => transicionarSolicitud(c, solicitudId, 'COMPLETADO', 'conductor'));
+
+  // La banda de esa ruta existe: entonces se le ofrecen los tres importes.
+  // Sin banda no se pregunta el precio, porque inventarse las cifras sería
+  // sugerirle un precio, y aquí el precio se negocia fuera.
+  await pool.query(
+    `INSERT INTO banda_precio (zona_origen_id, zona_destino_id, p25, p50, p75)
+     SELECT ro.zona_id, rd.zona_id, 1000, 1500, 2000
+     FROM referencia ro, referencia rd WHERE ro.id = $1 AND rd.id = $2
+     ON CONFLICT (zona_origen_id, zona_destino_id) DO NOTHING`,
+    [origenId, destinoId],
+  );
+
+  const pendiente = await app.inject({
+    method: 'GET', url: '/api/valoracion-pendiente', headers: cabeceras(uuid),
+  });
+  assert.equal(pendiente.statusCode, 200);
+  const p = pendiente.json().pendiente;
+  assert.ok(p, 'el viaje sin valorar tiene que salir: si no, no se le pregunta nunca');
+  assert.equal(Number(p.solicitudId), Number(solicitudId));
+  assert.deepEqual(p.importesSugeridos, [1000, 1500, 2000]);
+
+  // Y se contesta con las dos respuestas voluntarias.
+  const enviada = await app.inject({
+    method: 'POST',
+    url: `/api/solicitudes/${solicitudId}/valoracion`,
+    headers: cabeceras(uuid),
+    payload: { puntuacion: 2, importeXaf: 3000, cobroDeMas: true },
+  });
+  assert.equal(enviada.statusCode, 200, enviada.body);
+
+  const guardado = await pool.query(
+    `SELECT val.cobro_de_mas, pd.importe_xaf
+     FROM viaje v
+     LEFT JOIN valoracion val ON val.viaje_id = v.id AND val.emisor = 'cliente'
+     LEFT JOIN precio_declarado pd ON pd.viaje_id = v.id AND pd.emisor = 'cliente'
+     WHERE v.solicitud_id = $1`,
+    [solicitudId],
+  );
+  assert.equal(guardado.rows[0].cobro_de_mas, true);
+  assert.equal(Number(guardado.rows[0].importe_xaf), 3000);
+
+  // Ya valorado: no se vuelve a preguntar.
+  const otraVez = await app.inject({
+    method: 'GET', url: '/api/valoracion-pendiente', headers: cabeceras(uuid),
+  });
+  assert.equal(otraVez.json().pendiente, null);
+});
+
+test('la valoración se puede enviar sin precio y sin marcar nada', async () => {
+  const conductorId = await crearConductorEnZona();
+  const uuid = randomUUID();
+  const { solicitudId } = await pedirTaxi(uuid);
+  await reclamarSolicitud(pool, emisor, solicitudId, conductorId);
+  await enTransaccion(pool, (c) => transicionarSolicitud(c, solicitudId, 'EN_CAMINO', 'conductor'));
+  await enTransaccion(pool, (c) => transicionarSolicitud(c, solicitudId, 'RECOGIDO', 'conductor'));
+
+  // La migración 012 quitó el precio para no hacer teclear a nadie al
+  // terminar, y eso sigue valiendo: una estrella y ya está.
+  const res = await app.inject({
+    method: 'POST',
+    url: `/api/solicitudes/${solicitudId}/valoracion`,
+    headers: cabeceras(uuid),
+    payload: { puntuacion: 5 },
+  });
+  assert.equal(res.statusCode, 200);
+  const precios = await pool.query(
+    `SELECT count(*)::int AS n FROM precio_declarado pd
+     JOIN viaje v ON v.id = pd.viaje_id WHERE v.solicitud_id = $1`,
+    [solicitudId],
+  );
+  assert.equal(precios.rows[0].n, 0);
+});
+
+test('un importe imposible no tumba la valoración con un 500, la rechaza con un 400', async () => {
+  const conductorId = await crearConductorEnZona();
+  const uuid = randomUUID();
+  const { solicitudId } = await pedirTaxi(uuid);
+  await reclamarSolicitud(pool, emisor, solicitudId, conductorId);
+  await enTransaccion(pool, (c) => transicionarSolicitud(c, solicitudId, 'EN_CAMINO', 'conductor'));
+  await enTransaccion(pool, (c) => transicionarSolicitud(c, solicitudId, 'RECOGIDO', 'conductor'));
+
+  const res = await app.inject({
+    method: 'POST',
+    url: `/api/solicitudes/${solicitudId}/valoracion`,
+    headers: cabeceras(uuid),
+    payload: { puntuacion: 5, importeXaf: 9_000_000 },
+  });
+  assert.equal(res.statusCode, 400);
 });
 
 test('API: un conductor sin valoraciones se presenta como nuevo, no con un cero', async () => {

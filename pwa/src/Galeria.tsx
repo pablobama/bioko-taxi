@@ -15,7 +15,7 @@
 import { useState } from 'react';
 import type {
   DatosConductor, DestinoSugerido, DetalleSolicitud, EstadoConductor, ReferenciaSugerida,
-  TaxisCerca, Zona,
+  TaxisCerca, ValoracionPendiente, Zona,
 } from './api';
 import FondoMapa from './FondoMapa';
 import { crearT } from './i18n';
@@ -33,6 +33,7 @@ const NADA = () => undefined;
 const accionesCliente: AccionesCliente = {
   alAbrirAjustes: NADA, alAbrirEstadisticas: NADA, alPedir: NADA, alBajar: NADA,
   alCancelar: NADA, alLimpiar: NADA, alValorar: NADA, alQuitarOrigen: NADA, alLlamar: NADA, alElegirDestino: NADA, alElegirCoche: NADA, alEscribirDestino: NADA,
+  alOmitirValoracion: NADA, alElegirImporte: NADA, alMarcarCobroDeMas: NADA,
 };
 
 const accionesConductor: AccionesConductor = {
@@ -227,6 +228,9 @@ export default function Galeria() {
       gpsResuelto={props.gpsResuelto ?? true}
       hayCoordenadas={props.hayCoordenadas ?? true}
       valorada={props.valorada ?? false}
+      valoracionPendiente={props.valoracionPendiente ?? null}
+      importeElegido={props.importeElegido ?? null}
+      cobroDeMas={props.cobroDeMas ?? false}
       aviso={props.aviso}
       t={t}
       sugeridos={props.sugeridos ?? []}
@@ -388,6 +392,22 @@ export default function Galeria() {
                   elegido: { nombre: 'Juan Obama', matricula: 'GE-4820-B', estado: 'no_la_cogio' },
                 }),
                 segundosGracia: 47,
+              })}
+            </Marco>
+
+            <Marco
+              titulo="El viaje de ayer, sin valorar"
+              descripcion="P7-03: quien se baja del taxi cierra la aplicación, así que la valoración «diferida a próxima sesión» no se pedía en ninguna sesión. Ahora se pregunta al abrir, por el viaje concreto, y con dos respuestas voluntarias de un toque (migración 066)."
+            >
+              {cliente('gracias', {
+                valoracionPendiente: {
+                  solicitudId: 1234,
+                  conductor: 'María Nchama',
+                  destino: catedral.nombre,
+                  cuando: '2026-09-23T18:20:00Z',
+                  importesSugeridos: [1000, 1500, 2000],
+                },
+                importeElegido: 1500,
               })}
             </Marco>
 
@@ -753,6 +773,9 @@ interface PropiedadesGaleriaCliente {
   gpsResuelto: boolean;
   hayCoordenadas: boolean;
   valorada: boolean;
+  valoracionPendiente?: ValoracionPendiente | null;
+  importeElegido?: number | null;
+  cobroDeMas?: boolean;
   aviso?: string;
 }
 

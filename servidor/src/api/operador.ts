@@ -18,6 +18,7 @@ import {
   anadirAlias, editarReferencia, guardarReferencia, quitarAlias,
 } from '../dominio/gazetteer.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
+import { senalesDeTarifa } from '../dominio/precios.js';
 import { actividadDe, recorridoDe } from '../dominio/rastro.js';
 import { inicioDelDiaEnMalabo } from '../dominio/tiempo.js';
 import { confirmarRecarga, rechazarRecarga, recargasDe } from '../dominio/recargas.js';
@@ -174,6 +175,47 @@ export function registrarRutasOperador(
     if (agente.rowCount === 0) {
       throw errorHttp(403, 'Este dispositivo no puede hacer trabajo de campo.');
     }
+  }
+
+  // Quién está haciendo el cambio, para el registro de la migración 067. El
+  // operador no tiene fila de conductor y el agente sí: los dos se apuntan
+  // como son, y no hace falta adivinarlo después leyendo la fila.
+  async function quienCambia(req: FastifyRequest): Promise<{
+    dispositivoId: number | null; conductorId: number | null; esOperador: boolean;
+  }> {
+    const uuid = uuidDesde(req);
+    const fila = await pool.query(
+      'SELECT id, conductor_id FROM dispositivo WHERE uuid_persistente = $1',
+      [uuid],
+    );
+    return {
+      dispositivoId: fila.rowCount === 0 ? null : Number(fila.rows[0].id),
+      conductorId: fila.rowCount === 0 || fila.rows[0].conductor_id === null
+        ? null : Number(fila.rows[0].conductor_id),
+      esOperador: esOperador(uuid),
+    };
+  }
+
+  // Apunta un cambio en el registro append-only (P25-01). Se llama DESPUÉS de
+  // hacer el cambio y con el valor que había: si el cambio falla, no hay nada
+  // que apuntar, y un registro que miente es peor que no tenerlo.
+  async function apuntarCambio(
+    req: FastifyRequest,
+    ambito: string,
+    clave: string,
+    valorAnterior: string | null,
+    valorNuevo: string | null,
+  ): Promise<void> {
+    const quien = await quienCambia(req);
+    await pool.query(
+      `INSERT INTO cambio_ajuste
+         (ambito, clave, valor_anterior, valor_nuevo, dispositivo_id, conductor_id, es_operador)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        ambito, clave, valorAnterior, valorNuevo,
+        quien.dispositivoId, quien.conductorId, quien.esOperador,
+      ],
+    );
   }
 
   // Lista de conductores: filtrada por estado, o buscada por nombre,
@@ -563,8 +605,12 @@ export function registrarRutasOperador(
     const uuid = uuidDesde(req);
     exigirOperador(req);
     const { referencia } = req.params as { referencia: string };
+    const { comprobante } = (req.body ?? {}) as { comprobante?: string };
     try {
-      const resultado = await enTransaccion(pool, (cliente) => confirmarRecarga(cliente, referencia, uuid));
+      const resultado = await enTransaccion(
+        pool,
+        (cliente) => confirmarRecarga(cliente, referencia, uuid, comprobante ?? null),
+      );
       return resultado;
     } catch (error) {
       if (error instanceof ErrorEntidadInexistente) throw errorHttp(404, error.message);
@@ -857,6 +903,10 @@ export function registrarRutasOperador(
       ? validacion.rows[0].validados / completados
       : null;
 
+    // Abuso de tarifa (R5, P12-02). Volvió a ser posible con la migración 066:
+    // el pasajero puede marcar «me cobró de más» y decir lo que pagó.
+    const tarifa = await senalesDeTarifa(pool);
+
     const alarmas = [
       {
         clave: 'alarma_tasa_sin_oferta_max',
@@ -893,6 +943,21 @@ export function registrarRutasOperador(
         detalle: tasaValidacion === null
           ? []
           : [{ nombre: 'validadas', muestras: completados, tasa: tasaValidacion }],
+      },
+      {
+        clave: 'alarma_cobros_de_mas',
+        nombre: 'Taxistas marcados por cobrar de más',
+        ambito: 'por conductor, últimos 30 días',
+        umbral: umbral.get('alarma_cobros_de_mas') ?? null,
+        disparada: tarifa.length > 0,
+        // `tasa` es la proporción de sus viajes con marca, que es lo que
+        // distingue a quien tuvo tres quejas en trescientos viajes de quien
+        // las tuvo en cinco.
+        detalle: tarifa.map((t) => ({
+          nombre: `${t.nombre} · ${t.marcas} marcas, ${t.porEncimaDelP75} por encima del p75`,
+          muestras: t.viajes,
+          tasa: t.viajes === 0 ? 0 : t.marcas / t.viajes,
+        })),
       },
       {
         clave: 'alarma_coste_mensajeria_xaf',
@@ -1191,10 +1256,44 @@ export function registrarRutasOperador(
     return { hecho: true };
   });
 
+  // Lo que se ha tocado últimamente (P25-01). Solo el operador: un agente
+  // puede fijar precios, pero quién vigila a los agentes no es un agente.
+  app.get('/api/operador/cambios', async (req) => {
+    exigirOperador(req);
+    const filas = await pool.query(
+      `SELECT ca.id, ca.ambito, ca.clave, ca.valor_anterior, ca.valor_nuevo,
+              ca.es_operador, ca.creado_en, c.nombre AS conductor
+       FROM cambio_ajuste ca
+       LEFT JOIN conductor c ON c.id = ca.conductor_id
+       ORDER BY ca.creado_en DESC
+       LIMIT 200`,
+    );
+    return {
+      cambios: filas.rows.map((f: {
+        id: string; ambito: string; clave: string;
+        valor_anterior: string | null; valor_nuevo: string | null;
+        es_operador: boolean; creado_en: Date; conductor: string | null;
+      }) => ({
+        id: Number(f.id),
+        ambito: f.ambito,
+        clave: f.clave,
+        antes: f.valor_anterior,
+        ahora: f.valor_nuevo,
+        // Quién, en una línea: el nombre del agente, «operador», o «alguien»
+        // si el dispositivo ya no existe. Nunca se inventa un nombre.
+        quien: f.conductor ?? (f.es_operador ? 'operador' : 'alguien'),
+        cuando: f.creado_en,
+      })),
+    };
+  });
+
   // --- Bandas de precio y parámetros (bloque 6) ------------------------------
-  // Desde la migración 012 las bandas no pueden calcularse de datos reales
-  // (no se reporta precio): las mantiene el operador a mano por par de zonas
-  // (P12-01), y el taxista las ve en el broadcast para no aceptar a ciegas.
+  // Desde la migración 066 una banda puede venir de dos sitios: de lo que los
+  // pasajeros dicen que pagaron (`muestras` > 0, se recalcula sola) o de la
+  // mano del operador (`muestras` = 0). Manda el dato cuando hay bastante
+  // —`banda_muestras_minimas`— y el criterio del operador cuando no, que es lo
+  // que había desde la 012. El taxista las ve en el broadcast para no aceptar
+  // a ciegas (R2), y nunca son una tarifa: el precio se negocia.
 
   app.get('/api/operador/bandas', async (req) => {
     await exigirCampo(req);
@@ -1218,11 +1317,22 @@ export function registrarRutasOperador(
     if (!cuerpo.zonaOrigenId || !cuerpo.zonaDestinoId) {
       throw errorHttp(400, 'Faltan las zonas de origen y destino.');
     }
+    const previa = await pool.query(
+      `SELECT p25, p50, p75 FROM banda_precio
+       WHERE zona_origen_id = $1 AND zona_destino_id = $2`,
+      [cuerpo.zonaOrigenId, cuerpo.zonaDestinoId],
+    );
+    const comoEstaba = previa.rowCount === 0
+      ? null
+      : `${previa.rows[0].p25}/${previa.rows[0].p50}/${previa.rows[0].p75}`;
+    const cual = `${cuerpo.zonaOrigenId}→${cuerpo.zonaDestinoId}`;
+
     if (cuerpo.borrar) {
       await pool.query(
         `DELETE FROM banda_precio WHERE zona_origen_id = $1 AND zona_destino_id = $2`,
         [cuerpo.zonaOrigenId, cuerpo.zonaDestinoId],
       );
+      await apuntarCambio(req, 'banda_precio', cual, comoEstaba, null);
       return { borrada: true };
     }
     const { p25, p50, p75 } = cuerpo;
@@ -1241,6 +1351,7 @@ export function registrarRutasOperador(
        RETURNING id`,
       [cuerpo.zonaOrigenId, cuerpo.zonaDestinoId, p25, p50, p75],
     );
+    await apuntarCambio(req, 'banda_precio', cual, comoEstaba, `${p25}/${p50}/${p75}`);
     return { bandaId: res.rows[0].id };
   });
 
@@ -1264,11 +1375,18 @@ export function registrarRutasOperador(
     }
     // Solo se actualizan claves que existen: crear parámetros nuevos desde
     // el panel sería inventarse configuración que ningún código lee.
+    const antes = await pool.query('SELECT valor FROM parametro WHERE clave = $1', [clave]);
     const res = await pool.query(
       `UPDATE parametro SET valor = $2 WHERE clave = $1 RETURNING clave, valor`,
       [clave, valor.trim()],
     );
     if (res.rowCount === 0) throw errorHttp(404, `No existe el parámetro «${clave}».`);
+    // Un parámetro cambia el comportamiento entero sin desplegar: si algún día
+    // el reparto se porta raro, «quién cambió qué y cuándo» es la primera
+    // pregunta (migración 067).
+    await apuntarCambio(
+      req, 'parametro', clave, antes.rows[0]?.valor ?? null, res.rows[0].valor,
+    );
     return res.rows[0];
   });
 }

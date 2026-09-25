@@ -36,6 +36,10 @@ export async function reputacionDe(
 export interface Valoracion {
   puntuacion: number;
   motivo?: string;
+  // El pasajero marcó «me cobró de más» (migración 066). Es la señal de abuso
+  // de tarifa que no necesita ninguna cifra, y por eso la que de verdad
+  // funciona: marcar una casilla lo hace cualquiera.
+  cobroDeMas?: boolean;
 }
 
 // Valoración del cliente sobre un viaje. Idempotente por (viaje, emisor): un
@@ -55,10 +59,13 @@ export async function valorarViaje(
     throw new ErrorEntidadInexistente('el viaje', viajeId);
   }
   const res = await cliente.query(
-    `INSERT INTO valoracion (viaje_id, emisor, puntuacion, motivo)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO valoracion (viaje_id, emisor, puntuacion, motivo, cobro_de_mas)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (viaje_id, emisor) DO NOTHING`,
-    [viajeId, emisor, valoracion.puntuacion, valoracion.motivo ?? null],
+    [
+      viajeId, emisor, valoracion.puntuacion, valoracion.motivo ?? null,
+      valoracion.cobroDeMas === true,
+    ],
   );
   return { guardada: (res.rowCount ?? 0) > 0 };
 }

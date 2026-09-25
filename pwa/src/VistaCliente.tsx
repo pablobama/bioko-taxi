@@ -8,6 +8,7 @@ import type {
   ReferenciaSugerida,
   TaxisCerca,
   TaxiElegible,
+  ValoracionPendiente,
 } from './api';
 import IconoCategoria from './IconoCategoria';
 import type { crearT } from './i18n';
@@ -27,6 +28,12 @@ export interface AccionesCliente {
   alCancelar: () => void;
   alLimpiar: () => void;
   alValorar: (puntuacion: number) => void;
+  // «Ahora no» a la valoración de un viaje anterior (P7-03).
+  alOmitirValoracion: () => void;
+  // Las dos respuestas voluntarias de la migración 066. Tocar el importe ya
+  // elegido lo quita: nadie se queda atrapado en una cifra por un roce.
+  alElegirImporte: (importeXaf: number) => void;
+  alMarcarCobroDeMas: () => void;
   alQuitarOrigen: () => void;
   alLlamar: () => void;
   alElegirDestino: (destino: DestinoSugerido) => void;
@@ -53,6 +60,11 @@ export interface PropiedadesVistaCliente {
   elegibles?: TaxiElegible[];
   elegido?: number | null;
   valorada: boolean;
+  // Un viaje anterior que cerró sin valorar (P7-03). Cuando llega, la
+  // pantalla de gracias habla de ESE viaje y no del de ahora.
+  valoracionPendiente?: ValoracionPendiente | null;
+  importeElegido?: number | null;
+  cobroDeMas?: boolean;
   aviso?: string;
   t: T;
   // Destinos de un toque, ya ordenados por el servidor.
@@ -89,7 +101,8 @@ function Estrellas({ media, valoraciones, t }: { media: number | null; valoracio
 export default function VistaCliente({
   fase, detalle, origen, destino, gpsResuelto, origenEnGps = false, hayCoordenadas, taxisCerca,
   elegibles = [], elegido = null,
-  valorada, aviso, t, sugeridos, escribiendo, puedeDeshacer, segundosGracia,
+  valorada, valoracionPendiente = null, importeElegido = null, cobroDeMas = false,
+  aviso, t, sugeridos, escribiendo, puedeDeshacer, segundosGracia,
   buscadorDestino, buscadorOrigen, plegada = false, sinRed = null, acciones,
 }: PropiedadesVistaCliente & { acciones: AccionesCliente }) {
   return (
@@ -421,16 +434,65 @@ export default function VistaCliente({
 
       {fase === 'gracias' && (
         <>
-          <h1>{t('gracias.titulo')}</h1>
-          {detalle?.reputacion && !valorada ? (
+          {/* Dos casos en la misma pantalla: el viaje que acaba de terminar y
+              el que terminó ayer y nadie llegó a valorar (P7-03). El segundo
+              tiene que decir DE QUÉ viaje habla, o parece que la aplicación se
+              ha confundido. */}
+          <h1>{valoracionPendiente && !valorada ? t('gracias.deTuViaje') : t('gracias.titulo')}</h1>
+          {(detalle?.reputacion || valoracionPendiente) && !valorada ? (
             <>
-              <p className="nota">{t('gracias.comoFue', { conductor: detalle.conductor ?? '' })}</p>
+              {valoracionPendiente && (
+                <p className="nota">
+                  {t('gracias.viajeAnterior', { destino: valoracionPendiente.destino })}
+                </p>
+              )}
+              <p className="nota">
+                {t('gracias.comoFue', {
+                  conductor: valoracionPendiente?.conductor ?? detalle?.conductor ?? '',
+                })}
+              </p>
+
+              {/* Lo voluntario va ANTES de las estrellas porque la estrella es
+                  el botón de enviar: se toca una vez y ya está. Y va sin
+                  obligación ninguna — la migración 012 quitó el precio para no
+                  hacer teclear a nadie, y eso sigue valiendo. */}
+              {(valoracionPendiente?.importesSugeridos.length ?? 0) > 0 && (
+                <>
+                  <p className="nota">{t('gracias.cuantoPagaste')}</p>
+                  <div className="importes">
+                    {valoracionPendiente!.importesSugeridos.map((importe) => (
+                      <button
+                        key={importe}
+                        type="button"
+                        className={importeElegido === importe ? 'importe elegido' : 'importe'}
+                        onClick={() => acciones.alElegirImporte(importe)}
+                      >
+                        {t('gracias.xaf', { n: importe })}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+              <button
+                type="button"
+                className={cobroDeMas ? 'cobro-de-mas marcado' : 'cobro-de-mas'}
+                onClick={acciones.alMarcarCobroDeMas}
+                aria-pressed={cobroDeMas}
+              >
+                {cobroDeMas ? '☑' : '☐'} {t('gracias.cobroDeMas')}
+              </button>
+
               <div className="valorar">
                 {[1, 2, 3, 4, 5].map((n) => (
                   <button key={n} type="button" onClick={() => acciones.alValorar(n)}
                     aria-label={`${n} ★`}>★</button>
                 ))}
               </div>
+              {valoracionPendiente && (
+                <button type="button" className="tenue" onClick={acciones.alOmitirValoracion}>
+                  {t('accion.ahoraNo')}
+                </button>
+              )}
             </>
           ) : (
             valorada && <p className="nota">{t('gracias.gracias')}</p>

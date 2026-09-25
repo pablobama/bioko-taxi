@@ -23,6 +23,7 @@ import {
   type ReferenciaSugerida,
   type TaxisCerca,
   type TaxiElegible,
+  type ValoracionPendiente,
 } from './api';
 import Estadisticas from './Estadisticas';
 import { metrosEntre } from './geo';
@@ -248,6 +249,12 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
   const enLinea = useConexion();
   const [gpsResuelto, setGpsResuelto] = useState(false);
   const [valorada, setValorada] = useState(false);
+  // El viaje que cerró sin valorar (P7-03), y las dos respuestas voluntarias
+  // que acompañan a la nota (migración 066): lo que pagó y si le cobraron de
+  // más. Se eligen antes de tocar la estrella y viajan con ella.
+  const [pendiente, setPendiente] = useState<ValoracionPendiente | null>(null);
+  const [importeElegido, setImporteElegido] = useState<number | null>(null);
+  const [cobroDeMas, setCobroDeMas] = useState(false);
   // Destinos de un toque y si la persona ha pedido escribir en su lugar.
   const [sugeridos, setSugeridos] = useState<DestinoSugerido[]>([]);
   const [escribiendo, setEscribiendo] = useState(false);
@@ -387,6 +394,20 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
     const activa = solicitudActiva();
     if (!activa) {
       setFase('destino');
+      // Sin viaje en marcha es el momento de preguntar por el anterior, si
+      // quedó sin valorar. Antes esto no pasaba nunca: quien se baja del taxi
+      // cierra la aplicación, y la valoración «diferida a próxima sesión» no
+      // se pedía en ninguna sesión. Sin valoraciones, la reputación no dice
+      // nada y nadie se entera de quién cobra de más.
+      void api.valoracionPendiente()
+        .then(({ pendiente: p }) => {
+          if (p === null) return;
+          // Si ya dijo «ahora no» para ese viaje, no se le vuelve a insistir.
+          if (localStorage.getItem(`valoracionOmitida:${p.solicitudId}`)) return;
+          setPendiente(p);
+          setFase('gracias');
+        })
+        .catch(() => undefined);
       return;
     }
     let reintento: ReturnType<typeof setTimeout> | undefined;
@@ -708,18 +729,24 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
   }
 
   async function valorar(puntuacion: number) {
-    const solicitudId = detalle?.solicitudId;
+    // El viaje de ahora, o el que quedó sin valorar de la vez anterior.
+    const solicitudId = detalle?.solicitudId ?? pendiente?.solicitudId;
     if (!solicitudId) return;
+    const extras = {
+      ...(importeElegido !== null ? { importeXaf: importeElegido } : {}),
+      ...(cobroDeMas ? { cobroDeMas: true } : {}),
+    };
     setValorada(true);
+    setPendiente(null);
     try {
-      await api.valorar(solicitudId, puntuacion);
+      await api.valorar(solicitudId, puntuacion, extras);
     } catch (error) {
       if (error instanceof ErrorDeRed) {
         // La valoración sí espera: es una opinión sobre algo que ya pasó, y
         // llegar tarde no cambia nada. Se queda dada.
         await encolar({
           ruta: `/api/solicitudes/${solicitudId}/valoracion`,
-          cuerpo: { puntuacion },
+          cuerpo: { puntuacion, ...extras },
           descripcion: t('sinRed.valoracion'),
         });
         return;
@@ -727,6 +754,15 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
       setValorada(false);
       setAviso(t('aviso.noSePudoValorar'));
     }
+  }
+
+  // «Ahora no». Se respeta para ese viaje y no se le vuelve a preguntar: una
+  // pregunta que reaparece cada vez que abres la aplicación se contesta al
+  // azar para quitarla de en medio, y una nota al azar es peor que ninguna.
+  function omitirValoracion() {
+    if (pendiente) localStorage.setItem(`valoracionOmitida:${pendiente.solicitudId}`, '1');
+    setPendiente(null);
+    setFase('destino');
   }
 
   // --- Pantalla -----------------------------------------------------------
@@ -903,6 +939,9 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
           elegido={elegido}
           hayCoordenadas={coordenadas !== null}
           valorada={valorada}
+          valoracionPendiente={pendiente}
+          importeElegido={importeElegido}
+          cobroDeMas={cobroDeMas}
           aviso={aviso}
           t={t}
           sugeridos={sugeridos}
@@ -923,6 +962,11 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
             alLimpiar: limpiar,
             alBajar: () => { void heBajado(); },
             alValorar: valorar,
+            alOmitirValoracion: omitirValoracion,
+            alElegirImporte: (importe) => setImporteElegido(
+              (actual) => (actual === importe ? null : importe),
+            ),
+            alMarcarCobroDeMas: () => setCobroDeMas((actual) => !actual),
             alQuitarOrigen: () => { origenQuitadoAMano.current = true; setOrigen(null); },
             alElegirDestino: (destinoElegido) => { setDestino(destinoElegido); setAviso(''); },
             // Elegir coche, o volver a «el que antes llegue» tocando el mismo.

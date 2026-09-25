@@ -2097,3 +2097,49 @@ button.importe.elegido-importe {
   font-size: 0.92rem;
   line-height: 1.4;
 }
+
+/* Lo voluntario de la valoración (migración 066): los tres importes de un
+   toque y la casilla de «me cobró de más». Discreto: la estrella sigue siendo
+   lo principal, y esto se puede no tocar. */
+.importes {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+
+.importes .importe {
+  flex: 1;
+  padding: 12px 6px;
+  border-radius: 12px;
+  border: 1px solid var(--borde);
+  background: var(--tarjeta);
+  color: var(--hueso);
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.importes .importe.elegido {
+  border-color: var(--ambar);
+  color: var(--ambar-claro);
+  background: rgba(255, 176, 32, 0.12);
+}
+
+.cobro-de-mas {
+  display: block;
+  width: 100%;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--borde);
+  background: var(--tarjeta);
+  color: var(--humo);
+  font-size: 0.95rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cobro-de-mas.marcado {
+  border-color: var(--ambar);
+  color: var(--ambar-claro);
+}
