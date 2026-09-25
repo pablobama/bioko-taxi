@@ -17,6 +17,7 @@ import type {
   DatosConductor, DestinoSugerido, DetalleSolicitud, EstadoConductor, ReferenciaSugerida,
   TaxiElegible, TaxisCerca, ValoracionPendiente, Zona,
 } from './api';
+import Cara from './Cara';
 import Coche from './Coche';
 import FondoMapa from './FondoMapa';
 import { crearT } from './i18n';
@@ -305,7 +306,7 @@ export default function Galeria() {
           salpicadero se lee. Ampliado se ven los errores; al lado, a tamaño
           real, se comprueba que lo que se lee ampliado se sigue leyendo. */}
       <section className="galeria-grupo">
-        <h2>El coche del plano</h2>
+        <h2>El coche y el pasajero, en el plano</h2>
         <div className="galeria-coches">
           {[
             { titulo: 'Ampliado ×6', escala: 6, fondo: '#12141c' },
@@ -326,6 +327,19 @@ export default function Galeria() {
               <figcaption>{caso.titulo}</figcaption>
             </figure>
           ))}
+          <figure className="coche-muestra">
+            <svg viewBox="-70 -70 140 140" width={140} height={140} style={{ background: '#12141c' }}>
+              <Cara radio={46} />
+            </svg>
+            <figcaption>El pasajero, ampliado</figcaption>
+          </figure>
+          <figure className="coche-muestra">
+            <svg viewBox="-70 -70 140 140" width={140} height={140} style={{ background: '#12141c' }}>
+              <g transform="translate(-24,0)"><Cara radio={9.5} /></g>
+              <g transform="translate(24,0)"><Cara radio={8} color="#4a9eff" /></g>
+            </svg>
+            <figcaption>Tamaño real: a recoger y «tú»</figcaption>
+          </figure>
         </div>
       </section>
 

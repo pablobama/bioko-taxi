@@ -23,6 +23,7 @@ import {
   aPantalla, construirTrazados, crearProyeccion, encuadrar, transformacion,
   TEMA_MAPA, type Camara, type Plano, type Proyeccion, type Punto2D, type Trazados,
 } from './proyeccion';
+import Cara from './Cara';
 import Coche from './Coche';
 import { calcularRuta, type Punto } from './rutas';
 
@@ -676,14 +677,22 @@ export default function Mapa({
             const xy = pantalla(yo.lat, yo.lng);
             return (
               <g transform={`translate(${xy[0].toFixed(1)},${xy[1].toFixed(1)})`}>
-                <circle r={11} fill="#4a9eff" opacity={0.22} />
-                <circle r={7} fill="#08080a" opacity={0.6} />
-                <circle r={5.5} fill="#4a9eff" stroke="#f7f5f2" strokeWidth={2} />
+                <circle r={13} fill="#4a9eff" opacity={0.22} />
+                {/* La misma cara, en azul: sigue siendo una persona, y es la
+                    misma persona. Lo que cambia es que ahora la mira desde
+                    dentro del coche. */}
+                <Cara radio={8} color="#4a9eff" />
               </g>
             );
           })()}
 
-          {/* Origen: punto ámbar con anillo. Mientras se busca taxi, late. */}
+          {/* El pasajero: una cara sonriente donde está él. Antes era un punto
+              ámbar, y un punto dice «aquí hay algo»; la cara dice «aquí hay
+              ALGUIEN», que es lo que hay que distinguir de un sitio, de una
+              parada o de un destino mirando el plano en marcha.
+
+              El anillo sigue latiendo mientras se busca taxi o mientras la
+              posición es la de ahora mismo y no la de cuando pidió. */}
           {origen && (() => {
             const xy = pantalla(origen.lat, origen.lng);
             return (
@@ -691,9 +700,8 @@ export default function Mapa({
                 {(buscando || origenEnVivo) && (
                   <circle r={26} fill="#ffb020" className="pulso-origen" />
                 )}
-                <circle r={9} fill="#0a0a0b" />
-                <circle r={6.5} fill="#ffb020" />
-                <circle r={12} fill="none" stroke="#ffb020" strokeWidth={1.5} opacity={0.5} />
+                <Cara radio={9.5} />
+                <circle r={13} fill="none" stroke="#ffb020" strokeWidth={1.5} opacity={0.5} />
               </g>
             );
           })()}
