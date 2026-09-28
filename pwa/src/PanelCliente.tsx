@@ -32,6 +32,7 @@ import IconoCategoria from './IconoCategoria';
 import { crearT, localeVoz, type Idioma } from './i18n';
 import { useLlamada, type SenalRecibida } from './llamada';
 import CompartirViaje from './CompartirViaje';
+import PrimeraVez, { guiaPendiente, marcarGuiaVista, type PasoGuia } from './PrimeraVez';
 import MandosFlotantes from './MandosFlotantes';
 import {
   encolar, guardarUltimo, olvidarUltimo, sincronizar, ultimoGuardado, usePendientes,
@@ -606,6 +607,60 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
     return () => navigator.geolocation.clearWatch(vigilancia);
   }, [detalle?.estado]);
 
+  // Volver a situarse, a mano.
+  //
+  // Hace falta por dos motivos distintos y los dos son normales:
+  //
+  //   1. La primera vez el navegador pregunta si se comparte la ubicación y
+  //      mucha gente dice que no —o no llega a contestar y la pregunta se
+  //      va—. Sin esto, la única forma de arreglarlo era reinstalar: la
+  //      aplicación no volvía a preguntar nunca.
+  //   2. Se pide el taxi desde el portal y se sale a la acera, o se pide por
+  //      otra persona. Entonces el punto está mal aunque el GPS funcione, y
+  //      quien lo sabe es quien está ahí.
+  //
+  // Si ya hay viaje, la posición nueva se manda al momento: es la que el
+  // taxista ve en su plano, y de eso va todo esto.
+  const [situando, setSituando] = useState(false);
+
+  // La guía de la primera vez (26/09). Se enseña cuando la pantalla de pedir
+  // ya está montada y hay algo que señalar: antes de eso el foco apuntaría a
+  // huecos vacíos. Se puede volver a ver desde los ajustes.
+  const [guiaAbierta, setGuiaAbierta] = useState(false);
+  useEffect(() => {
+    if (fase !== 'destino') return;
+    if (!guiaPendiente('cliente', VERSION_GUIA)) return;
+    // Un respiro para que los destinos sugeridos y el origen ya estén en
+    // pantalla: son dos de los cinco pasos.
+    const reloj = setTimeout(() => setGuiaAbierta(true), 900);
+    return () => clearTimeout(reloj);
+  }, [fase]);
+  async function volverASituarme() {
+    setSituando(true);
+    setAviso('');
+    try {
+      // Con más paciencia que el arranque: aquí la persona ha pulsado a
+      // propósito y está mirando. Ocho segundos de reloj y veinticinco metros
+      // de objetivo es lo que separa «estás en esta calle» de «estás en este
+      // portal».
+      const nueva = await coordenadasOportunistas({ objetivoM: 25, esperaMs: 12_000 });
+      if (!nueva) {
+        // El navegador no la da: o se dijo que no, o el permiso está bloqueado
+        // para este sitio. No se puede volver a preguntar desde aquí —lo
+        // impide el propio navegador— así que se dice dónde se arregla.
+        setAviso(t('origen.ubicacionBloqueada'));
+        return;
+      }
+      setCoordenadas(nueva);
+      setGpsResuelto(true);
+      origenQuitadoAMano.current = false;
+      const activa = solicitudActiva();
+      if (activa) await api.enviarPosicion(activa, nueva).catch(() => undefined);
+    } finally {
+      setSituando(false);
+    }
+  }
+
   // En cuanto vuelve la red: lo pendiente sale, y el viaje se pone al día sin
   // esperar al siguiente refresco.
   useEffect(() => {
@@ -891,10 +946,32 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
             alGuardar={(guardado) => { setPerfil(guardado); setAviso(''); setFase('destino'); }}
             alFallar={setAviso}
           />
+          {/* La guía, otra vez. Quien la saltó el primer día porque tenía
+              prisa no tiene forma de recuperarla si no está aquí. */}
+          <button
+            type="button"
+            className="tenue"
+            onClick={() => { setFase('destino'); setTimeout(() => setGuiaAbierta(true), 400); }}
+          >
+            {t('guia.verOtraVez')}
+          </button>
           <button type="button" className="secundario" onClick={() => { setAviso(''); setFase('destino'); }}>
             {t('accion.volver')}
           </button>
         </section>
+      )}
+
+      {guiaAbierta && (
+        <PrimeraVez
+          pasos={pasosCliente(t)}
+          textoSiguiente={t('guia.siguiente')}
+          textoFin={t('guia.entendido')}
+          textoSaltar={t('guia.saltar')}
+          alTerminar={() => {
+            marcarGuiaVista('cliente', VERSION_GUIA);
+            setGuiaAbierta(false);
+          }}
+        />
       )}
 
       {fase !== 'estadisticas' && fase !== 'ajustes' && (
@@ -933,6 +1010,7 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
           origen={origen}
           destino={destino}
           gpsResuelto={gpsResuelto}
+          situando={situando}
           origenEnGps={gpsFino}
           taxisCerca={taxisCerca}
           elegibles={elegibles}
@@ -968,6 +1046,7 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
             ),
             alMarcarCobroDeMas: () => setCobroDeMas((actual) => !actual),
             alQuitarOrigen: () => { origenQuitadoAMano.current = true; setOrigen(null); },
+            alVolverASituarme: () => { void volverASituarme(); },
             alElegirDestino: (destinoElegido) => { setDestino(destinoElegido); setAviso(''); },
             // Elegir coche, o volver a «el que antes llegue» tocando el mismo.
             alElegirCoche: (conductorId) => setElegido(
@@ -980,4 +1059,41 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
       )}
     </main>
   );
+}
+
+// La guía de la primera vez del pasajero. Cinco pasos y ni uno más: cada paso
+// que se añade es uno que alguien se salta.
+//
+// La versión sube solo cuando la guía cambia de verdad; entonces se vuelve a
+// enseñar una vez a quien ya la había visto.
+const VERSION_GUIA = 1;
+
+function pasosCliente(t: ReturnType<typeof crearT>): PasoGuia[] {
+  return [
+    {
+      selector: '[data-guia="origen"]',
+      titulo: t('guia.cliente.origenTitulo'),
+      texto: t('guia.cliente.origenTexto'),
+    },
+    {
+      selector: '[data-guia="destinos"]',
+      titulo: t('guia.cliente.destinosTitulo'),
+      texto: t('guia.cliente.destinosTexto'),
+    },
+    {
+      selector: '[data-guia="coches"]',
+      titulo: t('guia.cliente.cochesTitulo'),
+      texto: t('guia.cliente.cochesTexto'),
+    },
+    {
+      selector: '[data-guia="pedir"]',
+      titulo: t('guia.cliente.pedirTitulo'),
+      texto: t('guia.cliente.pedirTexto'),
+    },
+    {
+      selector: '[data-guia="mandos"]',
+      titulo: t('guia.cliente.mandosTitulo'),
+      texto: t('guia.cliente.mandosTexto'),
+    },
+  ];
 }

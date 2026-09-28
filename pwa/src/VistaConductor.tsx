@@ -31,6 +31,9 @@ export interface AccionesConductor {
   alCompletar: (solicitudId: number) => void;
   alLlamar: (solicitudId: number) => void;
   alDescartarAvisoTurno: () => void;
+  // Volver a ver la guía de la primera vez. Quien la saltó con prisa no tiene
+  // otra forma de recuperarla.
+  alVerGuia: () => void;
 }
 
 export interface PropiedadesVistaConductor {
@@ -300,7 +303,7 @@ export default function VistaConductor({
 
       {/* Oferta entrante: lo único que importa cuando llega. */}
       {oferta && (
-        <div className="oferta">
+        <div className="oferta" data-guia="oferta">
           <span className="etiqueta-viva">
             {/* La oleada 5 (migración 064) no es una carrera más: es una que
                 nadie ha cogido y que está a punto de perderse, casi siempre
@@ -317,6 +320,22 @@ export default function VistaConductor({
               ? t('oferta.precioOrientativo', { p25: oferta.bandaPrecio.p25, p75: oferta.bandaPrecio.p75 })
               : t('oferta.sinPrecio')}
           </p>
+          {/* El precio del desvío, cuando ya lleva a alguien (migración 071).
+              Se enseña SIEMPRE que haya pasaje, aunque sea cero: «no le
+              retrasa nada» es justo lo que hace que se coja tranquilo. Y
+              cuando retrasa, el taxista acepta sabiéndolo — el diagnóstico
+              midió desvíos que alargaban un viaje de diez minutos a veintitrés
+              sin que nadie se enterara. */}
+          {oferta.desvio && (
+            <p className={oferta.desvio.retrasoMin > 0 ? 'desvio caro' : 'desvio'}>
+              {oferta.desvio.retrasoMin > 0
+                ? t('oferta.desvioRetrasa', {
+                  min: oferta.desvio.retrasoMin,
+                  km: (oferta.desvio.metros / 1000).toFixed(1),
+                })
+                : t('oferta.desvioDePaso', { km: (oferta.desvio.metros / 1000).toFixed(1) })}
+            </p>
+          )}
           <button type="button" className="principal grande" disabled={ocupado}
             onClick={() => acciones.alAceptar(oferta.solicitudId)}>
             {t('accion.aceptar')}
@@ -392,13 +411,14 @@ export default function VistaConductor({
           <button
             type="button"
             className={enServicio ? 'secundario' : 'principal grande'}
+            data-guia="servicio"
             disabled={ocupado}
             onClick={acciones.alAlternarServicio}
           >
             {enServicio ? t('accion.salirServicio') : t('accion.entrarServicio')}
           </button>
           {enServicio && estado && (
-            <div className="tira-estado">
+            <div className="tira-estado" data-guia="tira">
               <span className="punto-verde" />
               <span>{estado.zona}</span>
               <span className="separador">·</span>
@@ -412,6 +432,14 @@ export default function VistaConductor({
           {!enServicio && (
             <button type="button" className="tenue" onClick={acciones.alAbrirRecarga}>
               {t('accion.recargarMonederoSaldo', { saldo: saldoXaf })}
+            </button>
+          )}
+          {/* La guía, otra vez. Solo fuera de servicio: en marcha, un botón que
+              oscurece la pantalla y la llena de carteles es lo último que hace
+              falta. */}
+          {!enServicio && (
+            <button type="button" className="tenue" onClick={acciones.alVerGuia}>
+              {t('guia.verOtraVez')}
             </button>
           )}
         </>

@@ -35,6 +35,9 @@ export interface AccionesCliente {
   alElegirImporte: (importeXaf: number) => void;
   alMarcarCobroDeMas: () => void;
   alQuitarOrigen: () => void;
+  // Volver a leer el GPS a mano: para quien no aceptó la ubicación la primera
+  // vez, y para quien pidió desde el portal y salió a la acera.
+  alVolverASituarme: () => void;
   alLlamar: () => void;
   alElegirDestino: (destino: DestinoSugerido) => void;
   alElegirCoche: (conductorId: number) => void;
@@ -52,6 +55,8 @@ export interface PropiedadesVistaCliente {
   // Si el GPS ya respondió (aunque sea negándose) y si dio coordenadas.
   gpsResuelto: boolean;
   hayCoordenadas: boolean;
+  // Mientras el GPS contesta, para que el botón diga que está trabajando.
+  situando?: boolean;
   // Cuántos taxis podrían venir a por él. null mientras no se sabe (sin
   // origen, o sin conexión): entonces no se dice nada, que es más honesto que
   // enseñar un cero o un número viejo.
@@ -109,6 +114,7 @@ function Estrellas({ media, valoraciones, t, compacta = false }: {
 
 export default function VistaCliente({
   fase, detalle, origen, destino, gpsResuelto, origenEnGps = false, hayCoordenadas, taxisCerca,
+  situando = false,
   elegibles = [], elegido = null,
   valorada, valoracionPendiente = null, importeElegido = null, cobroDeMas = false,
   aviso, t, sugeridos, escribiendo, puedeDeshacer, segundosGracia,
@@ -133,7 +139,7 @@ export default function VistaCliente({
             buscadorDestino
           ) : (
             <>
-              <ul className="sugeridos">
+              <ul className="sugeridos" data-guia="destinos">
                 {sugeridos.map((d) => (
                   <li key={d.id}>
                     <button type="button" onClick={() => acciones.alElegirDestino(d)}>
@@ -157,7 +163,7 @@ export default function VistaCliente({
           )}
 
           {origen ? (
-            <p className="ubicacion-ok">
+            <p className="ubicacion-ok" data-guia="origen">
               <span className="punto-verde" />
               {origenEnGps ? (
                 <>
@@ -170,6 +176,17 @@ export default function VistaCliente({
               <button type="button" className="enlace" onClick={acciones.alQuitarOrigen}>
                 {t('origen.cambiar')}
               </button>
+              {/* «No es aquí»: vuelve a leer el GPS. Quien pide desde el
+                  portal y sale a la acera sabe que el punto está mal mucho
+                  antes que el teléfono. */}
+              <button
+                type="button"
+                className="enlace"
+                onClick={acciones.alVolverASituarme}
+                disabled={situando}
+              >
+                {situando ? t('origen.situando') : t('origen.noEsAqui')}
+              </button>
             </p>
           ) : (
             <>
@@ -178,6 +195,17 @@ export default function VistaCliente({
                   ? t('origen.sinGpsResuelto')
                   : t('origen.buscando')}
               </p>
+              {/* Y si dijo que no a la ubicación —o la pregunta se le fue—,
+                  esto es lo único que la recupera: la aplicación no vuelve a
+                  preguntar sola nunca más. */}
+              <button
+                type="button"
+                className="secundario"
+                onClick={acciones.alVolverASituarme}
+                disabled={situando}
+              >
+                {situando ? t('origen.situando') : t('origen.activarUbicacion')}
+              </button>
               {buscadorOrigen}
             </>
           )}
@@ -230,7 +258,7 @@ export default function VistaCliente({
               invita a bajar a pararlo en la calle, donde la plataforma no
               cobra. Un tiempo estimado no se puede seguir. */}
           {origen && elegibles.length > 0 && (
-            <div className="coches">
+            <div className="coches" data-guia="coches">
               <p className="nota-pequena">{t('coches.elige')}</p>
               <ul>
                 {elegibles.map((coche) => (
@@ -264,6 +292,7 @@ export default function VistaCliente({
           <button
             type="button"
             className="principal grande"
+            data-guia="pedir"
             disabled={!origen || !destino}
             onClick={acciones.alPedir}
           >

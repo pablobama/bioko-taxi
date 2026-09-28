@@ -215,11 +215,6 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   porque los conductores pasan más tiempo DISPONIBLE. No se pierde nada, pero
   conviene tratarlo como conflicto esperado y no como error.
 
-- **[P13-04] Sin límite de desvío.** El sistema empareja por zona de destino,
-  no por ruta: puede juntar a dos pasajeros cuyos destinos están en la misma
-  zona pero en extremos opuestos de ella. Sin datos de rutas reales no hay
-  forma barata de acotarlo; se revisará con el piloto.
-
 - **[P17-01] El plano compilado se queda anticuado.** Las calles vienen de un
   fichero generado (`npm run compilar-mapa`) que viaja dentro de la app: si
   OpenStreetMap gana detalle en Malabo, hay que volver a compilar y publicar.
@@ -516,6 +511,29 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   trabajo para el operador, que los va confirmando.
 
 ## Resueltos
+
+- **[P13-04] El desvío del taxi compartido tiene precio y tiene límite** —
+  resuelto el 2026-09-26 (migración 071). Antes, a un taxi con alguien dentro
+  se le ofrecía cualquier carrera que le cupiera y nadie medía lo que eso le
+  costaba al que ya iba dentro, que no ha pedido nada y no puede bajarse.
+  **El diagnóstico** (`scripts/diagnostico-compartido.ts`, 300 escenarios sobre
+  el mapa real de Malabo y los sitios reales del catálogo): conviene desviarse
+  en el 52 % de los casos y en el 48 % no; el retraso del que va dentro es de
+  todo o nada —mediana 0 min cuando el otro pilla de camino, p90 de 11,6 y peor
+  caso 12,6, o sea un viaje de diez minutos convertido en veintitrés—; el 24 %
+  de los desvíos que se ofrecían pasan del tope; el nuevo espera 4,9 min de
+  mediana; al taxista le cuesta 2,4 km; y el orden de paradas cambia en el
+  35 %. **Lo que se hace**: `evaluarDesvio` compara el plan de ahora con el
+  plan con el nuevo dentro, por las calles, y devuelve retraso, espera y metros
+  de más; el desvío que se pasa de los tres límites no se ofrece, y el que se
+  ofrece llega con sus números escritos en la oferta, en la web y en Android.
+  Interruptor `desvio_filtra`. Siete pruebas sin base de datos.
+  **Y la pregunta de pintar los dos recorridos en el plano del taxista: no.**
+  Con el orden cambiando en un tercio de los casos, lo que hace falta no es una
+  segunda línea encima de la primera —en un móvil eso es ruido— sino saber el
+  precio ANTES de aceptar, que es lo que ahora dice la oferta, y ver el orden
+  de las paradas, que ya se enseña numerado. Si algún día el coche lleva tres o
+  cuatro a la vez, esto habrá que volver a mirarlo.
 
 - **[P7-03] La valoración del pasajero, por fin pedida** — resuelto el
   2026-09-25. El enrutamiento siempre dijo «diferida a próxima sesión», y no se

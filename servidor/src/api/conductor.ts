@@ -672,6 +672,7 @@ export function registrarRutasConductor(
     const ofertas = await pool.query(
       `SELECT o.solicitud_id, o.oleada, s.expira_en,
               ro.nombre AS origen, rd.nombre AS destino,
+              o.desvio_retraso_seg, o.desvio_espera_seg, o.desvio_metros,
               bp.p25, bp.p50, bp.p75
        FROM oferta o
        JOIN solicitud s ON s.id = o.solicitud_id
@@ -781,6 +782,13 @@ export function registrarRutasConductor(
         oleada: o.oleada,
         expiraEn: o.expira_en,
         bandaPrecio: o.p50 === null ? null : { p25: Number(o.p25), p50: Number(o.p50), p75: Number(o.p75) },
+        // Lo que cuesta el desvío si ya lleva a alguien (migración 071). null
+        // con el coche vacío: no hay desvío, hay carrera.
+        desvio: o.desvio_retraso_seg === null ? null : {
+          retrasoMin: Math.round(Number(o.desvio_retraso_seg) / 60),
+          esperaMin: Math.round(Number(o.desvio_espera_seg) / 60),
+          metros: Number(o.desvio_metros),
+        },
       })),
       pasajeros: await ordenarPasajeros(await Promise.all(pasajeros.rows.map(async (fila) => {
         const recogida = puntoDeRecogida({

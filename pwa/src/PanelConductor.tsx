@@ -19,6 +19,7 @@ import { useLlamada, type SenalRecibida } from './llamada';
 import Mapa from './Mapa';
 import PanelLlamada from './PanelLlamada';
 import Recarga from './Recarga';
+import PrimeraVez, { guiaPendiente, marcarGuiaVista, type PasoGuia } from './PrimeraVez';
 import MandosFlotantes from './MandosFlotantes';
 import { anotarRastro, olvidarRastro, pendientesRastro } from './rastroLocal';
 import { alternarGuia, guiaEncendida, proximoAviso, type PasoPorRotonda } from './guia';
@@ -61,6 +62,16 @@ export default function PanelConductor({
   alRecargarSesion: () => void;
 }) {
   const t = crearT(idioma);
+
+  // La guía de la primera vez del taxista (26/09). Se enseña con el panel ya
+  // montado; los pasos que no estén en pantalla —la oferta, si no hay
+  // ninguna— se saltan solos.
+  const [guiaAbierta, setGuiaAbierta] = useState(false);
+  useEffect(() => {
+    if (!guiaPendiente('conductor', VERSION_GUIA_CONDUCTOR)) return;
+    const reloj = setTimeout(() => setGuiaAbierta(true), 900);
+    return () => clearTimeout(reloj);
+  }, []);
   const [estado, setEstado] = useState<EstadoConductor | null>(null);
   const [aviso, setAviso] = useState('');
   const [ocupado, setOcupado] = useState(false);
@@ -895,8 +906,22 @@ export default function PanelConductor({
           alCompletar: (id) => accion(id, 'completar'),
           alLlamar: (id) => llamada.llamar(id),
           alDescartarAvisoTurno: () => setAvisoTurno(null),
+          alVerGuia: () => setGuiaAbierta(true),
         }}
       />
+      )}
+
+      {guiaAbierta && (
+        <PrimeraVez
+          pasos={pasosConductor(t)}
+          textoSiguiente={t('guia.siguiente')}
+          textoFin={t('guia.entendido')}
+          textoSaltar={t('guia.saltar')}
+          alTerminar={() => {
+            marcarGuiaVista('conductor', VERSION_GUIA_CONDUCTOR);
+            setGuiaAbierta(false);
+          }}
+        />
       )}
 
       {!enRecarga && (
@@ -944,4 +969,34 @@ export default function PanelConductor({
       />
     </main>
   );
+}
+
+// La guía de la primera vez del taxista. Lo que hay que saber para trabajar
+// hoy: entrar en servicio, qué es una oferta y lo que cuesta un desvío, dónde
+// está el saldo, y dónde se encienden la voz y el resto.
+const VERSION_GUIA_CONDUCTOR = 1;
+
+function pasosConductor(t: ReturnType<typeof crearT>): PasoGuia[] {
+  return [
+    {
+      selector: '[data-guia="servicio"]',
+      titulo: t('guia.conductor.servicioTitulo'),
+      texto: t('guia.conductor.servicioTexto'),
+    },
+    {
+      selector: '[data-guia="tira"]',
+      titulo: t('guia.conductor.tiraTitulo'),
+      texto: t('guia.conductor.tiraTexto'),
+    },
+    {
+      selector: '[data-guia="oferta"]',
+      titulo: t('guia.conductor.ofertaTitulo'),
+      texto: t('guia.conductor.ofertaTexto'),
+    },
+    {
+      selector: '[data-guia="mandos"]',
+      titulo: t('guia.conductor.mandosTitulo'),
+      texto: t('guia.conductor.mandosTexto'),
+    },
+  ];
 }

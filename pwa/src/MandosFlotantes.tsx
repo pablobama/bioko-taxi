@@ -29,7 +29,7 @@ export default function MandosFlotantes({
   mandos: Mando[];
 }) {
   return (
-    <div className="mandos-flotantes">
+    <div className="mandos-flotantes" data-guia="mandos">
       <button
         type="button"
         className="ajustes mando-flotante"

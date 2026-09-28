@@ -2214,3 +2214,92 @@ button.importe.elegido-importe {
   color: var(--humo);
   font-size: 0.8rem;
 }
+
+/* El precio del desvío en la oferta (migración 071). Verde cuando no cuesta
+   nada y ámbar cuando retrasa a quien va dentro: el taxista tiene que poder
+   distinguirlo de un vistazo, con el coche en marcha. */
+.desvio {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(74, 222, 128, 0.1);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+  color: #86efac;
+  font-size: 0.92rem;
+}
+
+.desvio.caro {
+  background: rgba(255, 176, 32, 0.12);
+  border-color: rgba(255, 176, 32, 0.4);
+  color: var(--ambar-claro);
+}
+
+/* La guía de la primera vez: un foco que recorre la pantalla (PrimeraVez.tsx).
+   Cuatro paños alrededor del hueco en vez de una máscara, para que el agujero
+   sea de verdad y los toques pasen. */
+.guia {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  pointer-events: none;
+}
+
+.guia-pano {
+  position: fixed;
+  background: rgba(8, 8, 10, 0.78);
+  pointer-events: auto;
+}
+
+.guia-foco {
+  position: fixed;
+  border-radius: 14px;
+  border: 2px solid var(--ambar);
+  box-shadow: 0 0 0 2px rgba(255, 176, 32, 0.25);
+  pointer-events: none;
+}
+
+.guia-cartel {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  background: var(--tarjeta);
+  border: 1px solid var(--borde);
+  border-radius: 16px;
+  padding: 14px 16px;
+  pointer-events: auto;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+.guia-cartel h2 {
+  margin: 4px 0 6px;
+  font-size: 1.15rem;
+}
+
+.guia-cartel p {
+  margin: 0 0 12px;
+  color: var(--hueso);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.guia-cuenta {
+  color: var(--humo);
+  font-size: 0.78rem;
+  font-family: var(--mono);
+}
+
+.guia-botones {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.guia-botones .principal {
+  flex: 1;
+  margin: 0;
+}
+
+.guia-botones .tenue {
+  margin: 0;
+  width: auto;
+}

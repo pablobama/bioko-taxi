@@ -23,7 +23,10 @@ import type pg from 'pg';
 import { enTransaccion } from '../bd/conexion.js';
 import { ErrorEntidadInexistente, ErrorOfertaInvalida } from './errores.js';
 import type { EmisorEventos } from './eventos.js';
+import { rutaParaLlegar } from './carreteras.js';
+import { evaluarDesvio, type MedidorViaje, type Veredicto } from './desvio.js';
 import { estadoPorOcupacion, ocupacionDe } from './ocupacion.js';
+import { distanciaRectaM, type ParadaPendiente } from './paradas.js';
 import { leerParametroEntero } from './parametros.js';
 import { caducarPresencias } from './presencia.js';
 import { registrarTransicion, transicionarConductor, transicionarSolicitud } from './transiciones.js';
@@ -227,6 +230,112 @@ async function candidatos(
   return res.rows.map((f) => f.conductor_id);
 }
 
+// Por las calles, con la recta de red de seguridad: la misma regla que usa
+// `rutaDe` para ordenar las paradas. 25 km/h es la velocidad de ciudad que ya
+// usa el resto del sistema cuando no hay nada mejor.
+const medirPorCalles: MedidorViaje = (a, b) => {
+  const porCalles = rutaParaLlegar(a, b);
+  const recta = distanciaRectaM(a, b);
+  if (porCalles === null || porCalles.distanciaM > recta * 3 + 500) {
+    const metros = recta * 1.3;
+    return { metros, segundos: metros / (25 / 3.6) };
+  }
+  return { metros: porCalles.distanciaM, segundos: porCalles.segundosTipicos };
+};
+
+// Lo que le costaría a cada candidato desviarse a por esta carrera (migración
+// 071, P13-04).
+//
+// El coche VACÍO no se evalúa: no hay a quién retrasar, y su veredicto es
+// null, que es distinto de «cero». Para el que lleva gente se miden los dos
+// planes por las calles y sale el precio del desvío.
+//
+// El diagnóstico dice que esto no es un detalle: la mitad de los desvíos que
+// hoy se ofrecen no deberían ofrecerse, y el peor medido alargaba un viaje de
+// diez minutos a veintitrés.
+async function veredictosDeDesvio(
+  cliente: pg.ClientBase,
+  solicitud: SolicitudDespacho,
+  conductorIds: number[],
+): Promise<Map<number, Veredicto | null>> {
+  const veredictos = new Map<number, Veredicto | null>();
+  if (conductorIds.length === 0) return veredictos;
+
+  // Dónde hay que recoger al nuevo y dónde se baja. El punto de recogida es el
+  // mismo que ve el taxista: la posición con la que pidió si venía con
+  // precisión suficiente, y si no el sitio del catálogo (migración 046). Aquí
+  // se usa la referencia, que es lo que hay sin salir de esta consulta.
+  const puntos = await cliente.query(
+    `SELECT ro.lat AS o_lat, ro.lng AS o_lng, rd.lat AS d_lat, rd.lng AS d_lng
+     FROM solicitud s
+     JOIN referencia ro ON ro.id = s.referencia_origen_id
+     JOIN referencia rd ON rd.id = s.referencia_destino_id
+     WHERE s.id = $1`,
+    [solicitud.id],
+  );
+  if (puntos.rowCount === 0) return veredictos;
+  const nueva = {
+    solicitudId: solicitud.id,
+    recogida: { lat: Number(puntos.rows[0].o_lat), lng: Number(puntos.rows[0].o_lng) },
+    destino: { lat: Number(puntos.rows[0].d_lat), lng: Number(puntos.rows[0].d_lng) },
+  };
+
+  const limites = {
+    retrasoMaximoSeg: await leerParametroEntero(cliente, 'desvio_retraso_max_seg'),
+    retrasoMaximoPorcentaje: (await leerParametroEntero(cliente, 'desvio_retraso_max_pct')) / 100,
+    esperaMaximaNuevoSeg: await leerParametroEntero(cliente, 'desvio_espera_max_seg'),
+  };
+
+  for (const conductorId of conductorIds) {
+    // Lo que le queda por hacer: a quién tiene que ir a buscar y a quién tiene
+    // que dejar. Un pasajero ya recogido solo deja parada de destino.
+    const pendientes = await cliente.query(
+      `SELECT s.id, s.estado, ro.nombre AS origen, ro.lat AS o_lat, ro.lng AS o_lng,
+              rd.nombre AS destino, rd.lat AS d_lat, rd.lng AS d_lng
+       FROM solicitud s
+       JOIN referencia ro ON ro.id = s.referencia_origen_id
+       JOIN referencia rd ON rd.id = s.referencia_destino_id
+       WHERE s.conductor_id = $1 AND s.estado IN ('ACEPTADO', 'EN_CAMINO', 'RECOGIDO')`,
+      [conductorId],
+    );
+    if (pendientes.rowCount === 0) {
+      veredictos.set(conductorId, null);
+      continue;
+    }
+    const paradas: ParadaPendiente[] = [];
+    for (const fila of pendientes.rows) {
+      if (fila.estado !== 'RECOGIDO') {
+        paradas.push({
+          solicitudId: Number(fila.id), tipo: 'recogida',
+          lat: Number(fila.o_lat), lng: Number(fila.o_lng), nombre: fila.origen,
+        });
+      }
+      paradas.push({
+        solicitudId: Number(fila.id), tipo: 'destino',
+        lat: Number(fila.d_lat), lng: Number(fila.d_lng), nombre: fila.destino,
+      });
+    }
+
+    // Dónde está el coche. Sin posición reciente no se puede medir un desvío,
+    // y lo honesto es no inventárselo: se deja pasar la oferta como antes.
+    const donde = await cliente.query(
+      `SELECT p.lat, p.lng FROM posicion p
+       JOIN viaje v ON v.id = p.viaje_id
+       JOIN solicitud s ON s.id = v.solicitud_id
+       WHERE s.conductor_id = $1 AND p.actor = 'conductor'
+       ORDER BY p.creado_en DESC LIMIT 1`,
+      [conductorId],
+    );
+    if (donde.rowCount === 0) {
+      veredictos.set(conductorId, null);
+      continue;
+    }
+    const coche = { lat: Number(donde.rows[0].lat), lng: Number(donde.rows[0].lng) };
+    veredictos.set(conductorId, evaluarDesvio(coche, paradas, nueva, medirPorCalles, limites));
+  }
+  return veredictos;
+}
+
 // Crea las ofertas de una oleada y emite D1 a cada conductor. El broadcast
 // lleva destino y banda de precio para decidir antes de aceptar (R2), y
 // NUNCA el teléfono del cliente (R3).
@@ -241,6 +350,13 @@ async function ofertarA(
   if (conductorIds.length === 0) {
     return;
   }
+
+  // El precio del desvío para los que ya llevan gente (migración 071). Se
+  // calcula aquí, justo antes de ofrecer, porque depende de dónde esté el
+  // coche AHORA: hacerlo al elegir candidatos lo dejaría viejo en cuanto el
+  // taxi avanzara dos calles.
+  const veredictos = await veredictosDeDesvio(cliente, solicitud, conductorIds);
+  const filtra = (await leerParametroEntero(cliente, 'desvio_filtra')) === 1;
   const banda = await cliente.query(
     `SELECT p25, p50, p75 FROM banda_precio
      WHERE zona_origen_id = $1 AND zona_destino_id = $2`,
@@ -251,10 +367,23 @@ async function ofertarA(
     : null;
 
   for (const conductorId of conductorIds) {
+    const veredicto = veredictos.get(conductorId) ?? null;
+    // El desvío que se pasa de los límites no se ofrece. Con `desvio_filtra` a
+    // 0 se ofrece igual y los números se mandan de todas formas: el taxista
+    // los ve y decide él.
+    if (filtra && veredicto !== null && !veredicto.conviene) continue;
+
     await cliente.query(
-      `INSERT INTO oferta (solicitud_id, conductor_id, oleada, enviada_en)
-       VALUES ($1, $2, $3, $4)`,
-      [solicitud.id, conductorId, oleada, ahora],
+      `INSERT INTO oferta
+         (solicitud_id, conductor_id, oleada, enviada_en,
+          desvio_retraso_seg, desvio_espera_seg, desvio_metros)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        solicitud.id, conductorId, oleada, ahora,
+        veredicto === null ? null : Math.round(veredicto.retrasoMaximoSeg),
+        veredicto === null ? null : Math.round(veredicto.esperaNuevoSeg),
+        veredicto === null ? null : Math.round(veredicto.metrosExtra),
+      ],
     );
     await transicionarConductor(cliente, conductorId, 'OFERTADO', 'sistema', `oleada_${oleada}`);
     await emisor.emitir({
@@ -268,6 +397,13 @@ async function ofertarA(
         bandaPrecio,
         oleada,
         expiraEn: solicitud.expiraEn,
+        // Lo que le cuesta el desvío, si lleva a alguien dentro (migración
+        // 071). null cuando va vacío: no hay desvío que contar.
+        desvio: veredicto === null ? null : {
+          retrasoSeg: Math.round(veredicto.retrasoMaximoSeg),
+          esperaSeg: Math.round(veredicto.esperaNuevoSeg),
+          metros: Math.round(veredicto.metrosExtra),
+        },
       },
     }, cliente);
   }

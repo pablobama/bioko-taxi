@@ -643,6 +643,9 @@ export interface OfertaConductor {
   oleada: number;
   expiraEn: string | null;
   bandaPrecio: { p25: number; p50: number; p75: number } | null;
+  // Lo que cuesta el desvío cuando ya se lleva a alguien dentro (migración
+  // 071). null con el coche vacío: entonces no hay desvío, hay carrera.
+  desvio: { retrasoMin: number; esperaMin: number; metros: number } | null;
 }
 
 export interface PasajeroConductor {

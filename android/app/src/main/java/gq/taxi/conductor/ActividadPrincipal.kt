@@ -41,6 +41,11 @@ class ActividadPrincipal : Activity() {
     // acaba de pulsar o parecerá que el botón no hizo nada.
     private var ultimoEstado: JSONObject? = null
 
+    // Un salto de línea, aparte: escribirlo dentro de la cadena hace que
+    // cualquier retoque automático del fichero lo convierta en un salto de
+    // verdad y deje de compilar. Pasó.
+    private val SALTO = System.lineSeparator()
+
     private val receptorFcm = object : BroadcastReceiver() {
         override fun onReceive(contexto: Context?, intent: Intent?) {
             refrescar()
@@ -347,9 +352,21 @@ class ActividadPrincipal : Activity() {
                     ruta
                 }
             val banda = oferta.optJSONObject("bandaPrecio")
-            vista<TextView>(R.id.texto_oferta_banda).text =
-                if (banda == null) "Sin precio orientativo de esta ruta todavía"
+            val precio = if (banda == null) "Sin precio orientativo de esta ruta todavía"
                 else "Se suele pagar ${banda.optLong("p25")}–${banda.optLong("p75")} XAF"
+            // El precio del DESVÍO cuando ya lleva a alguien (migración 071).
+            // Va pegado al precio orientativo porque las dos cosas se miran en
+            // el mismo segundo: cuánto saco y cuánto me cuesta.
+            val desvio = oferta.optJSONObject("desvio")
+            val km = if (desvio == null) "" else String.format("%.1f", desvio.optInt("metros") / 1000.0)
+            val texto: String = when {
+                desvio == null -> precio
+                desvio.optInt("retrasoMin") > 0 ->
+                    precio + SALTO + "Retrasa " + desvio.optInt("retrasoMin") +
+                        " min a quien llevas · " + km + " km de más"
+                else -> precio + SALTO + "Te pilla de camino · " + km + " km de más"
+            }
+            vista<TextView>(R.id.texto_oferta_banda).text = texto
         }
 
         // Taxi compartido: un bloque de botones por pasajero.

@@ -524,10 +524,12 @@ test('un lugar colgado de un barrio/calle se reparte por su distrito urbano padr
 // solicitud viva, incluidas las que otras pruebas dejaron a medias en esta
 // base compartida (P12-03). Si una de esas se lo lleva primero, queda OFERTADO
 // y la solicitud de la prueba ya no puede ofrecérsela. Se cierran antes.
-async function cerrarSolicitudesSueltas(): Promise<void> {
+async function cerrarSolicitudesSueltas(salvo: number | null = null): Promise<void> {
   const abiertas = await pool.query(
     `UPDATE solicitud SET estado = 'SIN_OFERTA'
-     WHERE estado IN ('SOLICITADO', 'EMITIDO') RETURNING id, estado`,
+     WHERE estado IN ('SOLICITADO', 'EMITIDO') AND ($1::bigint IS NULL OR id <> $1)
+     RETURNING id, estado`,
+    [salvo],
   );
   for (const fila of abiertas.rows) {
     await pool.query(
@@ -791,6 +793,12 @@ test('sin nadie en el barrio, la carrera ya no muere: se ofrece a toda la ciudad
   // quiénes son todos: la oleada 5 convoca a la ciudad entera, y en la base de
   // desarrollo la ciudad son también los taxis que dejaron otras pruebas
   // (P12-03). Que aparezcan es precisamente lo que se está probando.
+  //
+  // Y se vuelven a cerrar las peticiones sueltas —menos la de aquí— justo
+  // antes: otra batería que corra en paralelo puede haber dejado una viva
+  // entre medias y llevarse al taxi de esta prueba a OFERTADO, que es un fallo
+  // de la base compartida y no del reparto.
+  await cerrarSolicitudesSueltas(solicitudId);
   await avanzarDespachos(pool, emisor, despues(t0, 76));
   const ofertas = await ofertasDe(solicitudId);
   assert.ok(ofertas.some((o) => String(o.conductorId) === String(suelto) && o.oleada === 5),

@@ -36,6 +36,7 @@ const accionesCliente: AccionesCliente = {
   alAbrirAjustes: NADA, alAbrirEstadisticas: NADA, alPedir: NADA, alBajar: NADA,
   alCancelar: NADA, alLimpiar: NADA, alValorar: NADA, alQuitarOrigen: NADA, alLlamar: NADA, alElegirDestino: NADA, alElegirCoche: NADA, alEscribirDestino: NADA,
   alOmitirValoracion: NADA, alElegirImporte: NADA, alMarcarCobroDeMas: NADA,
+  alVolverASituarme: NADA,
 };
 
 const accionesConductor: AccionesConductor = {
@@ -43,7 +44,7 @@ const accionesConductor: AccionesConductor = {
   alAlternarServicio: NADA, alAceptar: NADA,
   alRechazar: NADA, alSalir: NADA, alLlegar: NADA, alRecoger: NADA,
   alDeclararAusente: NADA, alCompletar: NADA, alLlamar: NADA,
-  alDescartarAvisoTurno: NADA,
+  alDescartarAvisoTurno: NADA, alVerGuia: NADA,
 };
 
 const mercado: ReferenciaSugerida = {
@@ -639,6 +640,7 @@ export default function Galeria() {
                   oleada: 1,
                   expiraEn: null,
                   bandaPrecio: { p25: 1000, p50: 1500, p75: 2000 },
+                  desvio: null,
                 }],
               }))}
             </Marco>
@@ -655,6 +657,47 @@ export default function Galeria() {
                   oleada: 5,
                   expiraEn: null,
                   bandaPrecio: { p25: 1500, p50: 2000, p75: 3000 },
+                  desvio: null,
+                }],
+              }))}
+            </Marco>
+
+            <Marco
+              titulo="Carrera con alguien dentro · de camino"
+              descripcion="Migración 071: llevando pasaje, la oferta llega con lo que cuesta el desvío. Aquí no cuesta nada, y decirlo es lo que hace que se coja tranquilo."
+            >
+              {conductor(estadoConductor({
+                pasajeros: [pasajero('RECOGIDO')],
+                plazasLibres: 3,
+                pasajerosABordo: 1,
+                ofertas: [{
+                  solicitudId: 1236,
+                  origen: mercado.nombre,
+                  destino: catedral.nombre,
+                  oleada: 2,
+                  expiraEn: null,
+                  bandaPrecio: { p25: 1000, p50: 1500, p75: 2000 },
+                  desvio: { retrasoMin: 0, esperaMin: 2, metros: 700 },
+                }],
+              }))}
+            </Marco>
+
+            <Marco
+              titulo="Carrera con alguien dentro · retrasa"
+              descripcion="El mismo caso cuando sí cuesta: cuatro minutos de más para quien ya va dentro y no ha pedido nada. Pasado el límite ni siquiera se ofrece; hasta ahí, decide el taxista sabiendo el precio."
+            >
+              {conductor(estadoConductor({
+                pasajeros: [pasajero('RECOGIDO')],
+                plazasLibres: 3,
+                pasajerosABordo: 1,
+                ofertas: [{
+                  solicitudId: 1237,
+                  origen: 'Mercado SEMU',
+                  destino: catedral.nombre,
+                  oleada: 2,
+                  expiraEn: null,
+                  bandaPrecio: { p25: 1500, p50: 2000, p75: 2500 },
+                  desvio: { retrasoMin: 4, esperaMin: 6, metros: 2400 },
                 }],
               }))}
             </Marco>
