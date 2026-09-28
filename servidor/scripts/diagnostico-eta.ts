@@ -10,6 +10,9 @@
 // recogida, con los mismos datos que tenía entonces. Así se puede comparar
 // «lo que dijo» con «lo que tardó» sin haber guardado la predicción.
 //
+// SOLO LECTURA: no escribe ni una fila. Se puede ejecutar contra producción
+// con la tranquilidad de que lo único que hace es mirar.
+//
 // USO. Contra la base de desarrollo:
 //
 //   npx tsx scripts/diagnostico-eta.ts
@@ -17,7 +20,9 @@
 // Contra PRODUCCIÓN, que es donde están los viajes de verdad (lo ejecuta el
 // operador; aquí no se toca esa base):
 //
-//   BD_URL='...' npx tsx scripts/diagnostico-eta.ts 7
+//   $env:BD_URL = '...'      (PowerShell, que es lo que hay en esta máquina)
+//   npx tsx scripts/diagnostico-eta.ts 7
+//   Remove-Item Env:BD_URL   (para no dejar la sesión apuntando a producción)
 //
 // El número son los días hacia atrás que se miran (por defecto 1: hoy).
 
@@ -52,6 +57,13 @@ function percentil(valores: number[], fraccion: number): number {
 
 async function main(): Promise<void> {
   const pool = crearPool();
+  // SOLO LECTURA. Este script no escribe ni una fila: se ejecuta contra la
+  // base de producción y lo único que hace es mirar.
+  const parametros = await leerParametros(pool);
+  if (parametros === null) {
+    await pool.end();
+    process.exit(1);
+  }
 
   // Los viajes terminados del periodo, con la hora REAL de recogida y de
   // cierre sacadas del registro de transiciones, que es el que no miente.
@@ -119,7 +131,14 @@ async function main(): Promise<void> {
     // para poder decidir con números y no por corazonada.
     const conductorId = await conductorDe(pool, fila.viaje_id);
     const factor = await factorDeMarchaDelTurno(pool, conductorId, recogido);
-    const antes = await conCalculoViejo(pool, desde, hasta, medida);
+    const caminoAhora = rutaParaLlegar(desde, hasta);
+    const rectaAhora = distanciaMetros(desde.lat, desde.lng, hasta.lat, hasta.lng);
+    const creible = caminoAhora !== null
+      && caminoAhora.distanciaM <= rectaAhora * 3 + 500
+      && caminoAhora.distanciaM >= rectaAhora;
+    const antes = conCalculoViejo(
+      parametros, rectaAhora, creible ? caminoAhora!.distanciaM : null, medida,
+    );
     const estimacion = await estimarLlegada(pool, desde, hasta, medida, factor);
     const error = estimacion.minutos - tardoMin;
     const errorViejo = antes.minutos - tardoMin;
@@ -174,24 +193,59 @@ async function main(): Promise<void> {
   await pool.end();
 }
 
-// El cálculo de antes de la migración 073: distancia partido por una
-// velocidad. Se fuerza apagando el interruptor solo para esta llamada.
-async function conCalculoViejo(
-  pool: ReturnType<typeof crearPool>,
-  desde: { lat: number; lng: number },
-  hasta: { lat: number; lng: number },
+// El cálculo de antes de la migración 073, reproducido AQUÍ: distancia
+// partido por una velocidad.
+//
+// Se copia en vez de llamar al código real con el interruptor apagado, y es a
+// propósito: apagarlo significaba ESCRIBIR en `parametro`, o sea cambiar cómo
+// se calcula el tiempo para todo el mundo mientras dura el diagnóstico, y
+// dejarlo apagado para siempre si el proceso se corta en medio. Un diagnóstico
+// que se ejecuta contra producción no puede tocar producción. Son cuatro
+// líneas duplicadas y la duplicación se paga sola.
+function conCalculoViejo(
+  parametros: Parametros,
+  rectaM: number,
+  porCallesM: number | null,
   medida: number | null,
-): Promise<{ minutos: number }> {
-  const previo = await pool.query(`SELECT valor FROM parametro WHERE clave = 'eta_usa_plano'`);
-  await pool.query(`UPDATE parametro SET valor = '0' WHERE clave = 'eta_usa_plano'`);
-  try {
-    return await estimarLlegada(pool, desde, hasta, medida);
-  } finally {
-    await pool.query(
-      `UPDATE parametro SET valor = $1 WHERE clave = 'eta_usa_plano'`,
-      [previo.rows[0]?.valor ?? '1'],
+): { minutos: number } {
+  const km = (porCallesM ?? rectaM * (parametros.factorDesvioDecimas / 10)) / 1000;
+  const urbana = medida ?? parametros.urbanaKmh;
+  const ciudad = Math.min(km, parametros.tramoUrbanoKm);
+  const carretera = Math.max(0, km - parametros.tramoUrbanoKm);
+  const horas = ciudad / urbana + carretera / parametros.interurbanaKmh;
+  return { minutos: Math.max(1, Math.round(horas * 60)) };
+}
+
+interface Parametros {
+  urbanaKmh: number;
+  interurbanaKmh: number;
+  tramoUrbanoKm: number;
+  factorDesvioDecimas: number;
+}
+
+// Los parámetros, leídos UNA vez. Y de paso la comprobación de que la base
+// tiene ya la migración 073: sin ella, el cálculo nuevo ni siquiera arranca y
+// más vale decirlo que reventar a mitad de la tabla.
+async function leerParametros(pool: ReturnType<typeof crearPool>): Promise<Parametros | null> {
+  const res = await pool.query(
+    `SELECT clave, valor FROM parametro
+     WHERE clave IN ('velocidad_urbana_kmh', 'velocidad_interurbana_kmh',
+                     'eta_tramo_urbano_km', 'eta_factor_desvio', 'eta_usa_plano')`,
+  );
+  const mapa = new Map(res.rows.map((f: { clave: string; valor: string }) => [f.clave, f.valor]));
+  if (!mapa.has('eta_usa_plano')) {
+    console.error(
+      'Esta base todavía no tiene la migración 073 (el cálculo nuevo del tiempo).\n'
+      + 'Despliega primero, o ejecuta las migraciones, y vuelve a lanzarlo.',
     );
+    return null;
   }
+  return {
+    urbanaKmh: Number(mapa.get('velocidad_urbana_kmh') ?? 18),
+    interurbanaKmh: Number(mapa.get('velocidad_interurbana_kmh') ?? 70),
+    tramoUrbanoKm: Number(mapa.get('eta_tramo_urbano_km') ?? 5),
+    factorDesvioDecimas: Number(mapa.get('eta_factor_desvio') ?? 13),
+  };
 }
 
 async function conductorDe(pool: ReturnType<typeof crearPool>, viajeId: number): Promise<number> {
