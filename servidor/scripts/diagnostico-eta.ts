@@ -31,7 +31,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { crearPool } from '../src/bd/conexion.js';
+import pg from 'pg';
 import { urlBaseDatos } from '../src/bd/migrar.js';
 import { rutaParaLlegar } from '../src/dominio/carreteras.js';
 import {
@@ -77,7 +77,18 @@ async function main(): Promise<void> {
   const host = url.replace(/^[^@]*@/, '').split('/')[0];
   console.log(`Base: ${local ? 'LOCAL (desarrollo)' : `PRODUCCIÓN (${host})`}\n`);
 
-  const pool = crearPool();
+  // El plano, ANTES de abrir la base. Cargarlo son unos segundos de CPU, y
+  // hacerlo con una conexión abierta es lo que el pooler de Supabase entiende
+  // como conexión muerta: «Connection terminated unexpectedly» a mitad del
+  // informe. Con esto, la pausa larga ocurre antes de que haya nada que
+  // cerrar.
+  process.stdout.write('Cargando el plano de calles… ');
+  rutaParaLlegar({ lat: 3.7531, lng: 8.7752 }, { lat: 3.7553, lng: 8.7789 });
+  console.log('listo\n');
+
+  // `keepAlive`: el sistema operativo manda señales de vida por el socket y el
+  // pooler deja de dar la conexión por perdida entre dos consultas.
+  const pool = new pg.Pool({ connectionString: urlBaseDatos(), keepAlive: true, max: 2 });
   // SOLO LECTURA. Este script no escribe ni una fila: se ejecuta contra la
   // base de producción y lo único que hace es mirar.
   const parametros = await leerParametros(pool);
@@ -116,6 +127,7 @@ async function main(): Promise<void> {
 
   const errores: number[] = [];
   const erroresViejos: number[] = [];
+  let fallados = 0;
   const relativos: number[] = [];
   console.log('viaje |  km  | antes | nuevo | tardó | error  | factor | velocidad de');
   console.log('-'.repeat(72));
@@ -141,6 +153,7 @@ async function main(): Promise<void> {
 
     // La velocidad que la aplicación habría tenido a mano EN ESE MOMENTO: la
     // del viaje si ya había posiciones, y si no la del turno.
+    try {
     const delViaje = await velocidadRecienteKmh(pool, fila.viaje_id, recogido);
     const delTurno = delViaje !== null
       ? null
@@ -189,6 +202,13 @@ async function main(): Promise<void> {
       + ` · fue a ${(km / (tardoMin / 60)).toFixed(1)} km/h`
       + (porCalles !== null ? ` · el plano suponía ${(km / (porCalles.segundosTipicos / 3600)).toFixed(1)} km/h` : ''),
     );
+    } catch (error) {
+      // Un viaje que no se puede medir no puede llevarse por delante el
+      // informe entero: se dice cuál y se sigue con el siguiente.
+      fallados += 1;
+      console.log(`${String(fila.viaje_id).padStart(5)} | no se pudo medir:`
+        + ` ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   if (errores.length === 0) {
@@ -198,7 +218,8 @@ async function main(): Promise<void> {
   }
 
   console.log('\n' + '='.repeat(60));
-  console.log(`Viajes medidos: ${errores.length}`);
+  console.log(`Viajes medidos: ${errores.length}`
+    + (fallados > 0 ? ` · ${fallados} no se pudieron medir` : ''));
   const media = errores.reduce((a, b) => a + b, 0) / errores.length;
   const mediaVieja = erroresViejos.reduce((a, b) => a + b, 0) / erroresViejos.length;
   console.log(`Error medio ANTES: ${mediaVieja >= 0 ? '+' : ''}${mediaVieja.toFixed(1)} min`);
@@ -247,7 +268,7 @@ interface Parametros {
 // Los parámetros, leídos UNA vez. Y de paso la comprobación de que la base
 // tiene ya la migración 073: sin ella, el cálculo nuevo ni siquiera arranca y
 // más vale decirlo que reventar a mitad de la tabla.
-async function leerParametros(pool: ReturnType<typeof crearPool>): Promise<Parametros | null> {
+async function leerParametros(pool: pg.Pool): Promise<Parametros | null> {
   const res = await pool.query(
     `SELECT clave, valor FROM parametro
      WHERE clave IN ('velocidad_urbana_kmh', 'velocidad_interurbana_kmh',
@@ -269,7 +290,7 @@ async function leerParametros(pool: ReturnType<typeof crearPool>): Promise<Param
   };
 }
 
-async function conductorDe(pool: ReturnType<typeof crearPool>, viajeId: number): Promise<number> {
+async function conductorDe(pool: pg.Pool, viajeId: number): Promise<number> {
   const res = await pool.query('SELECT conductor_id FROM viaje WHERE id = $1', [viajeId]);
   return Number(res.rows[0].conductor_id);
 }
