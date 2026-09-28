@@ -36,6 +36,7 @@ import { ServicioVerificacionRegistro, type ServicioVerificacionTelefono } from 
 import { registrarRutasConductor } from './conductor.js';
 import { registrarRutasLlamadas } from './llamadas.js';
 import { registrarRutasOperador } from './operador.js';
+import { registrarRutasRadio } from './radio.js';
 import { registrarRutasSesion } from './sesion.js';
 import { registrarRutasVerificacion } from './verificacion.js';
 
@@ -121,6 +122,7 @@ export function crearServidor(
   registrarRutasConductor(app, pool, emisor, conexionesSse);
   registrarRutasLlamadas(app, pool, conexionesSse);
   registrarRutasOperador(app, pool, emisor);
+  registrarRutasRadio(app, pool, conexionesSse);
   registrarRutasVerificacion(app, pool, servicioVerificacion);
 
   // Resuelve (y da de alta si es nuevo) el dispositivo del cliente.

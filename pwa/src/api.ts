@@ -1198,7 +1198,75 @@ export const api = {
       `/api/operador/parametros/${encodeURIComponent(clave)}`,
       { method: 'POST', body: JSON.stringify({ valor }), reintentos: 1 },
     ),
+
+  // La radio del gremio (migración 075).
+  radio: () => pedirJson<EstadoRadio>('/api/conductor/radio'),
+
+  // Apretar el botón. Sin reintentos a propósito: si la petición se pierde en la
+  // red, repetirla llegaría tarde —el turno dura diez segundos— y podría pisarle
+  // la palabra a otro que ya empezó a hablar.
+  pedirTurnoRadio: () =>
+    pedirJson<RespuestaTurno>('/api/conductor/radio/turno', { method: 'POST', body: '{}' }),
+
+  soltarTurnoRadio: () =>
+    pedirJson<{ soltado: boolean }>('/api/conductor/radio/turno', { method: 'DELETE' }),
+
+  // El audio va como cuerpo binario, no en base64: los mismos diez segundos
+  // pesarían un tercio más, y aquí eso es dinero del taxista.
+  mandarVozRadio: (audio: Blob, duracionMs: number) =>
+    pedirJson<{ guardado: boolean; mensajeId: number; oyentes: number }>(
+      '/api/conductor/radio/mensaje',
+      {
+        method: 'POST',
+        body: audio,
+        headers: {
+          'content-type': audio.type || 'audio/webm',
+          'x-duracion-ms': String(Math.round(duracionMs)),
+        },
+      },
+    ),
 };
+
+export interface MensajeRadio {
+  id: number;
+  conductorId: number;
+  nombre: string;
+  matricula: string | null;
+  duracionMs: number;
+  bytes: number;
+  creadoEn: string;
+  mio: boolean;
+}
+
+export interface EstadoRadio {
+  encendida: boolean;
+  canal: string;
+  segundosMax: number;
+  habla: { conductorId: number; nombre: string } | null;
+  mensajes: MensajeRadio[];
+}
+
+export type RespuestaTurno =
+  | { dada: true; caducaEn: string; segundosMax: number }
+  | { dada: false; motivo: 'apagada' }
+  | { dada: false; motivo: 'ocupado'; habla: string; quedanSeg: number }
+  | { dada: false; motivo: 'demasiados'; esperaSeg: number };
+
+// Baja el audio de un mensaje. Va aparte de `pedirJson` porque lo que vuelve no
+// es JSON, y con las cabeceras y no con el secreto en la URL: una URL se comparte
+// sin pensar, y esto es la voz de alguien.
+export async function bajarVozRadio(mensajeId: number): Promise<Blob | null> {
+  await asegurarSecreto();
+  const respuesta = await fetch(`/api/conductor/radio/mensaje/${mensajeId}/audio`, {
+    headers: {
+      'x-dispositivo': uuidDispositivo(),
+      ...(secretoDispositivo() !== null ? { 'x-secreto': secretoDispositivo()! } : {}),
+    },
+  });
+  // Un 404 es lo normal pasadas dos horas: el mensaje se borró. No es un fallo.
+  if (!respuesta.ok) return null;
+  return respuesta.blob();
+}
 
 // Solo en localhost: ?gps=<lat>,<lng> finge la ubicación del dispositivo.
 //

@@ -23,6 +23,7 @@ import FondoMapa from './FondoMapa';
 import { crearT } from './i18n';
 import VistaCliente, { type AccionesCliente, type FaseCliente } from './VistaCliente';
 import VistaConductor, { type AccionesConductor } from './VistaConductor';
+import PanelRadio from './PanelRadio';
 
 // La galería es una herramienta de desarrollo: se enseña siempre en español,
 // aunque la app real respete el idioma elegido.
@@ -850,6 +851,38 @@ export default function Galeria() {
               </HojaSuelta>
             </Marco>
 
+            <Marco
+              titulo="Radio - libre"
+              descripcion="Un canal para toda la isla, y habla uno a la vez. Se aprieta y se habla; se dice que con la pantalla apagada no suena, porque descubrirlo conduciendo es peor."
+            >
+              <RadioDeMuestra estado="libre" />
+            </Marco>
+
+            <Marco
+              titulo="Radio - hablando"
+              descripcion="Ambar lleno y la barra vaciandose: los diez segundos se ven sin leer nada. Al llegar a cero se corta solo, que es lo que impide que uno se quede con el canal."
+            >
+              <RadioDeMuestra estado="hablando" quedan={6} />
+            </Marco>
+
+            <Marco
+              titulo="Radio - habla otro"
+              descripcion="Ocupado, con nombre. Saber QUIEN habla y cuanto le queda es la diferencia entre esperar tranquilo y apretar cinco veces."
+            >
+              <RadioDeMuestra estado="ocupado" habla="Juan Obama" aviso="Habla Juan Obama. Espera 4 s." />
+            </Marco>
+
+            <Marco
+              titulo="Radio - hablo solo"
+              descripcion="Nadie conectado. Se dice, en vez de dejarle creer que aviso a su gremio."
+            >
+              <RadioDeMuestra
+                estado="libre"
+                aviso="No habia nadie conectado: no te ha oido nadie."
+                mensajes={[]}
+              />
+            </Marco>
+
             <Marco titulo="Tus números" descripcion="Aceptación, nota y monedero. Sin comisiones: solo cuota.">
               <HojaSuelta>
                 <h1>Tus números</h1>
@@ -899,6 +932,55 @@ interface PropiedadesGaleriaCliente {
   importeElegido?: number | null;
   cobroDeMas?: boolean;
   aviso?: string;
+}
+
+
+// Lo último dicho por la radio del gremio (migración 075). Sirve para revisar la
+// pantalla sin tener que montar dos taxistas conectados a la vez.
+const MENSAJES_RADIO = [
+  {
+    id: 3, conductorId: 7, nombre: 'Juan Obama', matricula: 'GE-4820-B',
+    duracionMs: 7400, bytes: 18_500,
+    creadoEn: new Date(Date.now() - 40_000).toISOString(), mio: false,
+  },
+  {
+    id: 2, conductorId: 1, nombre: 'Pablo Ondo', matricula: 'GE-1234-A',
+    duracionMs: 9800, bytes: 24_100,
+    creadoEn: new Date(Date.now() - 6 * 60_000).toISOString(), mio: true,
+  },
+  {
+    id: 1, conductorId: 9, nombre: 'Lucia Mba', matricula: 'GE-0912-C',
+    duracionMs: 3200, bytes: 8_300,
+    creadoEn: new Date(Date.now() - 18 * 60_000).toISOString(), mio: false,
+  },
+];
+
+function RadioDeMuestra(props: {
+  estado: 'libre' | 'hablando' | 'ocupado' | 'enviando' | 'pidiendo';
+  habla?: string | null;
+  quedan?: number;
+  aviso?: string | null;
+  oyentes?: number | null;
+  mensajes?: typeof MENSAJES_RADIO;
+}) {
+  return (
+    <HojaSuelta>
+      <PanelRadio
+        estado={props.estado}
+        encendida
+        habla={props.habla ?? null}
+        quedan={props.quedan ?? 0}
+        segundosMax={10}
+        mensajes={props.mensajes ?? MENSAJES_RADIO}
+        aviso={props.aviso ?? null}
+        oyentes={props.oyentes ?? null}
+        t={t}
+        alApretar={NADA}
+        alSoltar={NADA}
+        alVolverAOir={NADA}
+      />
+    </HojaSuelta>
+  );
 }
 
 // Campo de texto solo para mirar: la galería no debe reaccionar a nada.

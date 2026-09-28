@@ -2303,3 +2303,165 @@ button.importe.elegido-importe {
   margin: 0;
   width: auto;
 }
+
+/* La radio del gremio (migración 075).
+
+   El botón es grande, redondo y está abajo porque es lo único que se pulsa a
+   ciegas: quien lo usa está conduciendo. Y `touch-action: none` no es un
+   detalle —sin eso, mantener el dedo apretado en un móvil arrastra la página y
+   el navegador se queda el gesto a mitad de frase. */
+.radio {
+  margin: 12px 0 0;
+  padding: 12px 14px 14px;
+  background: var(--tarjeta);
+  border: 1px solid var(--borde);
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.radio-cabecera {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.radio-cabecera h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.radio-nota {
+  font-size: 0.7rem;
+  color: var(--humo);
+  text-align: right;
+}
+
+.radio-boton {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  min-height: 78px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--carbon);
+  color: var(--hueso);
+  border: 2px solid var(--ambar);
+  border-radius: 14px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: pointer;
+}
+
+.radio-boton:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Hablando: ámbar lleno, que se vea desde el rabillo del ojo sin leer nada. */
+.radio-boton-hablando {
+  background: var(--ambar);
+  border-color: var(--ambar);
+  color: var(--tinta);
+}
+
+.radio-boton-ocupado {
+  border-color: var(--info);
+  color: var(--info-texto);
+}
+
+.radio-icono {
+  font-size: 1.7rem;
+  line-height: 1;
+}
+
+.radio-rotulo {
+  text-align: left;
+}
+
+/* Lo que queda del turno, como una barra que se vacía. Un número de segundos
+   hay que leerlo; esto se ve. */
+.radio-barra {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 4px;
+  background: var(--tinta);
+  transition: width 1s linear;
+}
+
+.radio-aviso,
+.radio-oyentes,
+.radio-vacia {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--humo);
+}
+
+.radio-aviso {
+  color: var(--ambar-claro);
+}
+
+.radio-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 168px;
+  overflow-y: auto;
+}
+
+.radio-lista button {
+  width: 100%;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--carbon);
+  color: var(--hueso);
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  font-size: 0.86rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.radio-mio button {
+  border-color: rgba(255, 176, 32, 0.35);
+}
+
+.radio-play {
+  color: var(--ambar);
+  font-size: 0.8rem;
+}
+
+.radio-quien {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.radio-quien em {
+  color: var(--humo);
+  font-style: normal;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.radio-cuando {
+  color: var(--humo);
+  font-size: 0.76rem;
+  white-space: nowrap;
+}

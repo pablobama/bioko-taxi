@@ -328,3 +328,36 @@ export function sonarTonoLlamando(): void {
     { hz: 425.0, desdeSeg: 0, duracionSeg: 1.0, volumen: 0.14 },
   ]);
 }
+
+// --- La radio del gremio (migración 075) ------------------------------------
+
+// En una radio de verdad el pitido es lo que te dice que puedes hablar sin tener
+// que mirar nada. Aquí eso no es un adorno: el taxista está conduciendo, y si
+// para saber si tiene la palabra hay que leer la pantalla, entonces la radio
+// obliga a apartar la vista de la carretera. Dos notas subiendo: adelante.
+export function sonarRadioAdelante(): void {
+  tocar([
+    { hz: 880.0, desdeSeg: 0, duracionSeg: 0.07, volumen: 0.2 },
+    { hz: 1320.0, desdeSeg: 0.08, duracionSeg: 0.09, volumen: 0.2 },
+  ]);
+  vibrar([40]);
+}
+
+// Y dos bajando: está ocupado, espera. Distinto del de arriba a propósito —no
+// basta con «un pitido»— porque lo que hay que hacer en cada caso es lo
+// contrario.
+export function sonarRadioOcupada(): void {
+  tocar([
+    { hz: 440.0, desdeSeg: 0, duracionSeg: 0.1, volumen: 0.18 },
+    { hz: 294.0, desdeSeg: 0.12, duracionSeg: 0.16, volumen: 0.18 },
+  ]);
+  vibrar([90, 60, 90]);
+}
+
+// El aviso de que entra alguien hablando, el «clic» de antes de la voz. Corto y
+// seco: va pegado al mensaje, y alargarlo sería comerse la primera palabra.
+export function sonarRadioEntra(): void {
+  tocar([
+    { hz: 1046.0, desdeSeg: 0, duracionSeg: 0.06, volumen: 0.16 },
+  ]);
+}

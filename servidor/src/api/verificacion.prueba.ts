@@ -14,7 +14,14 @@ import { ServicioVerificacionRegistro } from '../dominio/verificacion-telefono.j
 import { ConexionesSse } from '../eventos/adaptador-sse.js';
 import { crearServidor } from './servidor.js';
 
-let siguienteTelefono = Math.floor(Math.random() * 100_000_000);
+// Ocho dígitos al azar chocan. Parece imposible y no lo es: la base de
+// desarrollo la comparten todas las baterías, lleva cientos de taxistas de
+// prueba con este mismo prefijo, y el teléfono del conductor es UNIQUE. Cuando
+// toca, el alta falla y la prueba que revienta es esta, que no tiene nada que
+// ver. `llegada.prueba.ts` ya lo arregló así; faltaba aquí.
+let siguienteTelefono = Number(
+  BigInt(`0x${randomUUID().replace(/-/g, '').slice(0, 12)}`) % 100_000_000n,
+);
 function telefonoUnico(): string {
   siguienteTelefono = (siguienteTelefono + 1) % 100_000_000;
   return `+2406${String(siguienteTelefono).padStart(8, '0')}`;

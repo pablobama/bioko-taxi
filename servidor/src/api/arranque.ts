@@ -16,6 +16,7 @@ import { caducarPresencias } from '../dominio/presencia.js';
 import { caducarViajesColgados } from '../dominio/caducidad.js';
 import { procesarProximidad } from '../dominio/proximidad.js';
 import { purgarRastro } from '../dominio/rastro.js';
+import { purgarMensajes } from '../dominio/radio.js';
 import { AdaptadorFcm } from '../eventos/adaptador-fcm.js';
 import { AdaptadorNoop } from '../eventos/adaptador-noop.js';
 import { AdaptadorSse, ConexionesSse } from '../eventos/adaptador-sse.js';
@@ -183,6 +184,19 @@ async function principal(): Promise<void> {
   };
   purgar();
   setInterval(purgar, 6 * 60 * 60 * 1000);
+
+  // Los mensajes de voz de la radio (migración 075) tienen su propio reloj, y
+  // es corto. Mientras el audio existe, existe un archivo de lo que hablan los
+  // taxistas entre ellos que alguien puede pedir: ahí el borrado no es limpieza
+  // de espacio, es la protección, y dos horas prometidas no pueden convertirse
+  // en ocho porque la purga del rastro solo pasa cada seis.
+  const purgarVoz = () => {
+    void purgarMensajes(pool)
+      .then((filas) => { if (filas > 0) console.log(`Radio: ${filas} mensajes borrados.`); })
+      .catch((error) => console.error('Error borrando mensajes de voz:', error));
+  };
+  purgarVoz();
+  setInterval(purgarVoz, 5 * 60 * 1000);
 
   // Planificador del despacho: oleadas, expiraciones, presencias y rescate.
   setInterval(() => {

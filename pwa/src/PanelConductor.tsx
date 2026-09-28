@@ -15,9 +15,11 @@ import { mensajeDeError, ErrorDeRed, useConexion, ErrorDelServidor } from './con
 import { escucharBrujula, pedirPermisoBrujula } from './brujula';
 import { metrosEntre, porCercaniaA, rumboEntre, velocidadKmhEntre } from './geo';
 import { crearT, localeVoz, type Idioma } from './i18n';
+import { useRadio } from './radio';
 import { useLlamada, type SenalRecibida } from './llamada';
 import Mapa from './Mapa';
 import PanelLlamada from './PanelLlamada';
+import PanelRadio from './PanelRadio';
 import Recarga from './Recarga';
 import PrimeraVez, { guiaPendiente, marcarGuiaVista, type PasoGuia } from './PrimeraVez';
 import MandosFlotantes from './MandosFlotantes';
@@ -309,6 +311,12 @@ export default function PanelConductor({
   const recibirSenal = useRef<((id: number, s: SenalRecibida) => void) | null>(null);
   recibirSenal.current = llamada.alRecibirSenal;
 
+  // La radio del gremio (migración 075). Solo cuenta estando en servicio: una
+  // radio que suena con el taxista en su casa es una radio que se silencia.
+  const radio = useRadio({ activa: estado !== null && estado.estado !== 'DESCONECTADO' });
+  const recibirRadio = useRef<((tipo: string, datos: unknown) => void) | null>(null);
+  recibirRadio.current = radio.alRecibirEvento;
+
   // Última fotografía de los pasajeros, para saber —cuando llega un aviso de
   // cancelación— si era uno de los suyos o solo una oferta que ni había
   // aceptado. Va en una referencia porque el gestor de eventos se monta una
@@ -384,6 +392,13 @@ export default function PanelConductor({
       // Por el mismo canal entra el apretón de manos de las llamadas. Si es una
       // llamada entrante hay que saber de qué pasajero viene antes de poder
       // contestarla.
+      // La radio: quién tiene la palabra y los mensajes que entran. Va por el
+      // mismo canal vivo que las carreras, y no por la bandeja con reintentos:
+      // «habla Pablo» entregado treinta segundos tarde es peor que no entregarlo.
+      if (evento.tipo.startsWith('radio_')) {
+        recibirRadio.current?.(evento.tipo, evento.datos);
+        return;
+      }
       if (evento.tipo === 'llamada') {
         const id = Number(evento.solicitudId);
         if (Number.isInteger(id)) {
@@ -952,6 +967,23 @@ export default function PanelConductor({
             { icono: '▤', etiqueta: t('cabecera.tusNumeros'), alPulsar: alAbrirEstadisticas },
             { icono: '⚙', etiqueta: t('cabecera.tusDatos'), alPulsar: alAbrirAjustes },
           ]}
+        />
+      )}
+
+      {enServicio && (
+        <PanelRadio
+          estado={radio.estado}
+          encendida={radio.encendida}
+          habla={radio.habla}
+          quedan={radio.quedan}
+          segundosMax={radio.segundosMax}
+          mensajes={radio.mensajes}
+          aviso={radio.aviso}
+          oyentes={radio.oyentes}
+          t={t}
+          alApretar={radio.apretar}
+          alSoltar={radio.soltar}
+          alVolverAOir={radio.volverAOir}
         />
       )}
 

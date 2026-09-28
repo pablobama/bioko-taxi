@@ -4,6 +4,38 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
 
 ## Abiertos
 
+- **[P75-01] La radio no suena con la pantalla bloqueada, que es como se
+  conduce.** Lo que hay (migración 075) vive en la PWA, y un navegador congela
+  el JavaScript de la página al bloquear: ni graba ni reproduce. Sirve con la
+  aplicación delante, y eso no es una radio de coche. Lo que falta está claro y
+  es la app Android: permiso `RECORD_AUDIO`, el aviso por FCM para que suene con
+  el teléfono en el bolsillo, y el botón de volumen como botón de hablar —que es
+  el detalle que lo cambia todo, porque se aprieta sin mirar—. Hasta entonces la
+  pantalla lo dice en su cabecera, para que nadie lo descubra conduciendo.
+
+- **[P75-02] El pasajero que va detrás oye la radio del gremio.** Los oyentes
+  incluyen a los taxistas en estado OCUPADO, y es a propósito: el que está
+  trabajando es el que tiene algo que contar y algo que oír. Pero lo que se diga
+  por el canal lo escucha un cliente sentado a medio metro. Hay que decidir qué
+  se hace —bajar el volumen solo, escuchar pero no hablar, o nada— y para eso
+  primero hay que ver qué se dice de verdad por la radio.
+
+- **[P75-03] No se puede silenciar a nadie ni dar parte de nada.** Con cuarenta
+  taxistas que se conocen, el freno social funciona y por eso no se ha
+  construido todavía; el tope de seis mensajes por minuto es lo único que hay
+  contra el que se engancha al botón. En cuanto el gremio crezca hace falta
+  silenciar a uno, salirse, y una forma de avisar al operador. Un canal de voz
+  sin eso se envenena, y se envenena rápido.
+
+- **[P75-04] La radio es también el sitio donde se pactan los precios.** No es
+  un fallo del código, es lo que es una radio de gremio: sirve igual para avisar
+  de un corte que para acordar que nadie baja de X, justo contra los precios de
+  referencia (P12-01) y la detección de abuso (P12-02) de esta misma
+  plataforma. Se hace igual, porque hoy lo hacen por WhatsApp y con radio o sin
+  ella van a seguir. Lo que cambia es que ahora el canal lo pone la plataforma.
+  Conviene mirar de vez en cuando si el precio declarado se vuelve sospechosamente
+  uniforme desde que existe, que es la señal que se vería en los datos.
+
 - **[P74-01] Hay viajes que se cierran cuando no toca, y eso estropea todo lo
   que se mida.** En los 45 viajes de producción de los últimos 30 días (28/09):
   uno de 6,5 km cerrado a los 30 segundos, otro de 49 km cerrado a los 6
