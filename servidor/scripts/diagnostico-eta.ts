@@ -20,18 +20,32 @@
 // Contra PRODUCCIÓN, que es donde están los viajes de verdad (lo ejecuta el
 // operador; aquí no se toca esa base):
 //
-//   $env:BD_URL = '...'      (PowerShell, que es lo que hay en esta máquina)
+//   cd C:\Users\pablo\red\servidor
 //   npx tsx scripts/diagnostico-eta.ts 7
-//   Remove-Item Env:BD_URL   (para no dejar la sesión apuntando a producción)
+//
+// La URL de producción se coge sola de `servidor/.env`; no hay que escribirla.
+// Para forzar otra base: $env:BD_URL = '...' (PowerShell) antes de la orden.
 //
 // El número son los días hacia atrás que se miran (por defecto 1: hoy).
 
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { crearPool } from '../src/bd/conexion.js';
+import { urlBaseDatos } from '../src/bd/migrar.js';
 import { rutaParaLlegar } from '../src/dominio/carreteras.js';
 import {
   estimarLlegada, factorDeMarchaDelTurno, velocidadDelTurnoKmh, velocidadRecienteKmh,
 } from '../src/dominio/llegada.js';
 import { distanciaMetros } from '../src/dominio/geo.js';
+
+// El `.env` del servidor, se lance desde donde se lance (igual que
+// `unificar-conductor.ts`). Sin esto había que escribir la URL a mano, y una
+// URL escrita a mano se escribe mal.
+if (process.env.BD_URL === undefined) {
+  const env = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '.env');
+  if (existsSync(env)) process.loadEnvFile(env);
+}
 
 const DIAS = Number(process.argv[2] ?? 1);
 
@@ -56,6 +70,13 @@ function percentil(valores: number[], fraccion: number): number {
 }
 
 async function main(): Promise<void> {
+  // A qué base se está mirando, dicho antes de nada y sin credenciales: un
+  // informe sobre la base equivocada es peor que no tener informe.
+  const url = urlBaseDatos();
+  const local = /localhost|127\.0\.0\.1/.test(url);
+  const host = url.replace(/^[^@]*@/, '').split('/')[0];
+  console.log(`Base: ${local ? 'LOCAL (desarrollo)' : `PRODUCCIÓN (${host})`}\n`);
+
   const pool = crearPool();
   // SOLO LECTURA. Este script no escribe ni una fila: se ejecuta contra la
   // base de producción y lo único que hace es mirar.
