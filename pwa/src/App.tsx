@@ -308,13 +308,33 @@ export default function App() {
     return <>{conmutador}<PanelOperador /></>;
   }
 
-  // Trabajo de campo del agente: el mismo panel, recortado a lo suyo.
-  if (pantalla === 'campo' && conductor) {
-    return <PanelOperador modo="agente" alVolver={() => setPantalla('conductor')} />;
+  // Trabajo de campo del agente: el mismo panel, recortado a lo suyo. Lo
+  // pueden hacer un taxista agente (migración 025) y, desde la 072, también un
+  // PASAJERO agente: quien mejor sitúa un barrio es a veces alguien que ni
+  // conduce. Se vuelve al panel del que venía.
+  if (pantalla === 'campo' && (conductor || perfil)) {
+    return (
+      <PanelOperador
+        modo="agente"
+        alVolver={() => setPantalla(conductor ? 'conductor' : 'cliente')}
+      />
+    );
   }
 
   if (pantalla === 'cliente' && perfil) {
-    return <>{cinta}{bandaSinConexion}{conmutador}<PanelCliente perfilInicial={perfil} puntos={puntos} idioma={idioma} /></>;
+    return (
+      <>
+        {cinta}
+        {bandaSinConexion}
+        {conmutador}
+        <PanelCliente
+          perfilInicial={perfil}
+          puntos={puntos}
+          idioma={idioma}
+          alAbrirCampo={perfil.agente ? () => setPantalla('campo') : undefined}
+        />
+      </>
+    );
   }
 
   if (pantalla === 'conductor' && conductor) {

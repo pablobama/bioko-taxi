@@ -154,6 +154,19 @@ async function pedirJson<T>(ruta: string, opciones: OpcionesPeticion = {}): Prom
   }
 }
 
+// Un barrio que sale del buscador sin entrada en el catálogo (28/09).
+// Se distingue por `id === null`: antes de poder pedir un taxi hay que darle
+// entrada, y eso lo hace `entradaDeZona` al elegirlo.
+export interface BarrioSugerido {
+  id: null;
+  zonaId: number;
+  nombre: string;
+  zona: string;
+  lat: number;
+  lng: number;
+  categoria: string;
+}
+
 export interface ReferenciaSugerida {
   id: number;
   nombre: string;
@@ -273,6 +286,9 @@ export interface Perfil {
   // Migración 027: false si hay teléfono y no se confirmó por SMS. Sin
   // teléfono (solo correo) siempre es true — no hay nada que verificar.
   telefonoVerificado: boolean;
+  // Pasajero con papel de campo (migración 072): puede situar barrios y
+  // corregir sitios, igual que un taxista agente. Lo da el operador.
+  agente?: boolean;
 }
 
 export interface DatosConductor {
@@ -383,6 +399,8 @@ export interface PasajeroOperador {
 
 export interface FichaPasajeroOperador {
   dispositivo_id: number;
+  // Papel de campo (migración 072): puede situar barrios y corregir sitios.
+  es_agente?: boolean;
   telefono: string | null;
   correo: string | null;
   nombre: string | null;
@@ -879,6 +897,29 @@ export const api = {
   valoracionPendiente: () =>
     pedirJson<{ pendiente: ValoracionPendiente | null }>('/api/valoracion-pendiente'),
 
+  // Un sitio que no está en el catálogo (migración 072). En una ciudad sin
+  // direcciones la lista nunca está completa: quien no encuentra el suyo lo
+  // escribe, sirve para su viaje desde ese momento, y sale para los demás
+  // cuando lo usa gente o cuando un agente lo aprueba.
+  //
+  // `creada` a false significa que ya existía uno igual ahí al lado y se ha
+  // reutilizado, que es el caso bueno: el catálogo no se llena de duplicados.
+  // Darle entrada en el catálogo a un barrio que no la tenía (28/09).
+  // No es una propuesta: un barrio que está en el mapa existe, y el único
+  // motivo de que no estuviera en el buscador es que nadie lo había necesitado.
+  entradaDeZona: (zonaId: number) =>
+    pedirJson<{ referencia: ReferenciaSugerida }>(`/api/zonas/${zonaId}/entrada`, {
+      method: 'POST',
+      body: '{}',
+      reintentos: 1,
+    }),
+
+  proponerSitio: (nombre: string, donde: { lat: number; lng: number } | null, zonaId?: number) =>
+    pedirJson<{ creada: boolean; referencia: ReferenciaSugerida }>('/api/referencias', {
+      method: 'POST',
+      body: JSON.stringify({ nombre, ...(donde ?? {}), ...(zonaId ? { zonaId } : {}) }),
+    }),
+
   // El teléfono lo toma el servidor del perfil; no hace falta enviarlo.
   pedirTaxi: (
     origenId: number,
@@ -1073,6 +1114,14 @@ export const api = {
       body: JSON.stringify({ uuid }),
       reintentos: 1,
     }),
+
+  // El mismo papel para un pasajero (migración 072). Quien mejor sitúa un
+  // barrio es a veces alguien que ni conduce.
+  nombrarAgentePasajero: (dispositivoId: number, agente: boolean) =>
+    pedirJson<{ dispositivo_id: number; nombre: string | null; es_agente: boolean }>(
+      `/api/operador/pasajeros/${dispositivoId}/agente`,
+      { method: 'POST', body: JSON.stringify({ agente }) },
+    ),
 
   nombrarAgente: (conductorId: number, agente: boolean) =>
     pedirJson<{ id: number; nombre: string; es_agente: boolean }>(

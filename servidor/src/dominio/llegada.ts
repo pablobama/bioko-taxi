@@ -16,6 +16,14 @@
 //        por las calles; y la velocidad medida se busca también en el rastro
 //        del TURNO, no solo en las posiciones del viaje, porque al empezar un
 //        viaje todavía no hay ninguna y el tiempo salía siempre el mismo.
+//   073: y deja de ser una velocidad. Un taxi no está en marcha todo el rato
+//        —espera en la parada, espera a que salga el pasajero— y esa espera
+//        entraba en la media: un taxista parado diez minutos y luego diez a 25
+//        «iba a 12,5», y con eso se le estimaba el viaje. Ahora la base es el
+//        tiempo que el PLANO da a esas calles concretas, corregido por un
+//        factor del taxista medido SOLO EN MARCHA, y con una holgura explícita
+//        por las paradas del camino. El caso que lo destapó: 7 km marcados en
+//        35 minutos que se hicieron en 15.
 
 import type pg from 'pg';
 import { caminoPorCarretera, rutaParaLlegar } from './carreteras.js';
@@ -25,6 +33,11 @@ import { leerParametroEntero } from './parametros.js';
 export interface Estimacion {
   distanciaM: number;
   minutos: number;
+  // Lo que el plano dice que se tarda por esas calles, antes de corregir por
+  // el taxista. Se expone para poder discutir un tiempo que falla.
+  segundosDelPlano?: number;
+  // Cuánto más rápido va este taxista que lo que supone el plano. 1 = igual.
+  factorConductor?: number;
   // A qué velocidad se ha contado el tramo urbano, y si salió de medir el
   // coche o de la tabla. Se expone para poder enseñarlo o depurarlo: un tiempo
   // de llegada que nadie sabe de dónde sale no se puede discutir cuando falla.
@@ -144,11 +157,76 @@ async function velocidadDeLosPuntos(
 // daría «llega en cuatro horas» por culpa de un semáforo. En un trayecto
 // corto —el caso de cien veces al día— todo el recorrido es urbano, así que
 // manda la medida de principio a fin, que es lo que se quería.
+// Cuánto más rápido va este taxista que lo que supone el plano (migración
+// 073), medido SOLO con el tiempo en marcha.
+//
+// Se recorre su rastro reciente y, para cada salto, se pregunta al grafo dos
+// cosas: cuántos metros hay por las calles y cuánto se tardaría a la velocidad
+// típica de esas calles. El factor es la suma de lo típico partido por la suma
+// de lo que de verdad tardó EN MARCHA — sin los ratos parado, que es lo que
+// estropeaba la media de antes.
+//
+// null cuando no hay bastante marcha medida: entonces manda el plano tal cual,
+// que ya es mucho mejor que una velocidad única para toda la ciudad.
+export async function factorDeMarchaDelTurno(
+  cliente: pg.ClientBase | pg.Pool,
+  conductorId: number,
+  ahora: Date = new Date(),
+): Promise<number | null> {
+  const ventanaMin = await leerParametroEntero(cliente, 'eta_ventana_min');
+  const marchaMinima = await leerParametroEntero(cliente, 'eta_marcha_minima_seg');
+  const ruidoM = await leerParametroEntero(cliente, 'rastro_ruido_m');
+  const topeKmh = await leerParametroEntero(cliente, 'rastro_velocidad_maxima_kmh');
+  const minimo = (await leerParametroEntero(cliente, 'eta_factor_min')) / 100;
+  const maximo = (await leerParametroEntero(cliente, 'eta_factor_max')) / 100;
+
+  const res = await cliente.query(
+    `SELECT lat, lng, creado_en FROM rastro
+     WHERE conductor_id = $1
+       AND creado_en >= $2::timestamptz - make_interval(mins => $3)
+     ORDER BY creado_en`,
+    [conductorId, ahora, ventanaMin],
+  );
+  const puntos = res.rows.map((f: { lat: string; lng: string; creado_en: Date }) => ({
+    lat: Number(f.lat), lng: Number(f.lng), en: new Date(f.creado_en).getTime(),
+  }));
+  if (puntos.length < 2) return null;
+
+  let tipicos = 0;
+  let enMarcha = 0;
+  let ancla = puntos[0];
+  for (let i = 1; i < puntos.length; i += 1) {
+    const punto = puntos[i];
+    const salto = distanciaMetros(ancla.lat, ancla.lng, punto.lat, punto.lng);
+    const hueco = (punto.en - ancla.en) / 1000;
+    // Parado: ni cuenta como marcha ni mueve el ancla más de lo debido. Es el
+    // rato de la parada del mercado, y meterlo aquí sería repetir el fallo.
+    if (salto < ruidoM) continue;
+    if (hueco <= 0 || (salto / hueco) * 3.6 > topeKmh) {
+      ancla = punto;
+      continue;
+    }
+    const camino = caminoPorCarretera(ancla, punto, salto, hueco, topeKmh);
+    if (camino !== null) {
+      tipicos += camino.segundosTipicos;
+      // Lo que de verdad tardó, sin pasarse del hueco: si el plano dice que
+      // ese trozo se hace en veinte segundos y el hueco fue de sesenta, cuarenta
+      // fueron semáforo, y el semáforo va en la holgura, no en el factor.
+      enMarcha += Math.min(hueco, camino.segundosTipicos * 3);
+    }
+    ancla = punto;
+  }
+  if (enMarcha < marchaMinima || tipicos <= 0) return null;
+  return Math.min(maximo, Math.max(minimo, tipicos / enMarcha));
+}
+
 export async function estimarLlegada(
   cliente: pg.ClientBase | pg.Pool,
   desde: { lat: number; lng: number },
   hasta: { lat: number; lng: number },
   velocidadMedidaKmh: number | null = null,
+  // Cuánto más rápido va este taxista que lo que supone el plano (073).
+  factorConductor: number | null = null,
 ): Promise<Estimacion> {
   const urbanaTabla = await leerParametroEntero(cliente, 'velocidad_urbana_kmh');
   const interurbanaKmh = await leerParametroEntero(cliente, 'velocidad_interurbana_kmh');
@@ -173,6 +251,54 @@ export async function estimarLlegada(
   const recorridoKm = creible
     ? porCalles!.distanciaM / 1000
     : (rectaM * (factorDecimas / 10)) / 1000;
+
+  // EL CAMINO NUEVO (migración 073): el plano ya sabe cuánto se tarda por esas
+  // calles concretas —una avenida no es una calle del centro— y eso es mejor
+  // base que dividir por una velocidad única. Se corrige por el factor del
+  // taxista y se le suma la holgura de las paradas, que ahora es un número con
+  // nombre y no algo que se colaba en una media.
+  const usaPlano = (await leerParametroEntero(cliente, 'eta_usa_plano')) === 1;
+  if (usaPlano) {
+    const holgura = (await leerParametroEntero(cliente, 'eta_factor_paradas')) / 100;
+    const factor = factorConductor ?? 1;
+
+    if (creible && porCalles !== null) {
+      const segundos = (porCalles.segundosTipicos / factor) * holgura;
+      return {
+        distanciaM: Math.round(porCalles.distanciaM),
+        minutos: Math.max(1, Math.round(segundos / 60)),
+        // La velocidad que sale de todo esto, para poder enseñarla y discutirla.
+        velocidadUsadaKmh: Math.round((porCalles.distanciaM / 1000) / (segundos / 3600)),
+        medida: factorConductor !== null,
+        segundosDelPlano: Math.round(porCalles.segundosTipicos),
+        factorConductor: factor,
+      };
+    }
+
+    // SIN RUTA POR CALLES, que pasa más de lo que parece: medido sobre los
+    // sitios del catálogo, a menos de un kilómetro el grafo encuentra camino
+    // el 99 % de las veces, pero entre uno y tres kilómetros solo poco más de
+    // la mitad — hay calles que el plano no tiene y sitios que caen lejos de
+    // cualquier calzada.
+    //
+    // Aquí se vuelve a la recta corregida, pero la velocidad ya NO es la media
+    // del taxista con sus esperas dentro: es la velocidad típica de ciudad
+    // corregida por el mismo factor en marcha. Ese es justo el camino por el
+    // que salían los 35 minutos para siete kilómetros — una media hundida por
+    // esperar al pasajero, pegada al suelo de 8 km/h.
+    const urbanaConFactor = urbanaTabla * factor;
+    const kmRecta = (rectaM * (factorDecimas / 10)) / 1000;
+    const ciudadKm = Math.min(kmRecta, tramoUrbanoKm);
+    const carreteraKm = Math.max(0, kmRecta - tramoUrbanoKm);
+    const segundos = ((ciudadKm / urbanaConFactor + carreteraKm / interurbanaKmh) * 3600) * holgura;
+    return {
+      distanciaM: Math.round(kmRecta * 1000),
+      minutos: Math.max(1, Math.round(segundos / 60)),
+      velocidadUsadaKmh: Math.round(kmRecta / (segundos / 3600)),
+      medida: factorConductor !== null,
+      factorConductor: factor,
+    };
+  }
 
   const enCiudadKm = Math.min(recorridoKm, tramoUrbanoKm);
   const enCarreteraKm = Math.max(0, recorridoKm - tramoUrbanoKm);
@@ -200,13 +326,20 @@ export async function llegadaDeViaje(
   // Al principio del viaje todavía no hay dos posiciones suyas separadas por
   // minuto y medio, y ahí es donde el tiempo salía siempre igual. El turno sí
   // tiene rastro: se mira eso antes de caer en la velocidad de la tabla.
-  if (medida === null) {
-    const dueno = await cliente.query(
-      'SELECT conductor_id FROM viaje WHERE id = $1', [viajeId],
-    );
-    if ((dueno.rowCount ?? 0) > 0 && dueno.rows[0].conductor_id !== null) {
-      medida = await velocidadDelTurnoKmh(cliente, Number(dueno.rows[0].conductor_id), ahora);
-    }
+  const dueno = await cliente.query(
+    'SELECT conductor_id FROM viaje WHERE id = $1', [viajeId],
+  );
+  const conductorId = (dueno.rowCount ?? 0) > 0 && dueno.rows[0].conductor_id !== null
+    ? Number(dueno.rows[0].conductor_id)
+    : null;
+  if (medida === null && conductorId !== null) {
+    medida = await velocidadDelTurnoKmh(cliente, conductorId, ahora);
   }
-  return estimarLlegada(cliente, desde, hasta, medida);
+  // Y el factor del taxista contra lo que supone el plano (migración 073), que
+  // es lo que manda cuando el plano está disponible. Se mide en marcha, así
+  // que esperar en la parada del mercado ya no le alarga el viaje al pasajero.
+  const factor = conductorId === null
+    ? null
+    : await factorDeMarchaDelTurno(cliente, conductorId, ahora);
+  return estimarLlegada(cliente, desde, hasta, medida, factor);
 }

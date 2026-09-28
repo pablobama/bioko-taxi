@@ -4,6 +4,25 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
 
 ## Abiertos
 
+- **[P72-01] Los sitios que propone la gente no los revisa nadie todavía.**
+  Desde la migración 072 quien no encuentra su sitio lo escribe y se crea, y
+  sale para los demás cuando se pide `sitio_propuesto_usos_para_publicar`
+  veces. Falta la otra mitad: una pantalla donde el operador o un agente vea
+  la cola de propuestos, los apruebe, los renombre o los junte con el sitio que
+  ya existía. Hoy se puede hacer con las herramientas de campo que ya hay
+  —buscar el sitio y corregirlo— pero no hay lista de «lo que está esperando»,
+  así que nadie sabe que existe. Con el piloto en marcha es semanal; con la
+  ciudad entera escribiendo, diario.
+
+- **[P72-02] Un sitio propuesto se publica por uso, y el uso se puede fingir.**
+  Tres viajes a ese nombre lo sacan de la cuarentena, y los tres pueden ser del
+  mismo dispositivo: nada comprueba que sean personas distintas. Es barato de
+  arreglar —contar dispositivos distintos en vez de viajes— y se ha dejado
+  fuera a propósito hasta ver si el problema existe: en el piloto, quien se
+  tomaría la molestia de pedir tres taxis para colar un nombre falso tiene
+  formas más baratas de hacer daño. Si el catálogo empieza a ensuciarse, esto
+  es lo primero que hay que cambiar.
+
 - **[P62-01] El orden de paradas es voraz, no el mejor posible.** Con taxi
   compartido, lo siguiente es la parada más cercana por las calles, y desde
   ella otra vez la más cercana. El orden ÓPTIMO (el problema del viajante) con

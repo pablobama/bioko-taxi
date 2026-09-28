@@ -25,7 +25,107 @@ export interface ReferenciaEncontrada {
   alias: string[];
 }
 
+// Un barrio que todavía no tiene entrada en el catálogo (28/09). Sale
+// del buscador como cualquier otro resultado, pero sin `id`: para poder pedir
+// un taxi hay que darle su entrada primero, y eso es una escritura que no se
+// hace en una búsqueda.
+export interface ZonaEncontrada {
+  zonaId: number;
+  nombre: string;
+  lat: number;
+  lng: number;
+  similitud: number;
+}
+
+// Los barrios que se parecen a lo que se escribió y todavía no están en el
+// catálogo. Los que ya tienen entrada no salen por aquí: salen por la búsqueda
+// normal, que es donde les toca.
+//
+// Solo barrios SITUADOS: sin coordenadas no se puede mandar un taxi a un
+// nombre, y ofrecerlo sería prometer algo que no se puede cumplir.
+export async function buscarZonas(
+  cliente: Lector,
+  texto: string,
+  limite = 3,
+): Promise<ZonaEncontrada[]> {
+  const consulta = texto.trim();
+  if (consulta.length < 2) return [];
+  const res = await cliente.query(
+    `SELECT z.id, z.nombre, z.centroide_lat AS lat, z.centroide_lng AS lng,
+            similarity(z.nombre, $1) AS similitud
+     FROM zona z
+     WHERE z.referencia_id IS NULL
+       AND z.centroide_lat IS NOT NULL AND z.centroide_lng IS NOT NULL
+       AND z.nombre % $1
+     ORDER BY similarity(z.nombre, $1) DESC, z.nombre
+     LIMIT $2`,
+    [consulta, limite],
+  );
+  return res.rows.map((f: {
+    id: string; nombre: string; lat: string; lng: string; similitud: string;
+  }) => ({
+    zonaId: Number(f.id),
+    nombre: f.nombre,
+    lat: Number(f.lat),
+    lng: Number(f.lng),
+    similitud: Number(f.similitud),
+  }));
+}
+
+// La entrada del catálogo de un barrio, creándola si no la tenía.
+//
+// Es la convención de la migración 038: misma zona, mismo nombre, categoría
+// «zona», en el centro del barrio. Idempotente: dos personas buscando el mismo
+// barrio a la vez acaban con la misma entrada, no con dos.
+export async function entradaDeZona(
+  cliente: pg.ClientBase,
+  zonaId: number,
+): Promise<{ referenciaId: number; nombre: string; lat: number; lng: number } | null> {
+  const zona = await cliente.query(
+    `SELECT id, nombre, centroide_lat, centroide_lng, referencia_id
+     FROM zona WHERE id = $1`,
+    [zonaId],
+  );
+  if (zona.rowCount === 0) return null;
+  const z = zona.rows[0];
+  if (z.centroide_lat === null || z.centroide_lng === null) return null;
+
+  if (z.referencia_id !== null) {
+    const ya = await cliente.query(
+      'SELECT id, nombre, lat, lng FROM referencia WHERE id = $1',
+      [z.referencia_id],
+    );
+    if (ya.rowCount === 1) {
+      return {
+        referenciaId: Number(ya.rows[0].id),
+        nombre: ya.rows[0].nombre,
+        lat: Number(ya.rows[0].lat),
+        lng: Number(ya.rows[0].lng),
+      };
+    }
+  }
+
+  const creada = await cliente.query(
+    `INSERT INTO referencia (zona_id, nombre, lat, lng, categoria)
+     VALUES ($1, $2, $3, $4, 'zona')
+     ON CONFLICT (zona_id, nombre) DO UPDATE SET activa = true
+     RETURNING id, nombre, lat, lng`,
+    [z.id, z.nombre, Number(z.centroide_lat), Number(z.centroide_lng)],
+  );
+  await cliente.query('UPDATE zona SET referencia_id = $2 WHERE id = $1', [z.id, creada.rows[0].id]);
+  return {
+    referenciaId: Number(creada.rows[0].id),
+    nombre: creada.rows[0].nombre,
+    lat: Number(creada.rows[0].lat),
+    lng: Number(creada.rows[0].lng),
+  };
+}
+
 export interface OpcionesBusqueda {
+  // Quién busca. Sirve para una sola cosa: que quien propuso un sitio lo
+  // encuentre desde el primer momento aunque todavía no esté aprobado
+  // (migración 072).
+  dispositivoId?: number;
   zonaId?: number;
   limite?: number;
 }
@@ -49,6 +149,11 @@ export async function buscarReferencias(
      LEFT JOIN referencia_alias a ON a.referencia_id = r.id
      WHERE r.activa
        AND ($2::bigint IS NULL OR r.zona_id = $2)
+       -- Un sitio propuesto y todavía sin aprobar (migración 072) solo lo ve
+       -- quien lo puso: es su viaje y no puede esperar, pero el buscador de
+       -- los demás no se llena de nombres que nadie ha confirmado.
+       AND (r.propuesta_en IS NULL OR r.aprobada_en IS NOT NULL
+            OR r.propuesta_por_dispositivo_id = $4)
        AND (r.nombre % $1 OR EXISTS (
               SELECT 1 FROM referencia_alias a2
               WHERE a2.referencia_id = r.id AND a2.alias % $1))
@@ -58,7 +163,7 @@ export async function buscarReferencias(
               r.veces_usada DESC,
               similitud DESC
      LIMIT $3`,
-    [consulta, opciones.zonaId ?? null, limite],
+    [consulta, opciones.zonaId ?? null, limite, opciones.dispositivoId ?? null],
   );
   return res.rows.map(filaAReferencia);
 }

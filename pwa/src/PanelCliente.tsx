@@ -20,6 +20,7 @@ import {
   type EventoSse,
   type Perfil,
   type PuntoMapa,
+  type BarrioSugerido,
   type ReferenciaSugerida,
   type TaxisCerca,
   type TaxiElegible,
@@ -54,21 +55,32 @@ export interface PropiedadesPanelCliente {
   perfilInicial: Perfil | null;
   puntos: PuntoMapa[];
   idioma: Idioma;
+  // Solo para el pasajero con papel de campo (migración 072). Sin él, el botón
+  // del mapa no existe.
+  alAbrirCampo?: () => void;
 }
 
 // Buscador de referencias con coincidencia difusa del gazetteer.
 function Buscador({
-  etiqueta, valor, alElegir, autoFoco, t,
+  etiqueta, valor, alElegir, autoFoco, t, donde,
 }: {
   etiqueta: string;
   valor: ReferenciaSugerida | null;
   alElegir: (r: ReferenciaSugerida | null) => void;
   autoFoco?: boolean;
   t: T;
+  // Dónde está quien escribe. Es lo que permite situar un sitio nuevo: un
+  // nombre sin sitio no sirve para mandar un taxi.
+  donde?: { lat: number; lng: number } | null;
 }) {
   const [texto, setTexto] = useState('');
-  const [sugerencias, setSugerencias] = useState<ReferenciaSugerida[]>([]);
+  // Los resultados pueden ser sitios del catálogo o BARRIOS sin entrada
+  // todavía (28/09). Los segundos llegan con `id: null` y hay que
+  // darles entrada al elegirlos.
+  const [sugerencias, setSugerencias] = useState<Array<ReferenciaSugerida | BarrioSugerido>>([]);
   const [buscando, setBuscando] = useState(false);
+  const [creando, setCreando] = useState(false);
+  const [falloAlCrear, setFalloAlCrear] = useState('');
 
   useEffect(() => {
     if (valor || texto.trim().length < 2) {
@@ -106,15 +118,38 @@ function Buscador({
       {sugerencias.length > 0 && (
         <ul className="sugerencias">
           {sugerencias.map((s) => (
-            <li key={s.id}>
-              <button type="button" onClick={() => alElegir(s)}>
+            <li key={s.id ?? `barrio-${(s as BarrioSugerido).zonaId}`}>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (s.id !== null) {
+                    alElegir(s as ReferenciaSugerida);
+                    return;
+                  }
+                  // Un barrio que todavía no estaba en el catálogo: se le da
+                  // entrada y se elige. Si falla la red no se elige nada, que
+                  // es mejor que dejar un destino a medias.
+                  setCreando(true);
+                  try {
+                    const { referencia } = await api.entradaDeZona((s as BarrioSugerido).zonaId);
+                    alElegir(referencia);
+                    setTexto('');
+                  } catch (error) {
+                    setFalloAlCrear(mensajeDeError(error, t('buscador.noSePudoCrear')));
+                  } finally {
+                    setCreando(false);
+                  }
+                }}
+              >
                 <span className="fila-sugerencia">
                   <span className="sug-sigla">
                     <IconoCategoria categoria={s.categoria} t={t} />
                   </span>
                   <span className="sug-textos">
                     <span className="sug-nombre">{s.nombre}</span>
-                    <span className="sug-zona">{s.zona}</span>
+                    <span className="sug-zona">
+                      {s.id === null ? t('buscador.esBarrio') : s.zona}
+                    </span>
                   </span>
                 </span>
               </button>
@@ -122,8 +157,41 @@ function Buscador({
           ))}
         </ul>
       )}
-      {!buscando && texto.trim().length >= 2 && sugerencias.length === 0 && (
-        <p className="nota">{t('buscador.sinResultados')}</p>
+      {/* Lo que no está en la lista. En Malabo no hay direcciones y el
+          catálogo nunca va a estar completo: la calle de alguien, la avenida
+          detrás del mercado, una casa. Antes esto era un callejón sin salida
+          —«no hay resultados» y a buscarse la vida—; ahora se escribe y
+          existe. Hace falta saber dónde está quien escribe: sin punto, un
+          nombre no sirve para mandar un taxi. */}
+      {!buscando && texto.trim().length >= 3 && sugerencias.length === 0 && (
+        <>
+          <p className="nota">{t('buscador.sinResultados')}</p>
+          {donde ? (
+            <button
+              type="button"
+              className="secundario"
+              disabled={creando}
+              onClick={async () => {
+                setCreando(true);
+                setFalloAlCrear('');
+                try {
+                  const { referencia } = await api.proponerSitio(texto.trim(), donde);
+                  alElegir(referencia);
+                  setTexto('');
+                } catch (error) {
+                  setFalloAlCrear(mensajeDeError(error, t('buscador.noSePudoCrear')));
+                } finally {
+                  setCreando(false);
+                }
+              }}
+            >
+              {creando ? t('buscador.creando') : t('buscador.usarEsteNombre', { nombre: texto.trim() })}
+            </button>
+          ) : (
+            <p className="nota">{t('buscador.sinUbicacionNoSePuedeCrear')}</p>
+          )}
+          {falloAlCrear && <p className="aviso">{falloAlCrear}</p>}
+        </>
       )}
     </div>
   );
@@ -222,7 +290,9 @@ function FormularioPerfil({
   );
 }
 
-export default function PanelCliente({ perfilInicial, puntos, idioma }: PropiedadesPanelCliente) {
+export default function PanelCliente({
+  perfilInicial, puntos, idioma, alAbrirCampo,
+}: PropiedadesPanelCliente) {
   const t = crearT(idioma);
   const [fase, setFase] = useState<Fase>('cargando');
   const [perfil, setPerfil] = useState<Perfil | null>(perfilInicial);
@@ -992,6 +1062,12 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
                 alPulsar: () => setCompartiendo((abierto) => !abierto),
               }]
               : []),
+            // Pasajero con papel de campo (migración 072): las mismas
+            // herramientas del mapa que un taxista agente. Solo aparece para
+            // quien lo tiene.
+            ...(alAbrirCampo
+              ? [{ icono: '🗺', etiqueta: t('campo.abrir'), alPulsar: alAbrirCampo }]
+              : []),
             { icono: '▤', etiqueta: t('cabecera.tusNumeros'), alPulsar: () => setFase('estadisticas') },
             { icono: '⚙', etiqueta: t('cabecera.tusDatos'), alPulsar: () => setFase('ajustes') },
           ]}
@@ -1027,10 +1103,23 @@ export default function PanelCliente({ perfilInicial, puntos, idioma }: Propieda
           puedeDeshacer={puedeDeshacer}
           segundosGracia={segundosGracia}
           buscadorDestino={(
-            <Buscador etiqueta={t('buscador.destino')} valor={destino} alElegir={setDestino} autoFoco t={t} />
+            <Buscador
+              etiqueta={t('buscador.destino')}
+              valor={destino}
+              alElegir={setDestino}
+              autoFoco
+              t={t}
+              donde={coordenadas}
+            />
           )}
           buscadorOrigen={(
-            <Buscador etiqueta={t('buscador.origen')} valor={origen} alElegir={setOrigen} t={t} />
+            <Buscador
+              etiqueta={t('buscador.origen')}
+              valor={origen}
+              alElegir={setOrigen}
+              t={t}
+              donde={coordenadas}
+            />
           )}
           acciones={{
             alAbrirAjustes: () => setFase('ajustes'),

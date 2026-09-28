@@ -99,7 +99,8 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
     }
 
     const perfil = await pool.query(
-      'SELECT telefono, correo, nombre, edad, genero, telefono_verificado_en FROM perfil_cliente WHERE dispositivo_id = $1',
+      `SELECT telefono, correo, nombre, edad, genero, telefono_verificado_en, es_agente
+       FROM perfil_cliente WHERE dispositivo_id = $1`,
       [fila.id],
     );
     if (perfil.rowCount === 0) {
@@ -118,6 +119,10 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
         // nada que verificar por SMS — exento, no bloqueado.
         telefonoVerificado: p.telefono === null || p.telefono_verificado_en !== null,
         bloqueado: fila.bloqueado_en !== null,
+        // Pasajero con papel de campo (migración 072): puede situar barrios y
+        // corregir sitios, como un taxista agente. Es lo que hace aparecer el
+        // botón del mapa en su panel.
+        agente: p.es_agente === true,
       },
     };
   });

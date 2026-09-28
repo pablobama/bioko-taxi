@@ -166,10 +166,16 @@ export function registrarRutasOperador(
   async function exigirCampo(req: FastifyRequest): Promise<void> {
     const uuid = uuidDesde(req);
     if (esOperador(uuid)) return;
+    // Taxista agente (migración 025) o PASAJERO agente (migración 072). Quien
+    // mejor sitúa un barrio es a veces alguien que ni conduce: el del mercado,
+    // la enfermera del centro de salud. Lo que puede hacer es lo mismo en los
+    // dos casos — mapa sí, dinero y verificaciones no.
     const agente = await pool.query(
       `SELECT 1 FROM dispositivo d
-       JOIN conductor c ON c.id = d.conductor_id
-       WHERE d.uuid_persistente = $1 AND d.tipo = 'conductor' AND c.es_agente`,
+       LEFT JOIN conductor c ON c.id = d.conductor_id
+       LEFT JOIN perfil_cliente pc ON pc.dispositivo_id = d.id
+       WHERE d.uuid_persistente = $1
+         AND ((d.tipo = 'conductor' AND c.es_agente) OR (d.tipo = 'cliente' AND pc.es_agente))`,
       [uuid],
     );
     if (agente.rowCount === 0) {
@@ -326,6 +332,24 @@ export function registrarRutasOperador(
       [id, estado],
     );
     if (res.rowCount === 0) throw errorHttp(404, 'Conductor no encontrado.');
+    return res.rows[0];
+  });
+
+  // Lo mismo para un PASAJERO (migración 072). El papel es el mismo y se
+  // retira igual de fácil, que es lo que lo hace asumible: el daño de un
+  // agente que se pasa se corta quitándoselo, y lo que tocó queda apuntado
+  // desde la migración 067.
+  app.post('/api/operador/pasajeros/:id/agente', async (req) => {
+    exigirOperador(req);
+    const id = Number((req.params as { id: string }).id);
+    const { agente } = (req.body ?? {}) as { agente?: boolean };
+    if (typeof agente !== 'boolean') throw errorHttp(400, 'Falta agente (true/false).');
+    const res = await pool.query(
+      `UPDATE perfil_cliente SET es_agente = $2 WHERE dispositivo_id = $1
+       RETURNING dispositivo_id, nombre, telefono, es_agente`,
+      [id, agente],
+    );
+    if (res.rowCount === 0) throw errorHttp(404, 'Ese pasajero no tiene perfil.');
     return res.rows[0];
   });
 
@@ -665,7 +689,7 @@ export function registrarRutasOperador(
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de dispositivo no válido.');
     const ficha = await pool.query(
       `SELECT d.id AS dispositivo_id, d.strikes, d.bloqueado_en, d.creado_en,
-              pc.telefono, pc.correo, pc.nombre, pc.edad, pc.genero
+              pc.telefono, pc.correo, pc.nombre, pc.edad, pc.genero, pc.es_agente
        FROM dispositivo d
        JOIN perfil_cliente pc ON pc.dispositivo_id = d.id
        WHERE d.id = $1 AND d.tipo = 'cliente'`,

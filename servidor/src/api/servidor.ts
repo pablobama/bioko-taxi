@@ -14,11 +14,14 @@ import { normalizarTelefono } from '../dominio/telefono.js';
 import { iniciarDespacho } from '../dominio/despacho.js';
 import { ErrorTransicionInvalida } from '../dominio/errores.js';
 import type { EmisorEventos } from '../dominio/eventos.js';
-import { buscarReferencias, referenciasMasUsadas } from '../dominio/gazetteer.js';
+import {
+  buscarReferencias, buscarZonas, entradaDeZona, referenciasMasUsadas,
+} from '../dominio/gazetteer.js';
 import { ocupacionDe, rutaDe } from '../dominio/ocupacion.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
 import { registrarPosicion } from '../dominio/proximidad.js';
 import { puntoDeRecogida } from '../dominio/recogida.js';
+import { proponerSitio, publicarSiSeUsa } from '../dominio/sitios.js';
 import { declararPrecio, recalcularBandaDe } from '../dominio/precios.js';
 import { emitirSecreto, secretoValido } from '../dominio/secretos.js';
 import { llegadaDeViaje } from '../dominio/llegada.js';
@@ -171,13 +174,51 @@ export function crearServidor(
     if (!q || q.trim().length < 2) {
       throw errorHttp(400, 'Parámetro q obligatorio, mínimo 2 caracteres.');
     }
+    // Quién busca: lo único que cambia es que ve los sitios que él mismo
+    // propuso y todavía no están aprobados (migración 072). Sin cabecera se
+    // busca igual, solo entre los públicos.
+    const quien = await dispositivoSiLoHay(req);
     const resultados = await buscarReferencias(pool, q, {
       zonaId: zonaId ? Number(zonaId) : undefined,
       limite: 5,
+      dispositivoId: quien,
     });
-    return resultados.map((r) => ({
-      id: r.id, nombre: r.nombre, zona: r.zona, lat: r.lat, lng: r.lng, categoria: r.categoria,
+    const sitios = resultados.map((r) => ({
+      id: r.id as number | null, zonaId: r.zonaId as number | undefined,
+      nombre: r.nombre, zona: r.zona, lat: r.lat, lng: r.lng, categoria: r.categoria,
     }));
+
+    // Y los BARRIOS que todavía no tienen entrada en el catálogo (migración
+    // 073). Un barrio se puede buscar por su nombre si alguien le dio entrada
+    // —640 la tienen— y no se podía si no: contados en la base de desarrollo,
+    // treinta barrios de verdad existían, tenían coordenadas y eran
+    // inencontrables escribiendo su nombre. Quien vive en uno de ellos no
+    // podía pedir un taxi a su propio barrio, y cada barrio que se sitúe de
+    // aquí en adelante nacería igual de mudo.
+    //
+    // (En la base de desarrollo hay además dieciocho mil «zonas» sin entrada
+    // que son basura de pruebas —«Zona API …», «Barrio Aislado …»—. Las conté
+    // como barrios de verdad en un primer diagnóstico y no lo eran.)
+    //
+    // Van DESPUÉS de los sitios: un mercado con nombre de barrio es más
+    // probable que el barrio entero, y quien busca el barrio lo reconoce en la
+    // lista igual. Y van sin `id`: darle entrada en el catálogo es una
+    // escritura, y eso no se hace en una búsqueda — se hace al elegirlo.
+    const huecos = Math.max(0, 8 - sitios.length);
+    if (huecos === 0) return sitios;
+    const barrios = await buscarZonas(pool, q, Math.min(3, huecos));
+    return [
+      ...sitios,
+      ...barrios.map((b) => ({
+        id: null as number | null,
+        zonaId: b.zonaId,
+        nombre: b.nombre,
+        zona: 'barrio',
+        lat: b.lat,
+        lng: b.lng,
+        categoria: 'zona',
+      })),
+    ];
   });
 
   // Puntos del mapa esquemático (migración 014). Son las referencias reales
@@ -467,6 +508,124 @@ export function crearServidor(
     return { registrado: true, perfil: res.rows[0] };
   });
 
+  // Quién llama, si se puede saber, y sin dar de alta a nadie. Para consultas
+  // que funcionan igual con o sin identidad.
+  async function dispositivoSiLoHay(req: FastifyRequest): Promise<number | undefined> {
+    const uuid = (req.headers['x-dispositivo'] as string | undefined)
+      ?? (req.query as Record<string, string | undefined>).dispositivo;
+    if (!uuid || !PATRON_UUID.test(uuid)) return undefined;
+    const res = await pool.query(
+      'SELECT id FROM dispositivo WHERE uuid_persistente = $1',
+      [uuid.toLowerCase()],
+    );
+    return res.rowCount === 0 ? undefined : Number(res.rows[0].id);
+  }
+
+  // Darle entrada en el catálogo a un barrio que no la tenía (28/09).
+  //
+  // Es la convención de siempre —misma zona, mismo nombre, categoría «zona»,
+  // en el centro del barrio— y es idempotente: dos personas eligiendo el mismo
+  // barrio a la vez acaban con la misma entrada. No es una propuesta como los
+  // sitios que escribe la gente: un barrio que está en el mapa existe, y el
+  // único motivo de que no estuviera en el buscador es que nadie lo había
+  // necesitado todavía.
+  app.post('/api/zonas/:id/entrada', async (req) => {
+    await dispositivoDesde(req);
+    const zonaId = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(zonaId)) throw errorHttp(400, 'Id de barrio no válido.');
+    const entrada = await enTransaccion(pool, (c) => entradaDeZona(c, zonaId));
+    if (entrada === null) {
+      throw errorHttp(404, 'Ese barrio no existe o todavía no está situado en el mapa.');
+    }
+    const zona = await pool.query('SELECT nombre FROM zona WHERE id = $1', [zonaId]);
+    return {
+      referencia: {
+        id: entrada.referenciaId,
+        nombre: entrada.nombre,
+        zona: zona.rows[0]?.nombre ?? entrada.nombre,
+        lat: entrada.lat,
+        lng: entrada.lng,
+        categoria: 'zona',
+      },
+    };
+  });
+
+  // Un sitio que no estaba en el catálogo (migración 072).
+  //
+  // El catálogo era una lista cerrada, y en una ciudad sin direcciones eso
+  // deja fuera lo que todo el mundo usa: la calle de alguien, la avenida
+  // detrás del mercado, una casa. Quien no lo encuentra lo escribe y sirve
+  // desde ese momento para SU viaje; para los demás aparece cuando alguien lo
+  // aprueba o cuando se ha pedido unas cuantas veces.
+  //
+  // El punto es el suyo —el del GPS— o el centro de su barrio si no lo tiene:
+  // un nombre sin sitio no sirve para mandar un taxi.
+  app.post('/api/referencias', async (req) => {
+    const dispositivo = await dispositivoDesde(req);
+    const cuerpo = (req.body ?? {}) as {
+      nombre?: string; lat?: number; lng?: number; zonaId?: number;
+    };
+    const nombre = typeof cuerpo.nombre === 'string' ? cuerpo.nombre.trim() : '';
+    if (nombre.length < 3) {
+      throw errorHttp(400, 'Escribe al menos tres letras del nombre del sitio.');
+    }
+
+    // Dónde cae. Con coordenadas, el barrio se deduce de ellas; sin
+    // coordenadas hace falta que diga a qué barrio pertenece, y se usa el
+    // centro del barrio como punto — aproximado y dicho como tal.
+    let lat = typeof cuerpo.lat === 'number' ? cuerpo.lat : null;
+    let lng = typeof cuerpo.lng === 'number' ? cuerpo.lng : null;
+    let zonaId: number | null = null;
+    if (lat !== null && lng !== null) {
+      const barrio = await pool.query(
+        `SELECT id FROM zona
+         WHERE centroide_lat IS NOT NULL AND centroide_lng IS NOT NULL
+         ORDER BY (centroide_lat - $1) ^ 2 + (centroide_lng - $2) ^ 2
+         LIMIT 1`,
+        [lat, lng],
+      );
+      zonaId = barrio.rowCount === 0 ? null : Number(barrio.rows[0].id);
+    }
+    if (zonaId === null && Number.isInteger(cuerpo.zonaId)) {
+      const barrio = await pool.query(
+        'SELECT id, centroide_lat, centroide_lng FROM zona WHERE id = $1',
+        [cuerpo.zonaId],
+      );
+      if (barrio.rowCount === 1 && barrio.rows[0].centroide_lat !== null) {
+        zonaId = Number(barrio.rows[0].id);
+        lat = lat ?? Number(barrio.rows[0].centroide_lat);
+        lng = lng ?? Number(barrio.rows[0].centroide_lng);
+      }
+    }
+    if (zonaId === null || lat === null || lng === null) {
+      throw errorHttp(400, 'Hace falta tu ubicación o el barrio para poder situar el sitio.');
+    }
+
+    try {
+      const sitio = await enTransaccion(pool, (c) => proponerSitio(c, {
+        nombre, lat: lat!, lng: lng!, zonaId: zonaId!, dispositivoId: dispositivo.id,
+      }));
+      const fila = await pool.query(
+        `SELECT r.id, r.nombre, r.lat, r.lng, r.categoria, z.nombre AS zona
+         FROM referencia r JOIN zona z ON z.id = r.zona_id WHERE r.id = $1`,
+        [sitio.referenciaId],
+      );
+      const f = fila.rows[0];
+      return {
+        creada: sitio.creada,
+        referencia: {
+          id: Number(f.id), nombre: f.nombre, zona: f.zona,
+          lat: Number(f.lat), lng: Number(f.lng), categoria: f.categoria,
+        },
+      };
+    } catch (error) {
+      if (error instanceof Error && /Nombre demasiado|demasiado largo/.test(error.message)) {
+        throw errorHttp(400, error.message);
+      }
+      throw error;
+    }
+  });
+
   // --- Solicitudes --------------------------------------------------------
 
   app.post('/api/solicitudes', async (req, reply) => {
@@ -526,6 +685,12 @@ export function crearServidor(
     }));
 
     if (!creada.yaExistia) {
+      // Que tres personas distintas pidan un taxi a un sitio propuesto es la
+      // única prueba que hace falta de que ese sitio existe (migración 072).
+      await enTransaccion(pool, async (c) => {
+        await publicarSiSeUsa(c, cuerpo.origenId!);
+        await publicarSiSeUsa(c, cuerpo.destinoId!);
+      });
       const despacho = await iniciarDespacho(pool, emisor, creada.solicitudId);
       return reply.status(201).send({
         solicitudId: creada.solicitudId,

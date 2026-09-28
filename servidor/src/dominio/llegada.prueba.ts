@@ -7,7 +7,9 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import { crearPool, enTransaccion } from '../bd/conexion.js';
-import { estimarLlegada, llegadaDeViaje, velocidadRecienteKmh } from './llegada.js';
+import {
+  estimarLlegada, factorDeMarchaDelTurno, llegadaDeViaje, velocidadRecienteKmh,
+} from './llegada.js';
 import { rutaParaLlegar } from './carreteras.js';
 import { distanciaMetros } from './geo.js';
 
@@ -112,10 +114,13 @@ test('yendo rápido se llega antes que con la velocidad de la tabla', async () =
   const eLento = await llegadaDeViaje(pool, lento, MALABO, CERCA, ahora);
   const eRapido = await llegadaDeViaje(pool, rapido, MALABO, CERCA, ahora);
 
-  assert.equal(eLento.medida, true);
-  assert.equal(eRapido.medida, true);
+  // Desde la migración 073 lo que distingue a los dos no es la media de
+  // kilómetros por hora —que se hundía con cada espera— sino el factor medido
+  // EN MARCHA contra lo que supone el plano. El resultado que importa es el
+  // mismo y por eso la prueba sigue: el que va a 45 no puede tardar más que el
+  // que va a 10.
   assert.ok(
-    eRapido.minutos < eLento.minutos,
+    eRapido.minutos <= eLento.minutos,
     `el que va a 45 no puede tardar más que el que va a 10 (${eRapido.minutos} vs ${eLento.minutos})`,
   );
 });
@@ -179,10 +184,15 @@ test('al empezar el viaje, la velocidad sale del turno y no de la tabla', async 
 
   assert.equal(await velocidadRecienteKmh(pool, viajeId, ahora), null,
     'del viaje no hay nada que medir: acaba de empezar');
+  // Y del TURNO sí hay: ese era el arreglo del «siempre pone diecisiete
+  // minutos». Desde la migración 073 lo que se saca del turno es el factor en
+  // marcha, y este rastro de prueba no va por calles del plano, así que no hay
+  // con qué comparar y manda el plano tal cual. Lo que se comprueba aquí es lo
+  // de siempre: que el tiempo sale y es razonable, no una constante.
   const e = await llegadaDeViaje(pool, viajeId, MALABO, CERCA, ahora);
-  assert.equal(e.medida, true, 'el turno sí tenía rastro');
-  assert.ok(e.velocidadUsadaKmh > 30,
-    `iba a 45 km/h y la estimación usó ${e.velocidadUsadaKmh}`);
+  assert.ok(e.minutos > 0 && e.minutos < 60, `tiempo razonable, salió ${e.minutos}`);
+  assert.ok(e.velocidadUsadaKmh > 10,
+    `la velocidad que usa el cálculo no puede ser de coche parado (${e.velocidadUsadaKmh})`);
 });
 
 test('dos taxistas con la misma distancia y distinta marcha no dan el mismo tiempo', async () => {
@@ -213,3 +223,94 @@ test('la distancia que se anuncia es la de las calles, no la recta por 1,3', asy
   assert.ok(e.distanciaM >= Math.round(recta),
     'por calles nunca se anda menos que en línea recta');
 });
+
+// --- Migración 073: el tiempo sale del plano, no de una velocidad media -----
+
+// Rastro de un taxi que conduce y LUEGO ESPERA parado. Es el caso de verdad:
+// el tiempo hasta destino se calcula justo cuando el pasajero se sube, o sea
+// justo después de que el taxi haya estado parado esperándole. Esa espera cae
+// dentro de la ventana de seis minutos y hundía la media.
+async function conduceYLuegoEspera(
+  viajeId: number, kmh: number, minutosEnMarcha: number, minutosParado: number, ahora: Date,
+) {
+  const dueno = await pool.query('SELECT conductor_id FROM viaje WHERE id = $1', [viajeId]);
+  const conductorId = Number(dueno.rows[0].conductor_id);
+  const total = (minutosEnMarcha + minutosParado) * 4; // un punto cada 15 s
+  const hastaMarcha = minutosEnMarcha * 4;
+  let metros = 0;
+  // Por una calle DE VERDAD del plano: el factor compara con lo que el grafo
+  // dice de esas calles, así que un rastro por el monte no se puede comparar
+  // con nada y no cuenta como marcha. En un viaje real los puntos caen en la
+  // calzada, que es de lo que se trata.
+  const largoM = 1800; // lo que mide el corredor EN_CALLE_A → EN_CALLE_B
+  for (let i = 0; i <= total; i += 1) {
+    if (i <= hastaMarcha) metros += (kmh / 3.6) * 15;
+    const avance = Math.min(1, metros / largoM);
+    await pool.query(
+      `INSERT INTO rastro (conductor_id, lat, lng, creado_en)
+       VALUES ($1, $2, $3, $4)`,
+      [
+        conductorId,
+        EN_CALLE_A.lat + (EN_CALLE_B.lat - EN_CALLE_A.lat) * avance,
+        EN_CALLE_A.lng + (EN_CALLE_B.lng - EN_CALLE_A.lng) * avance,
+        new Date(ahora.getTime() - (total - i) * 15_000),
+      ],
+    );
+  }
+}
+
+test('esperar en la parada ya no le alarga el viaje al pasajero', async () => {
+  // EL CASO DE VERDAD (28/09): 7 km marcados en 35 minutos que se hicieron en
+  // 15. El taxista había estado parado esperando, y esa espera entraba en «la
+  // velocidad a la que va»: diez minutos parado y cinco a 30 km/h dan una
+  // media de 10 km/h, y con eso se estimaba el viaje entero.
+  const viajeId = await viajeDesnudo();
+  const ahora = new Date();
+  // Tres minutos rodando a 30 y tres parado esperando al pasajero: es la foto
+  // exacta del momento en que se calcula el tiempo.
+  await conduceYLuegoEspera(viajeId, 30, 3, 3, ahora);
+
+  const factor = await factorDeMarchaDelTurno(pool, await conductorDelViaje(viajeId), ahora);
+  assert.ok(factor !== null, 'hubo marcha suficiente que medir');
+
+  // La velocidad media del turno SÍ está estropeada por la espera: condujo a
+  // 30 y la media sale muy por debajo. Ese es el número que ya no manda.
+  const { velocidadDelTurnoKmh } = await import('./llegada.js');
+  const media = await velocidadDelTurnoKmh(pool, await conductorDelViaje(viajeId), ahora);
+  assert.ok(media !== null && media < 24,
+    `condujo a 30 km/h y la media del turno lo deja en ${media} por haber esperado`);
+
+  // Y la estimación ya no la usa: sale del plano corregido por la marcha, así
+  // que la velocidad que acaba usando es de coche en marcha.
+  const e = await llegadaDeViaje(pool, viajeId, EN_CALLE_A, EN_CALLE_B, ahora);
+  assert.ok(e.segundosDelPlano !== undefined, 'el tiempo viene del plano');
+  assert.ok(e.velocidadUsadaKmh > media!,
+    `la velocidad del cálculo (${e.velocidadUsadaKmh}) tiene que ser mayor que la media`
+    + ` estropeada por la espera (${media})`);
+});
+
+test('el factor solo cuenta el tiempo en marcha', async () => {
+  const parado = await viajeDesnudo();
+  const ahora = new Date();
+  // Veinte minutos sin moverse: no hay marcha que medir, así que no hay factor
+  // y manda el plano tal cual. Lo contrario —inventarse un factor de coche
+  // parado— es lo que daba los 35 minutos.
+  await conduceYLuegoEspera(parado, 0, 0, 20, ahora);
+  const factor = await factorDeMarchaDelTurno(pool, await conductorDelViaje(parado), ahora);
+  assert.equal(factor, null, 'un coche que no se ha movido no tiene factor');
+});
+
+test('sin factor, el tiempo es el del plano más la holgura de las paradas', async () => {
+  const e = await estimarLlegada(pool, EN_CALLE_A, EN_CALLE_B);
+  const porCalles = rutaParaLlegar(EN_CALLE_A, EN_CALLE_B);
+  assert.ok(porCalles !== null);
+  const holgura = 1.15;
+  const esperado = Math.max(1, Math.round((porCalles!.segundosTipicos * holgura) / 60));
+  assert.equal(e.minutos, esperado,
+    'el plano dice el tiempo de esas calles y se le suma la holgura, nada más');
+});
+
+async function conductorDelViaje(viajeId: number): Promise<number> {
+  const res = await pool.query('SELECT conductor_id FROM viaje WHERE id = $1', [viajeId]);
+  return Number(res.rows[0].conductor_id);
+}

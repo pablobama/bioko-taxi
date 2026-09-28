@@ -792,6 +792,28 @@ function FichaPasajero({
           Perdonar strikes y desbloquear
         </button>
       )}
+      {/* Papel de campo para un pasajero (migración 072): sitúa barrios,
+          corrige sitios y aprueba los que propone la gente. No toca dinero, ni
+          verificaciones, ni incidencias — lo mismo que un taxista agente. Se
+          quita igual de fácil, y lo que toque queda apuntado (migración 067). */}
+      <button
+        type="button"
+        className="secundario"
+        disabled={ocupado}
+        onClick={async () => {
+          setOcupado(true);
+          try {
+            await api.nombrarAgentePasajero(dispositivoId, !ficha.es_agente);
+            cargar();
+          } catch (e) {
+            setError(e instanceof Error ? e.message : 'No se pudo cambiar el papel.');
+          } finally {
+            setOcupado(false);
+          }
+        }}
+      >
+        {ficha.es_agente ? 'Quitar el papel de agente de campo' : 'Nombrar agente de campo'}
+      </button>
       <p className="nota">Últimos viajes</p>
       <ListaViajes viajes={ficha.ultimosViajes} />
     </>
