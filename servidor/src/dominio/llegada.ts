@@ -123,13 +123,31 @@ async function velocidadDeLosPuntos(
   // Contra un ANCLA y con suelo de ruido, igual que los kilómetros del
   // recorrido (migración 051): un coche parado tiembla quince o veinte metros
   // entre lecturas, y sumar ese temblor lo pondría a andar sin moverse.
+  //
+  // Y desde la 074, las ESPERAS LARGAS no cuentan como tiempo. Un taxista pasa
+  // buena parte del turno parado —en la parada, delante del portal, a que
+  // salga el pasajero— y meter eso en «a qué velocidad va» hundía la media
+  // hasta el suelo de 8 km/h: así salieron 39 minutos para 6,5 km en
+  // producción. Las paradas CORTAS siguen dentro, y es a propósito: un
+  // semáforo es parte de conducir y tiene que estar en el número.
+  const esperaMaximaSeg = await leerParametroEntero(cliente, 'eta_espera_maxima_seg');
   let metros = 0;
+  let esperado = 0;
   let ancla = puntos[0];
   for (let i = 1; i < puntos.length; i += 1) {
     const punto = puntos[i];
     const salto = distanciaMetros(ancla.lat, ancla.lng, punto.lat, punto.lng);
-    if (salto < ruidoM) continue;
     const hueco = (punto.en - ancla.en) / 1000;
+    if (salto < ruidoM) {
+      // Quieto. Si lleva mucho rato quieto, ese rato deja de contar: es
+      // espera. El ancla no se mueve, así que el siguiente punto se sigue
+      // midiendo desde donde el coche está de verdad.
+      if (hueco > esperaMaximaSeg) {
+        esperado += hueco - esperaMaximaSeg;
+        ancla = { ...ancla, en: punto.en - esperaMaximaSeg * 1000 };
+      }
+      continue;
+    }
     // Un salto imposible es una fijación disparada, no un coche. El ancla
     // avanza igual: dejarla atrás arrastraría el error el resto de la ventana.
     if (hueco > 0 && (salto / hueco) * 3.6 <= topeKmh) {
@@ -144,7 +162,8 @@ async function velocidadDeLosPuntos(
   }
   if (metros < minimoM) return null;
 
-  const kmh = (metros / 1000) / (segundos / 3600);
+  const conduciendo = Math.max(minimoSeg, segundos - esperado);
+  const kmh = (metros / 1000) / (conduciendo / 3600);
   return Math.min(maximaKmh, Math.max(minimaKmh, kmh));
 }
 

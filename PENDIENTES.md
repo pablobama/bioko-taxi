@@ -4,6 +4,27 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
 
 ## Abiertos
 
+- **[P74-01] Hay viajes que se cierran cuando no toca, y eso estropea todo lo
+  que se mida.** En los 45 viajes de producción de los últimos 30 días (28/09):
+  uno de 6,5 km cerrado a los 30 segundos, otro de 49 km cerrado a los 6
+  segundos, y uno de 6 km que se cerró 168 minutos después. Son el 7 % de la
+  muestra y se llevaban por delante la media del diagnóstico del tiempo —de
+  −0,5 a +8 minutos por tres filas—. Las causas posibles son dos y hay que
+  separarlas: el cierre automático por proximidad disparándose antes de tiempo,
+  y el taxista que se olvida de cerrar hasta mucho después. La primera es un
+  fallo; la segunda es una costumbre, y se arregla con un recordatorio. Hasta
+  saber cuál es cuál, ningún número que salga de la duración de un viaje es de
+  fiar.
+
+- **[P74-02] El tiempo hasta destino no sabe de tráfico.** Lo mide del propio
+  taxista —a qué velocidad va, con las esperas largas fuera desde la migración
+  074— y eso responde «cómo conduce este» pero no «cómo está la avenida ahora».
+  Un atasco no se ve hasta que el coche entra en él. Con los datos de
+  producción el error típico ya es de un par de minutos, así que esto no es
+  urgente; el día que lo sea, la forma barata es mirar a qué velocidad van los
+  demás taxis por esas mismas calles en la última media hora, que es
+  información que ya está guardada en `rastro`.
+
 - **[P72-01] Los sitios que propone la gente no los revisa nadie todavía.**
   Desde la migración 072 quien no encuentra su sitio lo escribe y se crea, y
   sale para los demás cuando se pide `sitio_propuesto_usos_para_publicar`
@@ -530,6 +551,24 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   trabajo para el operador, que los va confirmando.
 
 ## Resueltos
+
+- **[P52-05 parcial] El tiempo hasta destino, medido contra la realidad** —
+  28/09. Se midió por fin contra producción (`scripts/diagnostico-eta.ts`, 42
+  viajes creíbles de 30 días) y salieron dos cosas, una esperada y otra no.
+  **La no esperada:** el cálculo de siempre estaba bien calibrado —error medio
+  −0,5 min, viaje tras viaje dentro del minuto— y el cambio de la migración 073
+  (tiempo del plano corregido por un factor del taxista) lo empeoraba a +8,0
+  min, porque el factor ya llevaba dentro los semáforos y encima se le sumaba
+  una holgura del 15 %: las paradas se contaban dos veces. Se apagó
+  (`eta_usa_plano` a 0, migración 074) dejando el código y el interruptor.
+  **La esperada:** el caso que abrió el diagnóstico —7 km anunciados en 35
+  minutos— está en los datos (viaje 39: 6,5 km, 39 minutos) y tiene marca
+  propia: la velocidad venía del TURNO, no del viaje. La media del turno
+  incluía las esperas del taxista y se hundía hasta el suelo de 8 km/h. Desde
+  la 074 las esperas de más de 90 segundos no cuentan para medir su velocidad
+  —los semáforos sí, que son parte de conducir—, y cuando la ventana entera es
+  espera no se mide nada y manda la tabla, que al menos no finge saber algo que
+  nadie ha medido.
 
 - **[P13-04] El desvío del taxi compartido tiene precio y tiene límite** —
   resuelto el 2026-09-26 (migración 071). Antes, a un taxi con alguien dentro

@@ -128,6 +128,7 @@ async function main(): Promise<void> {
   const errores: number[] = [];
   const erroresViejos: number[] = [];
   let fallados = 0;
+  let descartados = 0;
   const relativos: number[] = [];
   console.log('viaje |  km  | antes | nuevo | tardó | error  | factor | velocidad de');
   console.log('-'.repeat(72));
@@ -176,9 +177,21 @@ async function main(): Promise<void> {
     const estimacion = await estimarLlegada(pool, desde, hasta, medida, factor);
     const error = estimacion.minutos - tardoMin;
     const errorViejo = antes.minutos - tardoMin;
-    errores.push(error);
-    erroresViejos.push(errorViejo);
-    relativos.push(tardoMin > 0 ? error / tardoMin : 0);
+    // ¿Es creíble este viaje? Un trayecto de seis kilómetros hecho en treinta
+    // segundos no es un viaje rápido: es un cierre que no ocurrió cuando dice.
+    // Y uno de dos kilómetros cerrado tres horas después, tampoco. Esas filas
+    // se enseñan —porque son un problema de verdad, aunque sea otro— pero no
+    // entran en la media, o tres de ellas deciden el resultado.
+    const kmReales = estimacion.distanciaM / 1000;
+    const velocidadReal = kmReales / (tardoMin / 60);
+    const creibleViaje = velocidadReal >= 5 && velocidadReal <= 90 && tardoMin >= 1;
+    if (creibleViaje) {
+      errores.push(error);
+      erroresViejos.push(errorViejo);
+      relativos.push(tardoMin > 0 ? error / tardoMin : 0);
+    } else {
+      descartados += 1;
+    }
 
     const deDonde = delViaje !== null ? 'viaje' : delTurno !== null ? 'turno' : 'tabla';
     console.log(
@@ -188,7 +201,8 @@ async function main(): Promise<void> {
       + `${String(estimacion.minutos).padStart(5)} | `
       + `${tardoMin.toFixed(1).padStart(5)} | `
       + `${(error >= 0 ? '+' : '') + error.toFixed(1)}`.padStart(7) + ' | '
-      + `${factor === null ? ' —  ' : factor.toFixed(2)} | ${deDonde}`,
+      + `${factor === null ? ' —  ' : factor.toFixed(2)} | ${deDonde}`
+      + (creibleViaje ? '' : '  ← fuera de la media: el cierre no cuadra'),
     );
 
     // Y a qué velocidad fue de verdad, por las calles: es el número que hay
@@ -219,6 +233,7 @@ async function main(): Promise<void> {
 
   console.log('\n' + '='.repeat(60));
   console.log(`Viajes medidos: ${errores.length}`
+    + (descartados > 0 ? ` · ${descartados} apartados por cierre incoherente` : '')
     + (fallados > 0 ? ` · ${fallados} no se pudieron medir` : ''));
   const media = errores.reduce((a, b) => a + b, 0) / errores.length;
   const mediaVieja = erroresViejos.reduce((a, b) => a + b, 0) / erroresViejos.length;
@@ -227,8 +242,9 @@ async function main(): Promise<void> {
     + ` (positivo = la aplicación dice MÁS de lo que se tarda)`);
   console.log(`Mediana: ${percentil(errores, 0.5).toFixed(1)} min`
     + ` · p90 ${percentil(errores, 0.9).toFixed(1)} · peor ${Math.max(...errores).toFixed(1)}`);
-  const mediaRel = relativos.reduce((a, b) => a + b, 0) / relativos.length;
-  console.log(`En proporción: ${(mediaRel * 100).toFixed(0)} % de más de media`);
+  // La media de proporciones se la comen los viajes cortos, así que se enseña
+  // la mediana: es la que dice cómo va el tiempo en el viaje típico.
+  console.log(`En proporción (mediana): ${(percentil(relativos, 0.5) * 100).toFixed(0)} %`);
   const largos = errores.filter((e) => e > 5).length;
   console.log(`Viajes con más de 5 min de exceso: ${largos} de ${errores.length}`);
 
