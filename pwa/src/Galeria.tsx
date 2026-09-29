@@ -45,7 +45,7 @@ const accionesConductor: AccionesConductor = {
   alAlternarServicio: NADA, alAceptar: NADA,
   alRechazar: NADA, alSalir: NADA, alLlegar: NADA, alRecoger: NADA,
   alDeclararAusente: NADA, alCompletar: NADA, alLlamar: NADA,
-  alDescartarAvisoTurno: NADA, alVerGuia: NADA,
+  alDescartarAvisoTurno: NADA, alActivarAvisos: NADA, alVerGuia: NADA,
 };
 
 const mercado: ReferenciaSugerida = {

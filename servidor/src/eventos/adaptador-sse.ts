@@ -13,8 +13,24 @@ import type { Adaptador, EventoSalida, OpcionesEntrega } from './bus.js';
 
 export type EnvioSse = (carga: string) => void;
 
+// Una conexión viva y si quien la abrió está MIRANDO la pantalla.
+//
+// La diferencia importa y costó verla (29/09). Tener la aplicación abierta no
+// es lo mismo que enterarse: con el teléfono bloqueado en el bolsillo, o con el
+// navegador detrás de otra cosa, el aviso llega por el socket y no lo ve nadie
+// —no sale notificación del sistema, y el sonido de la página lo puede callar
+// el interruptor de silencio o el propio navegador al ralentizar la pestaña—.
+// Medido en producción: 32 de 33 carreras se dieron por entregadas «por la
+// conexión abierta», así que la notificación que sí suena no se usó ni una vez.
+interface Conexion {
+  envio: EnvioSse;
+  // Empieza en `true`: quien acaba de abrir la conexión está delante. Si el
+  // cliente nunca dice lo contrario, se comporta como antes de todo esto.
+  visible: boolean;
+}
+
 export class ConexionesSse {
-  private readonly porDispositivo = new Map<number, Set<EnvioSse>>();
+  private readonly porDispositivo = new Map<number, Set<Conexion>>();
 
   // El identificador SIEMPRE pasa por aquí antes de tocar el mapa.
   //
@@ -36,13 +52,31 @@ export class ConexionesSse {
       conjunto = new Set();
       this.porDispositivo.set(clave, conjunto);
     }
-    conjunto.add(envio);
+    const conexion: Conexion = { envio, visible: true };
+    conjunto.add(conexion);
     return () => {
-      conjunto.delete(envio);
+      conjunto.delete(conexion);
       if (conjunto.size === 0) {
         this.porDispositivo.delete(clave);
       }
     };
+  }
+
+  // Lo dice la propia pantalla cuando pasa a segundo plano o vuelve. Vale para
+  // todas las conexiones del dispositivo: son la misma persona mirando o no.
+  marcarVisibilidad(dispositivoId: number | string, visible: boolean): void {
+    for (const c of this.porDispositivo.get(ConexionesSse.clave(dispositivoId)) ?? []) {
+      c.visible = visible;
+    }
+  }
+
+  // ¿Hay alguien delante de la pantalla? Es la pregunta que decide si el aviso
+  // se queda en el socket o hay que despertar el teléfono.
+  hayAlguienMirando(dispositivoId: number | string): boolean {
+    const conjunto = this.porDispositivo.get(ConexionesSse.clave(dispositivoId));
+    if (!conjunto) return false;
+    for (const c of conjunto) if (c.visible) return true;
+    return false;
   }
 
   tieneConexion(dispositivoId: number | string): boolean {
@@ -54,8 +88,8 @@ export class ConexionesSse {
     if (!conjunto) {
       return 0;
     }
-    for (const envio of conjunto) {
-      envio(carga);
+    for (const c of conjunto) {
+      c.envio(carga);
     }
     return conjunto.size;
   }
@@ -92,7 +126,24 @@ export class AdaptadorSse implements Adaptador {
       datos: evento.datos,
     });
     const receptores = this.conexiones.entregarA(dispositivoId, carga);
-    if (receptores > 0) return 'sse';
+    // Entregado Y con alguien delante: ahí se acaba, que es lo instantáneo y lo
+    // que no gasta datos.
+    if (receptores > 0 && this.conexiones.hayAlguienMirando(dispositivoId)) return 'sse';
+
+    // Entregado, pero a una pantalla que nadie está mirando. Hasta ahora esto
+    // contaba como entregado y era el agujero: el taxista con el teléfono
+    // bloqueado en el bolsillo tiene la aplicación «abierta», recibe el aviso
+    // por el socket, y no se entera de nada. Se trata igual que no tener
+    // conexión: si hay a dónde escalar, se escala.
+    if (receptores > 0) {
+      if (evento.rol === 'conductor' && opciones.hayAlternativa) {
+        throw new Error(
+          `El conductor ${evento.conductorId} tiene la aplicación en segundo `
+          + `plano (evento ${evento.id}, ${evento.tipo}).`,
+        );
+      }
+      return 'sse_oculto';
+    }
 
     // Sin conexión viva. Para el PASAJERO no es un fallo y nunca lo fue: su
     // pantalla pregunta el estado cada diez o veinte segundos, así que se

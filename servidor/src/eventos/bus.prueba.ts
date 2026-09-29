@@ -289,6 +289,68 @@ test('con la aplicación abierta, el aviso NO sale por notificación web', async
   assert.equal((await filaEvento(tipo)).canal_entregado, 'sse');
 });
 
+test('con la aplicación abierta PERO en segundo plano, sí sale la notificación', async () => {
+  // El agujero que se vio en producción (29/09): 32 de 33 carreras se dieron
+  // por entregadas «por la conexión abierta», así que la notificación que sí
+  // suena no se usó ni una vez. Y es que tener la aplicación abierta NO es
+  // enterarse: con el teléfono bloqueado en el bolsillo el aviso llega por el
+  // socket y no lo ve nadie —no sale notificación del sistema, y el sonido de
+  // la página lo puede callar el navegador al ralentizar la pestaña—.
+  //
+  // Ahora lo que decide no es tener conexión, es que haya alguien mirando.
+  const conexiones = new ConexionesSse();
+  let porWeb = 0;
+  const despachador = new DespachadorEventos(pool, new Map<string, Adaptador>([
+    ['sse', new AdaptadorSse(conexiones)],
+    ['web', { async entregar(): Promise<string> { porWeb += 1; return 'web'; } }],
+  ]));
+  const tipo = await crearRegla('sse', 'web');
+
+  const recibido: string[] = [];
+  const baja = conexiones.suscribir(dispositivoClienteId, (c) => recibido.push(c));
+  // La pantalla avisa de que se ha ido a segundo plano.
+  conexiones.marcarVisibilidad(dispositivoClienteId, false);
+  await emitir(tipo, { aviso: 'carrera' });
+  await despachador.procesarPendientes();
+  baja();
+
+  assert.equal(porWeb, 1, 'con nadie mirando, tiene que despertar el teléfono');
+  assert.equal((await filaEvento(tipo)).canal_entregado, 'web');
+  // Y por el socket se manda igual: si la pestaña vuelve, ya lo tiene.
+  assert.equal(recibido.length, 1, 'el dato se entrega igual por la conexión');
+});
+
+test('al volver a primer plano se deja de despertar el teléfono', async () => {
+  const conexiones = new ConexionesSse();
+  let porWeb = 0;
+  const despachador = new DespachadorEventos(pool, new Map<string, Adaptador>([
+    ['sse', new AdaptadorSse(conexiones)],
+    ['web', { async entregar(): Promise<string> { porWeb += 1; return 'web'; } }],
+  ]));
+  const tipo = await crearRegla('sse', 'web');
+
+  const baja = conexiones.suscribir(dispositivoClienteId, () => undefined);
+  conexiones.marcarVisibilidad(dispositivoClienteId, false);
+  conexiones.marcarVisibilidad(dispositivoClienteId, true);
+  await emitir(tipo, { aviso: 'carrera' });
+  await despachador.procesarPendientes();
+  baja();
+
+  assert.equal(porWeb, 0);
+  assert.equal((await filaEvento(tipo)).canal_entregado, 'sse');
+});
+
+test('una conexión recién abierta cuenta como mirando', async () => {
+  // Importa para no estropear lo que ya funcionaba: si un cliente viejo nunca
+  // dice si está mirando, se comporta como antes de todo esto. Equivocarse por
+  // ahí cuesta un aviso de menos, no uno de más.
+  const conexiones = new ConexionesSse();
+  const baja = conexiones.suscribir(dispositivoClienteId, () => undefined);
+  assert.equal(conexiones.hayAlguienMirando(dispositivoClienteId), true);
+  baja();
+  assert.equal(conexiones.hayAlguienMirando(dispositivoClienteId), false);
+});
+
 test('sin canal 2, al taxista desconectado no se le reintenta diez veces', async () => {
   // El saldo bajo o el viaje cerrado no tienen a dónde escalar. Con la
   // aplicación cerrada, no llegar no es un fallo: se verán al abrirla. La

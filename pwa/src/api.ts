@@ -1199,6 +1199,16 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ valor }), reintentos: 1 },
     ),
 
+  // «Estoy mirando la pantalla» / «me he ido». Es lo que decide si una carrera
+  // se queda en la conexión abierta o despierta el teléfono con una
+  // notificación. Sin reintentos: si se pierde, el siguiente cambio lo corrige,
+  // y reintentar un estado viejo sería decir una mentira con retraso.
+  marcarVisibilidad: (visible: boolean) =>
+    pedirJson<{ visible: boolean }>('/api/conductor/visibilidad', {
+      method: 'POST',
+      body: JSON.stringify({ visible }),
+    }),
+
   // La radio del gremio (migración 075).
   radio: () => pedirJson<EstadoRadio>('/api/conductor/radio'),
 

@@ -2607,3 +2607,37 @@ button.importe.elegido-importe {
   font-size: 0.76rem;
   white-space: nowrap;
 }
+
+/* Sin el permiso de avisos no suena NADA con el teléfono bloqueado, y hasta
+   ahora eso solo se decía de pasada al entrar en servicio. Medido en
+   producción: cuatro de seis taxistas lo tienen apagado sin saberlo. Va fijo y
+   en ámbar hasta que se arregle, con el botón al lado. */
+.aviso-avisos {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 8px;
+  padding: 9px 12px;
+  background: rgba(255, 176, 32, 0.12);
+  border: 1px solid rgba(255, 176, 32, 0.4);
+  border-radius: 12px;
+  font-size: 0.84rem;
+  color: var(--ambar-claro);
+}
+
+.aviso-avisos span {
+  flex: 1;
+  min-width: 160px;
+}
+
+.aviso-avisos button {
+  padding: 7px 14px;
+  background: var(--ambar);
+  color: var(--tinta);
+  border: 0;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}

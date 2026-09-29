@@ -31,12 +31,17 @@ export interface AccionesConductor {
   alCompletar: (solicitudId: number) => void;
   alLlamar: (solicitudId: number) => void;
   alDescartarAvisoTurno: () => void;
+  // Volver a pedir el permiso de los avisos que suenan con la aplicación
+  // cerrada. Solo sirve si el navegador no lo tiene bloqueado del todo.
+  alActivarAvisos: () => void;
   // Volver a ver la guía de la primera vez. Quien la saltó con prisa no tiene
   // otra forma de recuperarla.
   alVerGuia: () => void;
 }
 
 export interface PropiedadesVistaConductor {
+  // Estado del permiso de los avisos que suenan con la aplicación cerrada.
+  avisosPush?: 'no_disponible' | 'bloqueado' | 'sin_pedir' | 'activo';
   conductor: DatosConductor;
   estado: EstadoConductor | null;
   // Dónde se está pidiendo taxi, por barrio. null mientras no se ha pedido o
@@ -233,7 +238,7 @@ function BloquePasajero({
 
 export default function VistaConductor({
   conductor, estado, demanda, aviso, avisoTurno = null, sinRed = null, ocupado = false,
-  plegada = false, t, acciones,
+  plegada = false, avisosPush = 'activo', t, acciones,
 }: PropiedadesVistaConductor) {
   const enServicio = estado !== null && estado.estado !== 'DESCONECTADO';
   const suscripcionVigente = estado?.suscripcionVigente ?? conductor.suscripcionVigente;
@@ -250,6 +255,25 @@ export default function VistaConductor({
           en silencio y no habría forma de saber que el servidor aún no se ha
           enterado de nada. */}
       <AvisoSinRed sinRed={sinRed} t={t} />
+      {/* Sin este permiso no suena NADA con el teléfono bloqueado, y hasta
+          ahora eso solo se decía de pasada al entrar en servicio. Medido en
+          producción: cuatro de seis taxistas lo tienen apagado sin saberlo, y
+          para ellos la aplicación simplemente «no avisa». Va aquí fijo, con el
+          botón al lado, hasta que se arregle. Si el navegador lo tiene
+          bloqueado no hay botón que valga —eso solo se desbloquea desde los
+          ajustes del navegador— y entonces lo que se enseña es cómo. */}
+      {enServicio && avisosPush !== 'activo' && (
+        <div className="aviso-avisos" role="status">
+          <span>{avisosPush === 'bloqueado'
+            ? t('avisos.bloqueadosFijo')
+            : t('avisos.apagadosFijo')}</span>
+          {avisosPush !== 'bloqueado' && (
+            <button type="button" onClick={acciones.alActivarAvisos}>
+              {t('avisos.activar')}
+            </button>
+          )}
+        </div>
+      )}
       {/* Migración 049: el turno ya no se cae solo, así que puede quedarse
           encendido toda la noche sin querer. Cada hora se le recuerda —con el
           número de horas, que es lo que hace que reaccione— y el botón de

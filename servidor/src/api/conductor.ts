@@ -400,6 +400,27 @@ export function registrarRutasConductor(
   });
 
   // El buzón que da el navegador al conceder el permiso.
+  // «Estoy mirando la pantalla» / «me he ido a otra cosa» (29/09).
+  //
+  // Es lo que decide si una carrera se queda en la conexión abierta o despierta
+  // el teléfono. Hasta ahora bastaba con tener la aplicación abierta para que
+  // el aviso se diera por entregado, y eso dejaba fuera justo el caso que
+  // importa: el móvil bloqueado en el bolsillo con la página cargada detrás.
+  // Medido en producción: 32 de 33 carreras se entregaron «por la conexión
+  // abierta» y la notificación que sí suena no se usó ni una vez.
+  //
+  // No se guarda en la base: es un estado de la conexión viva, y cuando la
+  // conexión se cae el estado sobra.
+  app.post('/api/conductor/visibilidad', async (req) => {
+    const sesion = await sesionDesde(req);
+    const cuerpo = (req.body ?? {}) as { visible?: unknown };
+    // Sin dato explícito se supone que SÍ está mirando: es como se comportaba
+    // antes, y equivocarse por ahí solo cuesta un aviso menos, no uno de más.
+    const visible = cuerpo.visible !== false;
+    conexionesSse.marcarVisibilidad(Number(sesion.dispositivoId), visible);
+    return { visible };
+  });
+
   app.post('/api/conductor/notificaciones', async (req) => {
     const sesion = await sesionDesde(req);
     const cuerpo = (req.body ?? {}) as {

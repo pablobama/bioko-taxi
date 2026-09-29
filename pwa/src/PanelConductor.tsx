@@ -26,7 +26,7 @@ import MandosFlotantes from './MandosFlotantes';
 import { anotarRastro, olvidarRastro, pendientesRastro } from './rastroLocal';
 import { alternarGuia, guiaEncendida, proximoAviso, type PasoPorRotonda } from './guia';
 import { salidasDeRotonda } from './rutas';
-import { activarAvisos } from './avisoPush';
+import { activarAvisos, estadoAviso, type EstadoAviso } from './avisoPush';
 import { mantenerVivo } from './seguirDespierto';
 import {
   encolar, guardarUltimo, sincronizar, ultimoGuardado, usePendientes,
@@ -305,6 +305,39 @@ export default function PanelConductor({
       window.removeEventListener('pointerdown', arrancar);
       if (parar) parar();
     };
+  }, []);
+
+  // Decirle al servidor si esta pantalla se está mirando o no.
+  //
+  // De esto depende que una carrera suene con el teléfono bloqueado. Tener la
+  // aplicación abierta NO es enterarse: con el móvil en el bolsillo el aviso
+  // llega por la conexión y no lo ve nadie, porque no sale notificación del
+  // sistema y el sonido de la página lo puede callar el navegador al ralentizar
+  // la pestaña. Diciendo aquí que nadie mira, el servidor escala a la
+  // notificación que sí suena.
+  useEffect(() => {
+    const avisar = () => {
+      void api.marcarVisibilidad(document.visibilityState === 'visible')
+        .catch(() => undefined);
+    };
+    avisar();
+    document.addEventListener('visibilitychange', avisar);
+    // Al cerrar la pestaña o bloquear, por si `visibilitychange` no llega.
+    window.addEventListener('pagehide', avisar);
+    return () => {
+      document.removeEventListener('visibilitychange', avisar);
+      window.removeEventListener('pagehide', avisar);
+    };
+  }, []);
+
+  // Si los avisos que suenan con la aplicación cerrada están concedidos o no.
+  // Se relee al volver a la pantalla porque el permiso se puede cambiar desde
+  // los ajustes del navegador, sin pasar por aquí.
+  const [avisosPush, setAvisosPush] = useState<EstadoAviso>(() => estadoAviso());
+  useEffect(() => {
+    const releer = () => setAvisosPush(estadoAviso());
+    document.addEventListener('visibilitychange', releer);
+    return () => document.removeEventListener('visibilitychange', releer);
   }, []);
 
   const llamada = useLlamada({ vivo: true, locale: localeVoz(idioma) });
@@ -902,6 +935,7 @@ export default function PanelConductor({
         demanda={demanda}
         aviso={aviso}
         avisoTurno={avisoTurno}
+        avisosPush={avisosPush}
         sinRed={datosDe !== null || pendientes > 0 ? { datosDe, pendientes } : null}
         ocupado={ocupado}
         t={t}
@@ -922,6 +956,12 @@ export default function PanelConductor({
           alLlamar: (id) => llamada.llamar(id),
           alDescartarAvisoTurno: () => setAvisoTurno(null),
           alVerGuia: () => setGuiaAbierta(true),
+          alActivarAvisos: () => {
+            void activarAvisos().then((r) => {
+              setAvisosPush(r);
+              if (r === 'bloqueado') setAviso(t('avisos.bloqueados'));
+            });
+          },
         }}
       />
       )}
