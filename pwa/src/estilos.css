@@ -2311,30 +2311,47 @@ button.importe.elegido-importe {
 }
 
 
+
 /* La radio del gremio (migración 075).
 
-   El botón está CLAVADO abajo a la derecha, y esa es la decisión de diseño
-   entera. Antes vivía dentro de una tarjeta y se movía según cuántos mensajes
-   hubiera: había que buscarlo con la vista para apretar, que es lo que no se
-   puede hacer conduciendo (P75-06, visto en un iPhone). Los mandos flotantes
-   del taxista están arriba a la izquierda, así que no se pisan. */
+   El botón flota, se mueve y late. Las tres cosas salieron de usarlo de verdad:
+   antes vivía dentro de una tarjeta y cambiaba de sitio según cuántos mensajes
+   hubiera —había que buscarlo con la vista para apretar, que es lo que no se
+   puede hacer conduciendo—; el sitio bueno depende de la mano y del soporte del
+   teléfono, así que se arrastra; y un círculo quieto sobre un mapa oscuro no se
+   ve, así que late. */
 .radio-flotante {
   position: fixed;
-  right: 12px;
-  bottom: calc(18px + env(safe-area-inset-bottom));
+  width: 84px;
+  height: 84px;
   z-index: 900;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
-  /* El contenedor no intercepta el dedo: solo lo hacen sus botones. Debajo hay
-     mapa, y el mapa se sigue pudiendo arrastrar. */
-  pointer-events: none;
-  max-width: min(300px, calc(100vw - 32px));
 }
 
-.radio-flotante > * {
-  pointer-events: auto;
+.radio-moviendo {
+  cursor: grabbing;
+}
+
+/* Lo que se pinta encima cuelga del botón sin empujarlo: así no se mueve ni un
+   píxel porque entre un aviso, que es justo el fallo que se vino a arreglar.
+   Sale hacia dentro de la pantalla, según el lado en que esté. */
+.radio-encima {
+  position: absolute;
+  bottom: 100%;
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 62vw;
+}
+
+.radio-flotante[data-lado="derecha"] .radio-encima {
+  right: 0;
+  align-items: flex-end;
+}
+
+.radio-flotante[data-lado="izquierda"] .radio-encima {
+  left: 0;
+  align-items: flex-start;
 }
 
 .radio-boton {
@@ -2365,6 +2382,33 @@ button.importe.elegido-importe {
   cursor: default;
 }
 
+/* El pulso: «estoy aquí». Un aro que sale del botón y se desvanece, cada tres
+   segundos, y solo cuando se puede hablar —mientras uno habla manda el aro del
+   turno, y si habla otro no hay nada que ofrecer—. Va en `::after` para no
+   pelearse con ese otro aro, y no intercepta el dedo. */
+.radio-boton-late::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--ambar);
+  pointer-events: none;
+  animation: radio-pulso 3s ease-out infinite;
+}
+
+@keyframes radio-pulso {
+  0% { transform: scale(1); opacity: 0.55; }
+  /* La mayor parte del ciclo está quieto y apagado: un latido constante cansa
+     la vista y, en un móvil, también la batería. */
+  40%, 100% { transform: scale(1.7); opacity: 0; }
+}
+
+/* Quien pide no ver animaciones no las ve. El botón sigue igual de visible por
+   su borde ámbar. */
+@media (prefers-reduced-motion: reduce) {
+  .radio-boton-late::after { animation: none; }
+}
+
 /* Hablando: ámbar lleno. Se ve de reojo, sin leer nada. */
 .radio-boton-hablando {
   background: var(--ambar);
@@ -2372,8 +2416,8 @@ button.importe.elegido-importe {
   color: var(--tinta);
 }
 
-/* El aro que se vacía con el turno. Va por fuera del botón para no comerle
-   sitio al icono, y es lo que dice cuánto queda sin tener que leer el número. */
+/* El aro que se vacía con el turno. Por fuera del botón para no comerle sitio
+   al icono: dice cuánto queda sin tener que leer el número. */
 .radio-boton-hablando::before {
   content: '';
   position: absolute;
@@ -2383,6 +2427,7 @@ button.importe.elegido-importe {
   -webkit-mask: radial-gradient(circle, transparent 0 46px, #000 46px);
   mask: radial-gradient(circle, transparent 0 46px, #000 46px);
   transition: background 1s linear;
+  pointer-events: none;
 }
 
 .radio-boton-ocupado {
@@ -2401,6 +2446,32 @@ button.importe.elegido-importe {
   font-variant-numeric: tabular-nums;
 }
 
+/* El asidero para moverlo. Arriba y pequeño, fuera del camino del pulgar que
+   aprieta para hablar: apretar y mover son dos gestos distintos y tienen dos
+   sitios distintos, en vez de una adivinanza que se equivoca cuando el coche
+   pega un bote. */
+.radio-asidero {
+  position: absolute;
+  top: -6px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(22, 22, 26, 0.95);
+  color: var(--humo);
+  border: 1px solid var(--borde);
+  font-size: 0.8rem;
+  line-height: 1;
+  touch-action: none;
+  cursor: grab;
+}
+
+.radio-flotante[data-lado="derecha"] .radio-asidero { left: -6px; }
+.radio-flotante[data-lado="izquierda"] .radio-asidero { right: -6px; }
+.radio-moviendo .radio-asidero { cursor: grabbing; color: var(--ambar); }
+
 /* La línea de encima: quién habla, o qué acaba de pasar. Una sola, corta, y
    solo cuando hay algo que decir. */
 .radio-linea {
@@ -2412,8 +2483,9 @@ button.importe.elegido-importe {
   border-radius: 999px;
   font-size: 0.8rem;
   color: var(--humo);
-  text-align: right;
 }
+
+.radio-flotante[data-lado="derecha"] .radio-linea { text-align: right; }
 
 .radio-linea-aviso {
   color: var(--ambar-claro);
@@ -2435,8 +2507,16 @@ button.importe.elegido-importe {
   cursor: pointer;
 }
 
+/* La lista va anclada a la PANTALLA y no al botón: el botón puede acabar en
+   cualquier sitio, y una hoja de 300 px colgando de él se saldría por el borde
+   la mitad de las veces. Abajo a la izquierda, que es donde el botón no está
+   por defecto. */
 .radio-hoja {
-  width: min(300px, calc(100vw - 32px));
+  position: fixed;
+  left: 12px;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  z-index: 899;
+  width: min(300px, calc(100vw - 24px));
   padding: 12px 14px;
   background: var(--tarjeta);
   border: 1px solid var(--borde);

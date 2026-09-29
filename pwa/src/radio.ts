@@ -103,6 +103,19 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
   // botón de volver a oír sí puede pisar a un mensaje que entra.
   const cola = useRef<number[]>([]);
   const sonando = useRef(false);
+  // Cuándo dejar de creer que habla otro.
+  //
+  // EL FALLO QUE ARREGLA, visto usándolo: el canal se quedaba «ocupado» para
+  // siempre sin que nadie tuviera el botón apretado. El aviso de que alguien
+  // empieza a hablar llegaba siempre; el de que ha callado solo sale si suelta
+  // el botón a tiempo, y no sale si el turno caduca solo, si falla el envío o
+  // si al que hablaba se le cierra la aplicación. Esta pantalla se quedaba
+  // esperando un aviso que ya no iba a llegar nunca.
+  //
+  // Ahora el aviso trae su propia caducidad y esto es el reloj que la cumple.
+  // No hace falta que nadie avise del caso malo: el turno tiene un tope que
+  // garantiza el servidor, así que cada pantalla sabe sola cuándo soltarlo.
+  const relojOcupado = useRef<number | null>(null);
 
   const cargar = useCallback(async () => {
     try {
@@ -118,6 +131,15 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
   }, []);
 
   useEffect(() => { if (activa) void cargar(); }, [activa, cargar]);
+
+  const dejarDeEsperar = useCallback(() => {
+    if (relojOcupado.current !== null) {
+      clearTimeout(relojOcupado.current);
+      relojOcupado.current = null;
+    }
+    setHabla(null);
+    setEstado((e) => (e === 'ocupado' ? 'libre' : e));
+  }, []);
 
   const soltarMicro = useCallback(() => {
     if (corte.current !== null) {
@@ -178,6 +200,9 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
         // El audio ya existía y se ha perdido al subirlo. Se dice, porque el
         // taxista cree haber avisado a su gremio y no ha avisado a nadie.
         setAviso('No se pudo mandar. Vuelve a decirlo.');
+        // El servidor libera el canal al GUARDAR el mensaje; si el mensaje no
+        // llegó, el turno sigue siendo suyo y hay que devolverlo a mano.
+        void api.soltarTurnoRadio().catch(() => undefined);
       } finally {
         setEstado('libre');
         setHabla(null);
@@ -278,6 +303,11 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
         flujo?.getTracks().forEach((t) => t.stop());
         soltarMicro();
         setEstado('libre');
+        // El turno y el micrófono se piden a la vez, así que el micrófono puede
+        // fallar con el turno YA concedido. Si no se devuelve, el gremio se
+        // queda sin radio hasta que caduque, y encima por alguien que ni
+        // siquiera ha llegado a hablar.
+        void api.soltarTurnoRadio().catch(() => undefined);
         setAviso(esFalloDeMicrofono(error)
           ? 'Hace falta dar permiso al micrófono para hablar por la radio.'
           : 'No se pudo pedir la palabra. Inténtalo otra vez.');
@@ -295,25 +325,40 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
   }, [encolar]);
 
   const alRecibirEvento = useCallback((tipo: string, datos: unknown) => {
-    const d = (datos ?? {}) as { mensajeId?: number; conductorId?: number };
+    const d = (datos ?? {}) as {
+      mensajeId?: number; conductorId?: number; nombre?: string; caducaEn?: string;
+    };
     if (tipo === 'radio_mensaje' && typeof d.mensajeId === 'number') {
       encolar(d.mensajeId);
-      setHabla(null);
-      setEstado((e) => (e === 'ocupado' ? 'libre' : e));
+      dejarDeEsperar();
       void cargar();
       return;
     }
     if (tipo === 'radio_habla') {
-      // Se pinta que habla otro para que nadie apriete en vano. El nombre llega
-      // con la lista; aquí basta con saber que el canal está pillado.
+      // Se pinta quién habla para que nadie apriete en vano, y se programa el
+      // momento de dejar de creerlo. Sin ese reloj, un turno que no se cierra
+      // bien deja la radio muda para todos los demás.
+      setHabla(d.nombre ?? null);
       setEstado((e) => (e === 'libre' ? 'ocupado' : e));
+      if (relojOcupado.current !== null) clearTimeout(relojOcupado.current);
+      const queda = d.caducaEn !== undefined
+        ? new Date(d.caducaEn).getTime() - Date.now()
+        : (segundosMax + 5) * 1000;
+      // Con topes: ni fiarse de un reloj mal puesto en el otro teléfono, ni
+      // quedarse esperando más de lo que puede durar un turno.
+      const espera = Math.min(30_000, Math.max(1_000, queda + 500));
+      relojOcupado.current = window.setTimeout(() => {
+        dejarDeEsperar();
+        // Y se confirma con el servidor, que es el que sabe: puede que hable
+        // otro ya, o que haya un mensaje nuevo en la lista.
+        void cargar();
+      }, espera);
       return;
     }
     if (tipo === 'radio_calla') {
-      setHabla(null);
-      setEstado((e) => (e === 'ocupado' ? 'libre' : e));
+      dejarDeEsperar();
     }
-  }, [encolar, cargar]);
+  }, [encolar, cargar, dejarDeEsperar, segundosMax]);
 
   // La cuenta atrás del turno. Aparte del estado de la grabadora para que se vea
   // bajar: diez segundos sin ninguna señal de que se acaban son diez segundos en
@@ -324,7 +369,10 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
     return () => clearInterval(t);
   }, [estado]);
 
-  useEffect(() => () => soltarMicro(), [soltarMicro]);
+  useEffect(() => () => {
+    soltarMicro();
+    if (relojOcupado.current !== null) clearTimeout(relojOcupado.current);
+  }, [soltarMicro]);
 
   return {
     estado,

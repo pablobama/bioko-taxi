@@ -134,6 +134,22 @@ test('el turno caduca solo: un teléfono que se apaga no deja el canal muerto', 
   assert.equal(despues.dada, true, 'a los 16 s el turno vencido ya no vale');
 });
 
+test('el turno viene con fecha de caducidad, y es la que cumple la pantalla', async () => {
+  // Es el contrato del que depende el arreglo del canal que se quedaba
+  // «ocupado» para siempre: la pantalla de los demás deja de esperar SOLA en
+  // esta fecha, sin necesitar que nadie le avise de que el otro calló. Si esto
+  // dejara de venir, volvería el fallo y no lo notaría ninguna prueba.
+  const canal = canalNuevo();
+  const yo = await taxista();
+  const ahora = new Date();
+  const r = await pedirLaPalabra(pool, { canal, ...yo }, ahora);
+  assert.equal(r.dada, true);
+  if (!r.dada) return;
+  const dura = (new Date(r.caducaEn).getTime() - ahora.getTime()) / 1000;
+  assert.ok(dura > r.segundosMax, `tiene que durar más que lo que se puede hablar (${dura} s)`);
+  assert.ok(dura <= r.segundosMax + 10, `y no mucho más, o el canal se queda muerto (${dura} s)`);
+});
+
 test('soltar deja el canal libre en el acto', async () => {
   const canal = canalNuevo();
   const uno = await taxista();

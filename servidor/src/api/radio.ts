@@ -35,6 +35,9 @@ function errorHttp(codigo: number, mensaje: string): Error & { statusCode: numbe
 interface SesionConductor {
   dispositivoId: number;
   conductorId: number;
+  // El nombre viaja con el aviso de «habla alguien»: sin él, los demás leen
+  // «habla otro taxista», que en una radio no sirve de nada.
+  nombre: string;
   canal: string;
 }
 
@@ -59,8 +62,10 @@ export function registrarRutasRadio(
       throw errorHttp(400, 'Falta la cabecera x-dispositivo con un UUID válido.');
     }
     const res = await pool.query(
-      `SELECT id, conductor_id FROM dispositivo
-       WHERE uuid_persistente = $1 AND tipo = 'conductor' AND conductor_id IS NOT NULL`,
+      `SELECT d.id, d.conductor_id, c.nombre
+       FROM dispositivo d JOIN conductor c ON c.id = d.conductor_id
+       WHERE d.uuid_persistente = $1 AND d.tipo = 'conductor'
+         AND d.conductor_id IS NOT NULL`,
       [uuid.toLowerCase()],
     );
     if (res.rowCount === 0) {
@@ -71,6 +76,7 @@ export function registrarRutasRadio(
     return {
       dispositivoId: Number(res.rows[0].id),
       conductorId,
+      nombre: res.rows[0].nombre,
       canal: await canalDe(pool, conductorId),
     };
   }
@@ -103,7 +109,24 @@ export function registrarRutasRadio(
     if (r.dada) {
       // A los demás se les pinta quién tiene la palabra: sin eso, el que espera
       // no sabe si el canal está ocupado o si su teléfono no va.
-      avisar(yo, { tipo: 'radio_habla', datos: { conductorId: yo.conductorId } });
+      // EL AVISO LLEVA SU PROPIA CADUCIDAD, y ese es el arreglo de un fallo que
+      // se vio usándolo: el canal se quedaba «ocupado» para siempre.
+      //
+      // Antes se avisaba de que alguien empezaba a hablar y se confiaba en que
+      // llegaría el aviso de que había callado. Pero ese segundo aviso solo
+      // sale cuando se suelta el botón a tiempo: si el turno caduca solo, si
+      // el envío del audio falla, o si al que hablaba se le cierra la
+      // aplicación, no sale NUNCA, y los demás se quedan mirando un «habla
+      // alguien» eterno sin poder apretar.
+      //
+      // Mandando `caducaEn` no hace falta ningún segundo aviso para el caso
+      // malo: el turno tiene un tope que garantiza el servidor —no caben dos
+      // filas en `turno_palabra` y esa fila vence—, así que cada pantalla sabe
+      // por sí sola cuándo dejar de esperar.
+      avisar(yo, {
+        tipo: 'radio_habla',
+        datos: { conductorId: yo.conductorId, nombre: yo.nombre, caducaEn: r.caducaEn },
+      });
       return { dada: true, caducaEn: r.caducaEn, segundosMax: r.segundosMax };
     }
     // 409 y no 400: no es una petición mal hecha, es que el canal está ocupado.
