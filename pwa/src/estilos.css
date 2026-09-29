@@ -1881,6 +1881,12 @@ button.importe.elegido-importe {
 /* Marco con la proporción de un teléfono. El contenido es la hoja real. */
 .pantalla-telefono {
   position: relative;
+  /* Un hijo `position: fixed` se ancla a la VENTANA, no a su marco, y en la
+     galería eso sacaría el botón de la radio del teléfono para pegarlo a la
+     esquina de la página —los cuatro, uno encima de otro—. Un `transform`
+     convierte el marco en el bloque que contiene a los fijos, que es lo que
+     hace falta para que cada pantalla se vea entera dentro del suyo. */
+  transform: translateZ(0);
   height: 620px;
   border-radius: 22px;
   overflow: hidden;
@@ -2304,18 +2310,138 @@ button.importe.elegido-importe {
   width: auto;
 }
 
+
 /* La radio del gremio (migración 075).
 
-   El botón es grande, redondo y está abajo porque es lo único que se pulsa a
-   ciegas: quien lo usa está conduciendo. Y `touch-action: none` no es un
-   detalle —sin eso, mantener el dedo apretado en un móvil arrastra la página y
-   el navegador se queda el gesto a mitad de frase. */
-.radio {
-  margin: 12px 0 0;
-  padding: 12px 14px 14px;
+   El botón está CLAVADO abajo a la derecha, y esa es la decisión de diseño
+   entera. Antes vivía dentro de una tarjeta y se movía según cuántos mensajes
+   hubiera: había que buscarlo con la vista para apretar, que es lo que no se
+   puede hacer conduciendo (P75-06, visto en un iPhone). Los mandos flotantes
+   del taxista están arriba a la izquierda, así que no se pisan. */
+.radio-flotante {
+  position: fixed;
+  right: 12px;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  /* El contenedor no intercepta el dedo: solo lo hacen sus botones. Debajo hay
+     mapa, y el mapa se sigue pudiendo arrastrar. */
+  pointer-events: none;
+  max-width: min(300px, calc(100vw - 32px));
+}
+
+.radio-flotante > * {
+  pointer-events: auto;
+}
+
+.radio-boton {
+  position: relative;
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: var(--carbon);
+  color: var(--hueso);
+  border: 3px solid var(--ambar);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  /* Sin esto, mantener el dedo apretado en un móvil arrastra la página y el
+     navegador se queda el gesto a mitad de frase. */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+}
+
+.radio-boton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Hablando: ámbar lleno. Se ve de reojo, sin leer nada. */
+.radio-boton-hablando {
+  background: var(--ambar);
+  border-color: var(--ambar);
+  color: var(--tinta);
+}
+
+/* El aro que se vacía con el turno. Va por fuera del botón para no comerle
+   sitio al icono, y es lo que dice cuánto queda sin tener que leer el número. */
+.radio-boton-hablando::before {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  background: conic-gradient(var(--ambar) var(--queda, 100%), transparent 0);
+  -webkit-mask: radial-gradient(circle, transparent 0 46px, #000 46px);
+  mask: radial-gradient(circle, transparent 0 46px, #000 46px);
+  transition: background 1s linear;
+}
+
+.radio-boton-ocupado {
+  border-color: var(--info);
+  color: var(--info-texto);
+}
+
+.radio-icono {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.radio-segundos {
+  font-size: 0.82rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* La línea de encima: quién habla, o qué acaba de pasar. Una sola, corta, y
+   solo cuando hay algo que decir. */
+.radio-linea {
+  margin: 0;
+  padding: 5px 10px;
+  max-width: 100%;
+  background: rgba(22, 22, 26, 0.92);
+  border: 1px solid var(--borde);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  color: var(--humo);
+  text-align: right;
+}
+
+.radio-linea-aviso {
+  color: var(--ambar-claro);
+  border-color: rgba(255, 176, 32, 0.4);
+}
+
+/* La pestaña del último mensaje, que además abre la lista entera. */
+.radio-ultimo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 7px 12px;
+  background: rgba(22, 22, 26, 0.92);
+  color: var(--hueso);
+  border: 1px solid var(--borde);
+  border-radius: 999px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.radio-hoja {
+  width: min(300px, calc(100vw - 32px));
+  padding: 12px 14px;
   background: var(--tarjeta);
   border: 1px solid var(--borde);
   border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -2335,79 +2461,15 @@ button.importe.elegido-importe {
 }
 
 .radio-nota {
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   color: var(--humo);
   text-align: right;
 }
 
-.radio-boton {
-  position: relative;
-  overflow: hidden;
-  width: 100%;
-  min-height: 78px;
-  padding: 14px 16px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: var(--carbon);
-  color: var(--hueso);
-  border: 2px solid var(--ambar);
-  border-radius: 14px;
-  font-size: 1.05rem;
-  font-weight: 700;
-  touch-action: none;
-  -webkit-user-select: none;
-  user-select: none;
-  cursor: pointer;
-}
-
-.radio-boton:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-/* Hablando: ámbar lleno, que se vea desde el rabillo del ojo sin leer nada. */
-.radio-boton-hablando {
-  background: var(--ambar);
-  border-color: var(--ambar);
-  color: var(--tinta);
-}
-
-.radio-boton-ocupado {
-  border-color: var(--info);
-  color: var(--info-texto);
-}
-
-.radio-icono {
-  font-size: 1.7rem;
-  line-height: 1;
-}
-
-.radio-rotulo {
-  text-align: left;
-}
-
-/* Lo que queda del turno, como una barra que se vacía. Un número de segundos
-   hay que leerlo; esto se ve. */
-.radio-barra {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  height: 4px;
-  background: var(--tinta);
-  transition: width 1s linear;
-}
-
-.radio-aviso,
-.radio-oyentes,
 .radio-vacia {
   margin: 0;
   font-size: 0.82rem;
   color: var(--humo);
-}
-
-.radio-aviso {
-  color: var(--ambar-claro);
 }
 
 .radio-lista {
@@ -2417,7 +2479,7 @@ button.importe.elegido-importe {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 168px;
+  max-height: 42dvh;
   overflow-y: auto;
 }
 

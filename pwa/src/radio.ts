@@ -19,7 +19,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, bajarVozRadio, type EstadoRadio, type MensajeRadio } from './api';
 import { esFalloDeMicrofono } from './llamada';
-import { sonarRadioAdelante, sonarRadioEntra, sonarRadioOcupada } from './sonidos';
+import {
+  reproducirVoz, sonarRadioAdelante, sonarRadioEntra, sonarRadioOcupada,
+} from './sonidos';
 
 // Voz, no música. El mismo caudal que las llamadas y por el mismo motivo: aquí
 // los datos son dinero del taxista.
@@ -135,25 +137,22 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
     if (siguiente === undefined) return;
     sonando.current = true;
     void (async () => {
-      let url: string | null = null;
       try {
         const audio = await bajarVozRadio(siguiente);
         // `null` es lo normal pasadas dos horas: el mensaje se borró. No es un
         // fallo y no se le dice nada al taxista.
         if (audio !== null) {
           sonarRadioEntra();
-          url = URL.createObjectURL(audio);
-          const elemento = new Audio(url);
-          await new Promise<void>((listo) => {
-            elemento.onended = () => listo();
-            elemento.onerror = () => listo();
-            void elemento.play().catch(() => listo());
-          });
+          // Por el reproductor compartido de `sonidos.ts` y no con un `Audio`
+          // nuevo: en iOS un elemento creado fuera de un gesto del usuario no
+          // puede sonar NUNCA, y un mensaje de radio entra justo cuando el
+          // taxista no está tocando nada. Aquel se desbloqueó en el primer
+          // toque y sirve para todos.
+          await reproducirVoz(audio);
         }
       } catch {
         // Un mensaje que no se pudo bajar no puede dejar la cola atascada.
       } finally {
-        if (url !== null) URL.revokeObjectURL(url);
         sonando.current = false;
         sonarCola();
       }

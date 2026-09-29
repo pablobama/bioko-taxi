@@ -964,22 +964,20 @@ function RadioDeMuestra(props: {
   mensajes?: typeof MENSAJES_RADIO;
 }) {
   return (
-    <HojaSuelta>
-      <PanelRadio
-        estado={props.estado}
-        encendida
-        habla={props.habla ?? null}
-        quedan={props.quedan ?? 0}
-        segundosMax={10}
-        mensajes={props.mensajes ?? MENSAJES_RADIO}
-        aviso={props.aviso ?? null}
-        oyentes={props.oyentes ?? null}
-        t={t}
-        alApretar={NADA}
-        alSoltar={NADA}
-        alVolverAOir={NADA}
-      />
-    </HojaSuelta>
+    <PanelRadio
+      estado={props.estado}
+      encendida
+      habla={props.habla ?? null}
+      quedan={props.quedan ?? 0}
+      segundosMax={10}
+      mensajes={props.mensajes ?? MENSAJES_RADIO}
+      aviso={props.aviso ?? null}
+      oyentes={props.oyentes ?? null}
+      t={t}
+      alApretar={NADA}
+      alSoltar={NADA}
+      alVolverAOir={NADA}
+    />
   );
 }
 

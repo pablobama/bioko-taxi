@@ -4,37 +4,15 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
 
 ## Abiertos
 
-- **[P75-05] En el iPhone con la PWA instalada no se oyen los sonidos.** Probado
-  el 28/09 sobre el terreno: desde el ordenador se graba y se oye sin problema,
-  y desde el iPhone con la aplicación instalada en la pantalla de inicio, no.
-  Que el ordenador funcione acota mucho: no es el servidor, no es el reparto y
-  no es el formato del audio; es iOS. Tres sospechosos, por orden de
-  probabilidad y todos comprobables en minutos:
-
-  1. **El interruptor de silencio del lateral del teléfono.** En iOS, el audio
-     de la Web Audio API —que es con lo que están hechos todos los avisos de
-     `sonidos.ts`— se calla con el interruptor físico, aunque el volumen esté
-     alto. Es la causa más tonta y la más frecuente. Desde Safari 16.4 hay una
-     salida: `navigator.audioSession.type = 'playback'`, que declara que esto es
-     reproducción y no un pitido de interfaz. Habría que ponerlo al arrancar.
-  2. **El permiso de sonar se pierde al volver.** iOS solo deja sonar después de
-     que el usuario toque algo, y el `AudioContext` se queda suspendido al
-     mandar la aplicación al fondo. `prepararSonido()` se llama en el primer
-     toque, pero en una PWA instalada que se abre y se cierra todo el rato puede
-     no bastar: hay que reanudarlo también al volver a primer plano
-     (`visibilitychange`).
-  3. **El `new Audio()` de la radio**, que es otra vía distinta de los pitidos.
-     Conviene probar los dos por separado —un pitido y un mensaje de voz— para
-     saber si fallan los dos o solo uno, porque la causa no tiene por qué ser la
-     misma.
-
-- **[P75-06] El botón de hablar se mueve, y en el teléfono eso lo hace
-  inservible.** Hoy es un rectángulo ancho dentro de la tarjeta de la radio, así
-  que sube y baja según cuántos mensajes haya en la lista y según lo que ocupe
-  el resto del panel. Para apretar y hablar hay que buscarlo con la vista, que
-  es justo lo que no se puede hacer conduciendo. Tiene que ser **redondo, grande
-  y fijo a la derecha**, donde cae el pulgar: la posición no puede depender del
-  contenido. Dicho por quien lo ha usado en un iPhone.
+- **[P75-05] Falta confirmar en un iPhone de verdad que ya se oye.** Se pusieron
+  los tres arreglos el 29/09 —declarar el audio como reproducción para que el
+  interruptor de silencio no lo calle, despertar el contexto al volver a primer
+  plano, y un reproductor único desbloqueado en el primer toque— pero aquí no
+  hay ningún iPhone: están puestos porque son las tres causas conocidas, no
+  porque se haya visto funcionar. Hay que probarlo con la PWA instalada, y
+  probar por separado UN PITIDO y UN MENSAJE DE VOZ: son dos caminos distintos
+  y pueden fallar por separado. Si sigue mudo, el siguiente sospechoso es el
+  modo de bajo consumo, que en iOS también corta el audio automático.
 
 - **[P75-01] La radio no suena con la pantalla bloqueada, que es como se
   conduce.** Lo que hay (migración 075) vive en la PWA, y un navegador congela
@@ -615,6 +593,19 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
   trabajo para el operador, que los va confirmando.
 
 ## Resueltos
+
+- **[P75-06] El botón de hablar ya no se mueve** — 29/09. Era un rectángulo
+  dentro de la tarjeta de la radio, así que su sitio dependía de cuántos
+  mensajes hubiera en la lista; probándolo en un iPhone se vio lo que eso
+  significa: hay que buscarlo con la vista antes de apretar, que es justo lo que
+  no se puede hacer conduciendo. Ahora es redondo (84 px), está clavado abajo a
+  la derecha donde cae el pulgar, y no se mueva lo que se mueva el resto de la
+  pantalla. Los mandos flotantes del taxista viven arriba a la izquierda, así
+  que no se pisan. Lo que queda de turno se ve en un aro que se vacía alrededor
+  del botón, en vez de en una barra que había que leer. Y la lista de mensajes
+  ya no está siempre desplegada tapando el mapa: encima del botón hay una sola
+  línea —quién habla, o quién fue el último— y la lista entera se abre
+  pulsándola.
 
 - **[P52-05 parcial] El tiempo hasta destino, medido contra la realidad** —
   28/09. Se midió por fin contra producción (`scripts/diagnostico-eta.ts`, 42

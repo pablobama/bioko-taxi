@@ -22,8 +22,54 @@ export function alternarSilencio(): boolean {
 }
 
 // Debe llamarse desde un gesto del usuario (un clic). Idempotente.
+// En iOS, el interruptor físico del lateral CALLA la Web Audio API aunque el
+// volumen esté alto. Es la causa más frecuente de «no se oye nada en el iPhone»
+// y desde fuera parece un fallo de la aplicación: el taxista ve los mensajes
+// entrar y no suena ninguno.
+//
+// `audioSession` (Safari 16.4+) es la salida: declara que esto es
+// REPRODUCCIÓN —como un reproductor de música— y no un pitido de interfaz, y
+// entonces iOS lo deja sonar con el interruptor puesto. No está en los tipos de
+// TypeScript porque solo existe en Safari, de ahí el acceso a mano.
+//
+// Se hace una sola vez y no rompe nada donde no existe.
+function declararReproduccion(): void {
+  try {
+    const sesion = (navigator as unknown as {
+      audioSession?: { type: string };
+    }).audioSession;
+    if (sesion && sesion.type !== 'playback') sesion.type = 'playback';
+  } catch {
+    // Navegador que no lo tiene o no deja cambiarlo: se sigue igual.
+  }
+}
+
+// El contexto se queda SUSPENDIDO cuando la aplicación se va al fondo, y al
+// volver no se reanuda solo. En una PWA instalada eso pasa todo el rato —se
+// bloquea la pantalla, se mira un mensaje, se vuelve— y el resultado es una
+// aplicación que sonaba al abrirla y deja de sonar sin motivo aparente.
+//
+// Se engancha una sola vez, la primera que se prepara el sonido.
+let vigilandoVuelta = false;
+
+function despertarAlVolver(): void {
+  if (vigilandoVuelta) return;
+  vigilandoVuelta = true;
+  const despertar = () => {
+    if (document.visibilityState !== 'visible') return;
+    declararReproduccion();
+    if (contexto && contexto.state === 'suspended') void contexto.resume();
+  };
+  document.addEventListener('visibilitychange', despertar);
+  // `pageshow` cubre la vuelta desde la caché de atrás/adelante de Safari, que
+  // no dispara `visibilitychange`.
+  window.addEventListener('pageshow', despertar);
+}
+
 export function prepararSonido(): void {
   try {
+    declararReproduccion();
+    despertarAlVolver();
     if (!contexto) {
       const Constructor = window.AudioContext
         ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -33,9 +79,80 @@ export function prepararSonido(): void {
     if (contexto.state === 'suspended') {
       void contexto.resume();
     }
+    prepararReproductor();
   } catch {
     // Sin audio disponible: la app funciona igual, solo sin avisos sonoros.
     contexto = null;
+  }
+}
+
+// --- Reproducir voz grabada (la radio del gremio) --------------------------
+//
+// Los mensajes de voz NO van por la Web Audio API: son un fichero de audio, y
+// se reproducen con un elemento `<audio>`. Esa es otra vía y tiene su propia
+// pega en iOS: un elemento creado FUERA de un gesto del usuario no puede sonar,
+// nunca, por mucho que se le llame `play()`. Y un mensaje de radio entra
+// precisamente cuando el usuario no está tocando nada.
+//
+// Por eso hay UN solo elemento, creado y desbloqueado en el primer toque —el
+// mismo gesto que arranca el contexto— y reutilizado para todos los mensajes.
+// Una vez desbloqueado, ese elemento sí puede sonar sin gesto.
+let reproductor: HTMLAudioElement | null = null;
+
+function prepararReproductor(): void {
+  if (reproductor !== null) return;
+  try {
+    const elemento = document.createElement('audio');
+    // `playsinline`: sin esto, iOS puede abrir el reproductor a pantalla
+    // completa y tapar la pantalla del taxista con un mensaje de cuatro
+    // segundos. Como atributo y no como propiedad: en los tipos solo existe
+    // para vídeo, aunque Safari lo mira igual en el audio.
+    elemento.setAttribute('playsinline', '');
+    elemento.preload = 'auto';
+    reproductor = elemento;
+    // El desbloqueo: se le manda sonar un silencio muy corto dentro del gesto.
+    // A partir de aquí el elemento queda «tocado por el usuario» y ya puede
+    // reproducir lo que le echen.
+    elemento.src = SILENCIO;
+    void elemento.play().then(() => {
+      elemento.pause();
+      elemento.currentTime = 0;
+    }).catch(() => {
+      // No se pudo desbloquear ahora: se intentará en el siguiente gesto, y
+      // mientras tanto reproducir puede fallar. No hay nada que romper.
+    });
+  } catch {
+    reproductor = null;
+  }
+}
+
+// Un wav mínimo y mudo, en línea. Un fichero aparte serían bytes de descarga y
+// una petición más para algo que no se oye.
+const SILENCIO = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=';
+
+// Reproduce un audio recibido y avisa cuando termina. Devuelve en cuanto acaba
+// —o en cuanto falla— para que quien llama pueda encadenar el siguiente sin
+// que se pisen dos voces.
+export async function reproducirVoz(audio: Blob): Promise<void> {
+  if (silenciado) return;
+  prepararSonido();
+  const elemento = reproductor;
+  if (elemento === null) return;
+  const url = URL.createObjectURL(audio);
+  try {
+    elemento.src = url;
+    await new Promise<void>((listo) => {
+      const acabar = () => {
+        elemento.onended = null;
+        elemento.onerror = null;
+        listo();
+      };
+      elemento.onended = acabar;
+      elemento.onerror = acabar;
+      void elemento.play().catch(acabar);
+    });
+  } finally {
+    URL.revokeObjectURL(url);
   }
 }
 
