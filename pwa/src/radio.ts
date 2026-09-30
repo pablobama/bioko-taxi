@@ -44,9 +44,24 @@ function formatoSoportado(): string {
   return '';
 }
 
-export function radioDisponible(): boolean {
-  return typeof MediaRecorder !== 'undefined'
-    && typeof navigator.mediaDevices?.getUserMedia === 'function';
+// ¿Puede este navegador grabar voz? Y si no, POR QUÉ.
+//
+// Hacía falta porque esto fallaba en silencio: la función existía y no la
+// llamaba nadie, así que en un teléfono que no puede grabar el botón se
+// enseñaba igual, pedía el turno, reventaba, y el taxista leía «no se pudo
+// pedir la palabra, inténtalo otra vez» — que le manda a repetir algo que no va
+// a funcionar nunca.
+//
+// El caso que lo destapó es de iOS: en la aplicación INSTALADA en la pantalla
+// de inicio, `navigator.mediaDevices` no existe en las versiones anteriores a
+// la 17.4, así que no hay forma de grabar por mucho permiso que se dé. Abriendo
+// la misma página en Safari sí funciona. Eso hay que decirlo, no esconderlo.
+export type PuedeGrabar = 'si' | 'sin_micro' | 'sin_grabadora';
+
+export function radioDisponible(): PuedeGrabar {
+  if (typeof navigator.mediaDevices?.getUserMedia !== 'function') return 'sin_micro';
+  if (typeof MediaRecorder === 'undefined') return 'sin_grabadora';
+  return 'si';
 }
 
 export type EstadoBoton =
@@ -64,6 +79,9 @@ export type EstadoBoton =
 export interface UsoRadio {
   estado: EstadoBoton;
   encendida: boolean;
+  // Si este navegador puede grabar. Cuando no puede, el botón no se enseña
+  // como si fuera a funcionar.
+  puedeGrabar: PuedeGrabar;
   // Quién tiene la palabra ahora, sea yo o sea otro.
   habla: string | null;
   // Segundos que me quedan de mi turno, para que se vea que se acaba.
@@ -83,6 +101,8 @@ export interface UsoRadio {
 
 export function useRadio({ activa }: { activa: boolean }): UsoRadio {
   const [estado, setEstado] = useState<EstadoBoton>('libre');
+  // Se mira una vez: no cambia mientras la página está abierta.
+  const [puedeGrabar] = useState<PuedeGrabar>(() => radioDisponible());
   const [encendida, setEncendida] = useState(false);
   const [habla, setHabla] = useState<string | null>(null);
   const [quedan, setQuedan] = useState(0);
@@ -238,6 +258,16 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
 
   const apretar = useCallback(() => {
     if (estado !== 'libre') return;
+    // Si este teléfono no puede grabar, ni se pide el turno: cogerlo para
+    // fallar acto seguido deja el canal pillado para el resto del gremio por
+    // alguien que no iba a poder hablar.
+    if (puedeGrabar !== 'si') {
+      setAviso(puedeGrabar === 'sin_micro'
+        ? 'Esta aplicación instalada no puede usar el micrófono. Abre la página en'
+          + ' el navegador para hablar por la radio.'
+        : 'Este navegador no sabe grabar voz.');
+      return;
+    }
     soltado.current = false;
     setAviso(null);
     setOyentes(null);
@@ -308,12 +338,23 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
         // queda sin radio hasta que caduque, y encima por alguien que ni
         // siquiera ha llegado a hablar.
         void api.soltarTurnoRadio().catch(() => undefined);
-        setAviso(esFalloDeMicrofono(error)
-          ? 'Hace falta dar permiso al micrófono para hablar por la radio.'
-          : 'No se pudo pedir la palabra. Inténtalo otra vez.');
+        // Cada fallo pide algo distinto del taxista, así que se distinguen. Un
+        // único «inténtalo otra vez» le manda a repetir lo que no va a
+        // funcionar nunca, que es lo que pasaba.
+        const nombre = (error as { name?: string } | null)?.name ?? '';
+        setAviso(
+          nombre === 'NotAllowedError' || nombre === 'PermissionDeniedError'
+            ? 'Hace falta dar permiso al micrófono para hablar por la radio.'
+            : nombre === 'NotFoundError' || nombre === 'NotReadableError'
+              ? 'No se encuentra el micrófono de este teléfono.'
+              : esFalloDeMicrofono(error)
+                ? 'El navegador no deja usar el micrófono aquí. Prueba a abrir la'
+                  + ' página en el navegador en vez de la aplicación instalada.'
+                : 'No se pudo pedir la palabra. Inténtalo otra vez.',
+        );
       }
     })();
-  }, [estado, detener, soltarMicro]);
+  }, [estado, detener, soltarMicro, puedeGrabar]);
 
   const soltar = useCallback(() => {
     soltado.current = true;
@@ -377,6 +418,7 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
   return {
     estado,
     encendida,
+    puedeGrabar,
     habla,
     quedan,
     segundosMax,

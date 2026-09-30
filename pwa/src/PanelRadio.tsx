@@ -83,6 +83,7 @@ function posicionGuardada(caja: Caja): Punto {
 interface Props {
   estado: EstadoBoton;
   encendida: boolean;
+  puedeGrabar?: 'si' | 'sin_micro' | 'sin_grabadora';
   habla: string | null;
   quedan: number;
   segundosMax: number;
@@ -102,8 +103,8 @@ function hace(creadoEn: string, t: Props['t']): string {
 }
 
 export default function PanelRadio({
-  estado, encendida, habla, quedan, segundosMax, mensajes, aviso, oyentes,
-  t, alApretar, alSoltar, alVolverAOir,
+  estado, encendida, puedeGrabar = 'si', habla, quedan, segundosMax, mensajes,
+  aviso, oyentes, t, alApretar, alSoltar, alVolverAOir,
 }: Props) {
   const [listaAbierta, setListaAbierta] = useState(false);
   // Se parte de la ventana, que es lo correcto en la aplicación, y se corrige
@@ -177,7 +178,14 @@ export default function PanelRadio({
   // pantalla y no se corte contra el borde.
   const lado = pos.x + LADO / 2 > cajaDe(caja.current).ancho / 2 ? 'derecha' : 'izquierda';
 
-  const rotulo = hablando
+  // Un teléfono que no puede grabar se dice ANTES de que alguien apriete, no
+  // después de fallar: el botón sigue estando para escuchar y volver a oír, y
+  // lo que cambia es que no promete algo que no va a pasar.
+  const mudo = puedeGrabar !== 'si';
+
+  const rotulo = mudo
+    ? t('radio.soloEscuchar')
+    : hablando
     ? t('radio.hablando', { seg: String(quedan) })
     : estado === 'enviando' ? t('radio.enviando')
       : estado === 'pidiendo' ? t('radio.pidiendo')
@@ -188,6 +196,7 @@ export default function PanelRadio({
   // Lo que se dice encima del botón, por orden de urgencia: un aviso manda sobre
   // quién habla, y quién habla manda sobre a cuántos llegó lo último.
   const linea = aviso
+    ?? (mudo ? t('radio.soloEscucharNota') : null)
     ?? (ocupado ? rotulo : null)
     ?? (oyentes !== null && oyentes > 0 ? t('radio.oyentes', { n: String(oyentes) }) : null);
 
@@ -257,7 +266,7 @@ export default function PanelRadio({
           type="button"
           className={`radio-boton${hablando ? ' radio-boton-hablando' : ''}`
             + `${ocupado ? ' radio-boton-ocupado' : ''}`
-            + `${estado === 'libre' && !moviendo ? ' radio-boton-late' : ''}`}
+            + `${estado === 'libre' && !moviendo && !mudo ? ' radio-boton-late' : ''}`}
           // Puntero y no clic: hay que saber cuándo se aprieta y cuándo se
           // suelta. `onPointerLeave` y `onPointerCancel` también sueltan, porque
           // un dedo que resbala fuera del botón nunca manda el «arriba», y sin
@@ -267,7 +276,7 @@ export default function PanelRadio({
           onPointerLeave={alSoltar}
           onPointerCancel={alSoltar}
           onContextMenu={(e) => e.preventDefault()}
-          disabled={esperando || ocupado}
+          disabled={esperando || ocupado || mudo}
           aria-pressed={hablando}
           aria-label={rotulo}
           // El aro que se vacía marca lo que queda de turno. Se ve de reojo, sin

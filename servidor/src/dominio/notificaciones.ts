@@ -25,8 +25,35 @@ export interface SuscripcionWeb {
 
 // Un identificador de contacto, obligatorio en el protocolo: es a quién avisa
 // el servicio de push (Google, Mozilla, Apple) si nuestros envíos dan
-// problemas. Tiene que ser un mailto: o una URL nuestros.
-const SUJETO = process.env.VAPID_SUJETO ?? 'mailto:soporte@taxi-malabo.example';
+// problemas. Tiene que ser un mailto: o una URL NUESTROS.
+//
+// Y ahí estaba puesto `mailto:soporte@taxi-malabo.example`, que no es nuestro
+// ni de nadie: `.example` es un dominio reservado que no existe. Google y
+// Mozilla lo tragan; APPLE NO. Su servicio de push rechaza el envío con un
+// código de error, y el síntoma es exactamente el que se vio probando desde un
+// iPhone: la suscripción existe, el envío sale, y no llega nada.
+//
+// Por eso el valor por defecto pasa a ser la dirección del propio servicio, que
+// Render pone en el entorno y que sí existe. `VAPID_SUJETO` sigue mandando si
+// alguien quiere poner un correo de verdad.
+function sujetoVapid(): string {
+  const puesto = process.env.VAPID_SUJETO;
+  if (puesto && !puesto.includes('.example')) return puesto;
+  const propia = process.env.RENDER_EXTERNAL_URL;
+  if (propia && propia.startsWith('https://')) return propia;
+  // Último recurso, y se avisa UNA vez: sin un sujeto válido Apple no entrega.
+  if (!avisadoDelSujeto) {
+    avisadoDelSujeto = true;
+    console.warn(
+      'VAPID_SUJETO no está configurado y no hay URL pública en el entorno. '
+      + 'Las notificaciones a iPhone pueden no llegar: pon VAPID_SUJETO a un '
+      + 'mailto: o una https: de verdad.',
+    );
+  }
+  return 'https://localhost';
+}
+
+let avisadoDelSujeto = false;
 
 // Se lee una vez por proceso: son dos cadenas que no cambian nunca.
 let enMemoria: ClavesVapid | null = null;
@@ -159,7 +186,7 @@ export async function enviarAlConductor(
           TTL: ttlSeg,
           urgency: 'high',
           vapidDetails: {
-            subject: SUJETO,
+            subject: sujetoVapid(),
             publicKey: claves.publica,
             privateKey: claves.privada,
           },
@@ -169,7 +196,16 @@ export async function enviarAlConductor(
       await cliente.query('UPDATE suscripcion_web SET usado_en = now(), ultimo_error = NULL WHERE id = $1', [buzon.id]);
     } catch (error) {
       const estado = (error as { statusCode?: number }).statusCode ?? 0;
-      const mensaje = error instanceof Error ? error.message : String(error);
+      // Con el código y lo que contestó el servicio de push, no solo el mensaje
+      // de la librería. «Received unexpected response code» no dice nada; el
+      // cuerpo de la respuesta de Apple o de Google dice exactamente qué le
+      // pareció mal, y sin eso se adivina.
+      const cuerpo = (error as { body?: string }).body;
+      const mensaje = [
+        error instanceof Error ? error.message : String(error),
+        estado > 0 ? `[código ${estado}]` : '',
+        cuerpo ? String(cuerpo).slice(0, 200) : '',
+      ].filter(Boolean).join(' ');
       // 404 y 410: el buzón ya no existe (se desinstaló el navegador, o el
       // servicio de push lo tiró).
       //

@@ -1024,6 +1024,7 @@ export default function PanelConductor({
         <PanelRadio
           estado={radio.estado}
           encendida={radio.encendida}
+          puedeGrabar={radio.puedeGrabar}
           habla={radio.habla}
           quedan={radio.quedan}
           segundosMax={radio.segundosMax}
