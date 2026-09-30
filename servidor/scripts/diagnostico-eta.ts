@@ -133,6 +133,9 @@ async function main(): Promise<void> {
   const relativos: number[] = [];
   // Cuánto se equivocaron los botones frente al rastro, viaje a viaje.
   const desfases: number[] = [];
+  // Para los que no se pudieron medir: lo más que se acercó el coche a la punta
+  // que falló. Es lo que dice si hay que aflojar el listón o mirar otra cosa.
+  const lejos: number[] = [];
   const porCalidad = new Map<Calidad, number>();
   // «Botones» es lo que dicen RECOGIDO y COMPLETADO; «rastro» es lo que tardó
   // el coche de verdad en ir del origen al destino. Cuando no coinciden manda el
@@ -216,6 +219,11 @@ async function main(): Promise<void> {
       if (medidaReal.desfaseMin !== null) desfases.push(medidaReal.desfaseMin);
     } else {
       descartados += 1;
+      if (medidaReal.calidad === 'parcial') {
+        lejos.push(Math.max(
+          medidaReal.masCercaDelOrigenM ?? 0, medidaReal.masCercaDelDestinoM ?? 0,
+        ));
+      }
     }
 
     const deDonde = delViaje !== null ? 'viaje' : delTurno !== null ? 'turno' : 'tabla';
@@ -233,7 +241,11 @@ async function main(): Promise<void> {
           ? `  ← los botones se equivocaron ${(medidaReal.desfaseMin ?? 0).toFixed(0)} min`
           : '')
         : `  ← fuera de la media: ${medidaReal.calidad === 'sin_rastro'
-          ? 'no hay rastro del coche' : 'el rastro no cubre el viaje'}`),
+          ? 'no hay rastro del coche'
+          : `el coche no pasó cerca del ${
+            (medidaReal.masCercaDelOrigenM ?? 0) > (medidaReal.masCercaDelDestinoM ?? 0)
+              ? 'ORIGEN' : 'DESTINO'} (origen ${medidaReal.masCercaDelOrigenM} m,`
+            + ` destino ${medidaReal.masCercaDelDestinoM} m)`}`),
     );
 
     // Y a qué velocidad fue de verdad, por las calles: es el número que hay
@@ -294,6 +306,23 @@ async function main(): Promise<void> {
   // Lo que se equivocaron los botones. Es la medida de P74-01, y hasta ahora
   // solo se tenía por sospecha: viajes de 6 km «cerrados en 30 segundos». Aquí
   // sale el número, y sale de comparar dos cosas que se midieron aparte.
+  if (lejos.length > 0) {
+    // «El rastro no cubre el viaje» son tres problemas distintos y sin repartir
+    // no se sabe cuál arreglar. Con el listón en 200 m: si el coche pasó a 300
+    // el listón está apretado; si pasó a tres kilómetros, o la referencia está
+    // mal situada o el recorrido no se grabó.
+    const rozando = lejos.filter((m) => m <= 600).length;
+    const lejisimos = lejos.filter((m) => m > 2000).length;
+    console.log('');
+    console.log('De los que el rastro no cubre, lo más que se acercó el coche a la');
+    console.log('punta que falló:');
+    console.log(`  ${rozando} se quedaron a menos de 600 m — el listón de 200 m es`);
+    console.log('    demasiado apretado para un punto cada minuto, y se arregla aflojándolo');
+    console.log(`  ${lejisimos} pasaron a más de 2 km — ahí no es el listón: o la`);
+    console.log('    referencia está en el sitio equivocado, o no se grabó el recorrido');
+    console.log(`  mediana ${percentil(lejos, 0.5).toFixed(0)} m`);
+  }
+
   if (desfases.length > 0) {
     const grandes = desfases.filter((d) => Math.abs(d) > 3).length;
     console.log(`

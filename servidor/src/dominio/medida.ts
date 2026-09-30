@@ -52,6 +52,15 @@ export interface Medida {
   // La diferencia entre lo declarado y lo real, que es la medida del problema.
   desfaseMin: number | null;
   puntosDeRastro: number;
+  // POR QUÉ no se pudo medir, que es lo que decide qué hay que arreglar.
+  //
+  // «El rastro no cubre el viaje» puede ser tres problemas muy distintos, y sin
+  // estos dos números no se distinguen: si el coche pasó a 350 m del origen, el
+  // listón de los 200 m está demasiado apretado; si nunca se acercó a menos de
+  // tres kilómetros, o la referencia está mal situada o el recorrido no se
+  // grabó. Lo mismo por el lado del destino.
+  masCercaDelOrigenM: number | null;
+  masCercaDelDestinoM: number | null;
 }
 
 interface Punto { lat: number; lng: number; en: Date }
@@ -94,7 +103,22 @@ export async function medirViaje(
       minutosDeclarados,
       desfaseMin: null,
       puntosDeRastro: puntos.length,
+      masCercaDelOrigenM: null,
+      masCercaDelDestinoM: null,
     };
+  }
+
+  // Lo más que se acercó a cada punta, se acabe midiendo o no. Es el dato que
+  // convierte un «no se pudo» en algo que se puede arreglar.
+  let masCercaDelOrigenM = Infinity;
+  let masCercaDelDestinoM = Infinity;
+  for (const p of puntos) {
+    masCercaDelOrigenM = Math.min(
+      masCercaDelOrigenM, distanciaMetros(p.lat, p.lng, origen.lat, origen.lng),
+    );
+    masCercaDelDestinoM = Math.min(
+      masCercaDelDestinoM, distanciaMetros(p.lat, p.lng, destino.lat, destino.lng),
+    );
   }
 
   const cerca = (p: Punto, sitio: { lat: number; lng: number }) =>
@@ -120,6 +144,8 @@ export async function medirViaje(
       minutosDeclarados,
       desfaseMin: null,
       puntosDeRastro: puntos.length,
+      masCercaDelOrigenM: Math.round(masCercaDelOrigenM),
+      masCercaDelDestinoM: Math.round(masCercaDelDestinoM),
     };
   }
 
@@ -130,5 +156,7 @@ export async function medirViaje(
     minutosDeclarados,
     desfaseMin: minutosDeclarados - minutos,
     puntosDeRastro: puntos.length,
+    masCercaDelOrigenM: Math.round(masCercaDelOrigenM),
+    masCercaDelDestinoM: Math.round(masCercaDelDestinoM),
   };
 }

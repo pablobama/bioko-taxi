@@ -134,6 +134,16 @@ test('si el rastro no cubre el viaje entero, tampoco se inventa', async () => {
   assert.equal(m.calidad, 'parcial');
   assert.equal(m.minutos, null);
   assert.ok(m.puntosDeRastro >= 2, 'rastro había, lo que falta es el principio');
+
+  // Y se dice LO MÁS que se acercó a cada punta. Sin eso, «no cubre el viaje»
+  // son tres problemas distintos en el mismo saco: un listón demasiado
+  // apretado, una referencia mal situada, o un recorrido que no se grabó. Con
+  // los metros delante se sabe cuál es.
+  assert.ok(m.masCercaDelDestinoM !== null && m.masCercaDelDestinoM < 50,
+    `llegó al destino, así que eso tiene que salir cerca (${m.masCercaDelDestinoM} m)`);
+  assert.ok(m.masCercaDelOrigenM !== null && m.masCercaDelOrigenM > 200,
+    `del origen no se acercó nunca, y eso es lo que hay que poder ver`
+    + ` (${m.masCercaDelOrigenM} m)`);
 });
 
 test('dar vueltas por el origen antes de cargar no alarga el viaje', async () => {
