@@ -125,21 +125,34 @@ export class AdaptadorSse implements Adaptador {
     cliente: pg.ClientBase,
     opciones: OpcionesEntrega = { hayAlternativa: false },
   ): Promise<string> {
-    // Destinatario: el dispositivo del cliente, o el del conductor cuando el
-    // evento es para él. El panel web del taxista usa esta misma vía; la app
-    // Android usa FCM, que le llega con la pantalla apagada.
-    let dispositivoId = evento.dispositivoClienteId;
-    if (dispositivoId === null && evento.conductorId !== null) {
+    // Destinatarios: el dispositivo del cliente, o TODOS los del conductor
+    // cuando el evento es para él.
+    //
+    // Todos y no el último (30/09). Antes se cogía el del último latido, y eso
+    // dejaba un agujero que se vio usándolo: un taxista con el panel abierto en
+    // el ordenador y el móvil bloqueado recibía la carrera en el ordenador
+    // —que late porque está abierto—, el servidor la daba por entregada a
+    // alguien que estaba mirando, y el teléfono no sonaba nunca.
+    //
+    // El envío de notificaciones ya lo hacía bien y lo dice en su propio
+    // comentario: «un taxista con el móvil del trabajo y el suyo debe oír la
+    // carrera en los dos, y no hay forma de saber cuál tiene en la mano». Esta
+    // vía decía lo contrario. Ahora dicen lo mismo.
+    let destinos: number[];
+    if (evento.dispositivoClienteId !== null) {
+      destinos = [Number(evento.dispositivoClienteId)];
+    } else if (evento.conductorId !== null) {
       const res = await cliente.query(
         `SELECT id FROM dispositivo
          WHERE conductor_id = $1 AND tipo = 'conductor'
-         ORDER BY COALESCE(ultimo_heartbeat, creado_en) DESC
-         LIMIT 1`,
+         ORDER BY COALESCE(ultimo_heartbeat, creado_en) DESC`,
         [evento.conductorId],
       );
-      dispositivoId = res.rows[0]?.id ?? null;
+      destinos = res.rows.map((f) => Number(f.id));
+    } else {
+      destinos = [];
     }
-    if (dispositivoId === null) {
+    if (destinos.length === 0) {
       throw new Error(`El evento ${evento.id} (${evento.tipo}) no tiene dispositivo destinatario.`);
     }
     const carga = JSON.stringify({
@@ -147,10 +160,17 @@ export class AdaptadorSse implements Adaptador {
       solicitudId: evento.solicitudId,
       datos: evento.datos,
     });
-    const receptores = this.conexiones.entregarA(dispositivoId, carga);
+    // Se entrega a todas sus pantallas abiertas, y basta con que UNA tenga a
+    // alguien delante para no despertar el teléfono.
+    let receptores = 0;
+    let alguienMirando = false;
+    for (const destino of destinos) {
+      receptores += this.conexiones.entregarA(destino, carga);
+      if (this.conexiones.hayAlguienMirando(destino)) alguienMirando = true;
+    }
     // Entregado Y con alguien delante: ahí se acaba, que es lo instantáneo y lo
     // que no gasta datos.
-    if (receptores > 0 && this.conexiones.hayAlguienMirando(dispositivoId)) return 'sse';
+    if (receptores > 0 && alguienMirando) return 'sse';
 
     // Entregado, pero a una pantalla que nadie está mirando. Hasta ahora esto
     // contaba como entregado y era el agujero: el taxista con el teléfono

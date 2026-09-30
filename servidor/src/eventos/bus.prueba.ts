@@ -363,6 +363,59 @@ test('el «estoy mirando» caduca solo si la pantalla deja de repetirlo', async 
   baja();
 });
 
+test('la carrera llega a TODAS las pantallas del taxista, no solo a la última', async () => {
+  // El agujero que se vio el 30/09: se cogía el dispositivo del último latido.
+  // Un taxista con el panel abierto en el ordenador y el móvil bloqueado
+  // recibía la carrera en el ordenador —que late porque está abierto— y en el
+  // teléfono no pasaba nada, ni por la conexión ni por notificación.
+  //
+  // El envío de notificaciones ya mandaba a todos sus dispositivos y lo decía
+  // en su comentario; esta vía hacía lo contrario. Ahora dicen lo mismo.
+  const conductor = await pool.query(
+    `INSERT INTO conductor (telefono, nombre) VALUES ($1, 'Taxi Dos Pantallas') RETURNING id`,
+    [`+2406${BigInt(`0x${randomUUID().replace(/-/g, '').slice(0, 12)}`) % 100_000_000n}`.padEnd(13, '0')],
+  );
+  const conductorId = Number(conductor.rows[0].id);
+  // El del ordenador late ahora; el del teléfono, hace un rato.
+  const ordenador = await pool.query(
+    `INSERT INTO dispositivo (uuid_persistente, tipo, conductor_id, ultimo_heartbeat)
+     VALUES (gen_random_uuid(), 'conductor', $1, now()) RETURNING id`,
+    [conductorId],
+  );
+  const telefono = await pool.query(
+    `INSERT INTO dispositivo (uuid_persistente, tipo, conductor_id, ultimo_heartbeat)
+     VALUES (gen_random_uuid(), 'conductor', $1, now() - interval '5 minutes') RETURNING id`,
+    [conductorId],
+  );
+
+  const conexiones = new ConexionesSse();
+  const despachador = new DespachadorEventos(pool, new Map<string, Adaptador>([
+    ['sse', new AdaptadorSse(conexiones)],
+  ]));
+  const tipo = await crearRegla('sse');
+
+  const enOrdenador: string[] = [];
+  const enTelefono: string[] = [];
+  const baja1 = conexiones.suscribir(Number(ordenador.rows[0].id), (c) => enOrdenador.push(c));
+  const baja2 = conexiones.suscribir(Number(telefono.rows[0].id), (c) => enTelefono.push(c));
+
+  const emisor = new EmisorSalida();
+  await enTransaccion(pool, (c) => emisor.emitir({
+    tipo, rol: 'conductor', solicitudId, conductorId, datos: { aviso: 'carrera' },
+  }, c));
+  await despachador.procesarPendientes();
+  baja1();
+  baja2();
+
+  assert.equal(enOrdenador.length, 1, 'el ordenador tiene que recibirla');
+  assert.equal(enTelefono.length, 1, 'y el teléfono TAMBIÉN, aunque late más tarde');
+  assert.equal((await filaEvento(tipo)).canal_entregado, 'sse');
+
+  await pool.query('DELETE FROM evento_salida WHERE conductor_id = $1', [conductorId]);
+  await pool.query('DELETE FROM dispositivo WHERE conductor_id = $1', [conductorId]);
+  await pool.query('DELETE FROM conductor WHERE id = $1', [conductorId]);
+});
+
 test('una conexión recién abierta cuenta como mirando', async () => {
   // Importa para no estropear lo que ya funcionaba: si un cliente viejo nunca
   // dice si está mirando, se comporta como antes de todo esto. Equivocarse por
