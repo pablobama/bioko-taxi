@@ -38,6 +38,7 @@ import {
   estimarLlegada, factorDeMarchaDelTurno, velocidadDelTurnoKmh, velocidadRecienteKmh,
 } from '../src/dominio/llegada.js';
 import { distanciaMetros } from '../src/dominio/geo.js';
+import { medirViaje, type Calidad } from '../src/dominio/medida.js';
 
 // El `.env` del servidor, se lance desde donde se lance (igual que
 // `unificar-conductor.ts`). Sin esto había que escribir la URL a mano, y una
@@ -130,8 +131,14 @@ async function main(): Promise<void> {
   let fallados = 0;
   let descartados = 0;
   const relativos: number[] = [];
-  console.log('viaje |  km  | antes | nuevo | tardó | error  | factor | velocidad de');
-  console.log('-'.repeat(72));
+  // Cuánto se equivocaron los botones frente al rastro, viaje a viaje.
+  const desfases: number[] = [];
+  const porCalidad = new Map<Calidad, number>();
+  // «Botones» es lo que dicen RECOGIDO y COMPLETADO; «rastro» es lo que tardó
+  // el coche de verdad en ir del origen al destino. Cuando no coinciden manda el
+  // rastro, porque un sello que alguien pulsa no es una medida.
+  console.log('viaje |  km  | antes | nuevo | botones | rastro | error  | factor | de');
+  console.log('-'.repeat(78));
 
   for (const fila of viajes.rows as Viaje[]) {
     if (fila.recogido_en === null || fila.completado_en === null) continue;
@@ -152,9 +159,23 @@ async function main(): Promise<void> {
       : { lat: Number(posicion.rows[0].lat), lng: Number(posicion.rows[0].lng) };
     const hasta = { lat: Number(fila.d_lat), lng: Number(fila.d_lng) };
 
-    // La velocidad que la aplicación habría tenido a mano EN ESE MOMENTO: la
-    // del viaje si ya había posiciones, y si no la del turno.
+    // CUÁNTO DURÓ DE VERDAD, por el rastro y no por los botones.
+    //
+    // Es el cambio de fondo del 29/09: RECOGIDO y COMPLETADO los pulsa alguien,
+    // y buena parte de los viajes de producción se generaron pulsándolos para
+    // medir recorridos. Un sello que se pulsa para producir un dato no puede ser
+    // la fuente de ese dato. Cuando el rastro puede medirlo, manda el rastro; y
+    // cuando no puede, este viaje NO entra en ninguna media.
     try {
+    const medidaReal = await medirViaje(pool, {
+      conductorId: await conductorDe(pool, fila.viaje_id),
+      origen: { lat: Number(fila.o_lat), lng: Number(fila.o_lng) },
+      destino: { lat: Number(fila.d_lat), lng: Number(fila.d_lng) },
+      recogidoEn: recogido,
+      completadoEn: new Date(fila.completado_en),
+    });
+    const duroMin = medidaReal.minutos ?? tardoMin;
+    porCalidad.set(medidaReal.calidad, (porCalidad.get(medidaReal.calidad) ?? 0) + 1);
     const delViaje = await velocidadRecienteKmh(pool, fila.viaje_id, recogido);
     const delTurno = delViaje !== null
       ? null
@@ -175,20 +196,24 @@ async function main(): Promise<void> {
       parametros, rectaAhora, creible ? caminoAhora!.distanciaM : null, medida,
     );
     const estimacion = await estimarLlegada(pool, desde, hasta, medida, factor);
-    const error = estimacion.minutos - tardoMin;
-    const errorViejo = antes.minutos - tardoMin;
-    // ¿Es creíble este viaje? Un trayecto de seis kilómetros hecho en treinta
-    // segundos no es un viaje rápido: es un cierre que no ocurrió cuando dice.
-    // Y uno de dos kilómetros cerrado tres horas después, tampoco. Esas filas
-    // se enseñan —porque son un problema de verdad, aunque sea otro— pero no
-    // entran en la media, o tres de ellas deciden el resultado.
-    const kmReales = estimacion.distanciaM / 1000;
-    const velocidadReal = kmReales / (tardoMin / 60);
-    const creibleViaje = velocidadReal >= 5 && velocidadReal <= 90 && tardoMin >= 1;
+    const error = estimacion.minutos - duroMin;
+    const errorViejo = antes.minutos - duroMin;
+    // Qué viajes entran en la media: SOLO los que el rastro pudo medir.
+    //
+    // Antes esto era un filtro a ojo —fuera los que van a más de 90 km/h o
+    // duran menos de un minuto—, que acertaba por casualidad: lo que delataba a
+    // esos viajes no era su velocidad, era que su duración venía de un botón.
+    // Ahora el criterio es el correcto y además se puede explicar: si el coche
+    // no se vio salir del origen y llegar al destino, no hay medida, y sin
+    // medida no hay error que promediar.
+    const creibleViaje = medidaReal.calidad === 'buena';
     if (creibleViaje) {
       errores.push(error);
       erroresViejos.push(errorViejo);
-      relativos.push(tardoMin > 0 ? error / tardoMin : 0);
+      relativos.push(duroMin > 0 ? error / duroMin : 0);
+      // Lo que se equivocaron los botones. Es la medida de P74-01, y ahora sale
+      // viaje a viaje en vez de por sospecha.
+      if (medidaReal.desfaseMin !== null) desfases.push(medidaReal.desfaseMin);
     } else {
       descartados += 1;
     }
@@ -199,10 +224,16 @@ async function main(): Promise<void> {
       + `${(estimacion.distanciaM / 1000).toFixed(1).padStart(4)} | `
       + `${String(antes.minutos).padStart(5)} | `
       + `${String(estimacion.minutos).padStart(5)} | `
-      + `${tardoMin.toFixed(1).padStart(5)} | `
+      + `${tardoMin.toFixed(1).padStart(7)} | `
+      + `${medidaReal.minutos === null ? '    — ' : medidaReal.minutos.toFixed(1).padStart(6)} | `
       + `${(error >= 0 ? '+' : '') + error.toFixed(1)}`.padStart(7) + ' | '
       + `${factor === null ? ' —  ' : factor.toFixed(2)} | ${deDonde}`
-      + (creibleViaje ? '' : '  ← fuera de la media: el cierre no cuadra'),
+      + (creibleViaje
+        ? (Math.abs(medidaReal.desfaseMin ?? 0) > 3
+          ? `  ← los botones se equivocaron ${(medidaReal.desfaseMin ?? 0).toFixed(0)} min`
+          : '')
+        : `  ← fuera de la media: ${medidaReal.calidad === 'sin_rastro'
+          ? 'no hay rastro del coche' : 'el rastro no cubre el viaje'}`),
     );
 
     // Y a qué velocidad fue de verdad, por las calles: es el número que hay
@@ -213,7 +244,7 @@ async function main(): Promise<void> {
       ? porCalles.distanciaM : recta * 1.3) / 1000;
     console.log(
       `      · ${fila.origen} → ${fila.destino}`
-      + ` · fue a ${(km / (tardoMin / 60)).toFixed(1)} km/h`
+      + ` · fue a ${(km / (duroMin / 60)).toFixed(1)} km/h`
       + (porCalles !== null ? ` · el plano suponía ${(km / (porCalles.segundosTipicos / 3600)).toFixed(1)} km/h` : ''),
     );
     } catch (error) {
@@ -226,15 +257,53 @@ async function main(): Promise<void> {
   }
 
   if (errores.length === 0) {
-    console.log('\nNingún viaje con recogida y cierre en el registro.');
+    // No es «no hay viajes»: es que ninguno se pudo medir con el rastro, y eso
+    // es un resultado en sí mismo que hay que decir con su motivo. Promediar
+    // los que solo tienen botones sería volver al problema que esto viene a
+    // resolver.
+    console.log('');
+    console.log('='.repeat(60));
+    console.log('Ningún viaje se pudo medir por el rastro, así que no hay media');
+    console.log('que dar. Lo que había:');
+    console.log('');
+    for (const [c, n] of porCalidad) {
+      console.log(`  ${String(n).padStart(4)} ${{
+        buena: 'con el viaje entero en el rastro',
+        parcial: 'con rastro incompleto (falta el principio o el final)',
+        sin_rastro: 'SIN NADA de rastro del coche',
+      }[c]}`);
+    }
+    console.log('');
+    console.log('Sin rastro no hay nada que medir, y eso no se arregla con un');
+    console.log('cálculo mejor: se arregla haciendo que el recorrido se grabe.');
     await pool.end();
     return;
   }
 
   console.log('\n' + '='.repeat(60));
-  console.log(`Viajes medidos: ${errores.length}`
-    + (descartados > 0 ? ` · ${descartados} apartados por cierre incoherente` : '')
-    + (fallados > 0 ? ` · ${fallados} no se pudieron medir` : ''));
+  console.log(`Viajes medidos POR EL RASTRO: ${errores.length}`
+    + (descartados > 0 ? ` · ${descartados} sin rastro que los mida` : '')
+    + (fallados > 0 ? ` · ${fallados} no se pudieron mirar` : ''));
+  console.log('  ' + [...porCalidad.entries()]
+    .map(([c, n]) => `${n} ${{
+      buena: 'con el viaje entero en el rastro',
+      parcial: 'con rastro incompleto',
+      sin_rastro: 'SIN NADA de rastro',
+    }[c]}`).join(' · '));
+
+  // Lo que se equivocaron los botones. Es la medida de P74-01, y hasta ahora
+  // solo se tenía por sospecha: viajes de 6 km «cerrados en 30 segundos». Aquí
+  // sale el número, y sale de comparar dos cosas que se midieron aparte.
+  if (desfases.length > 0) {
+    const grandes = desfases.filter((d) => Math.abs(d) > 3).length;
+    console.log(`
+Los botones frente al rastro: se equivocaron más de 3 minutos en`
+      + ` ${grandes} de ${desfases.length} viajes`
+      + ` (mediana ${percentil(desfases, 0.5).toFixed(1)} min,`
+      + ` el peor ${desfases.reduce((a, b) => (Math.abs(b) > Math.abs(a) ? b : a), 0).toFixed(0)}).`);
+    console.log('  Negativo = se cerró ANTES de tiempo; positivo = se cerró tarde.');
+  }
+
   const media = errores.reduce((a, b) => a + b, 0) / errores.length;
   const mediaVieja = erroresViejos.reduce((a, b) => a + b, 0) / erroresViejos.length;
   console.log(`Error medio ANTES: ${mediaVieja >= 0 ? '+' : ''}${mediaVieja.toFixed(1)} min`);
