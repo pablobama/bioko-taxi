@@ -1027,6 +1027,17 @@ export default function PanelCliente({
             alGuardar={(guardado) => { setPerfil(guardado); setAviso(''); setFase('destino'); }}
             alFallar={setAviso}
           />
+          {/* Las herramientas de campo, AQUÍ además de en los mandos
+              flotantes (30/09). Estaban solo en el menú de la esquina, que se
+              pliega, y quien acaba de recibir el papel de agente lo busca en su
+              perfil —que es donde uno mira cuando le dicen «ya puedes hacer
+              esto»— y no lo encuentra. Un permiso permanente pertenece al
+              perfil; el menú flotante es para lo de ahora mismo. */}
+          {alAbrirCampo && (
+            <button type="button" className="principal" onClick={alAbrirCampo}>
+              {t('campo.abrir')}
+            </button>
+          )}
           {/* La guía, otra vez. Quien la saltó el primer día porque tenía
               prisa no tiene forma de recuperarla si no está aquí. */}
           <button
