@@ -65,15 +65,38 @@ export type PuedeGrabar = 'si' | 'sin_micro' | 'sin_grabadora';
 // canal estaba ocupado y el cliente lo convertía en un error sin cuerpo—, y un
 // mensaje que manda a repetir esconde justo lo que hay que arreglar. Si no se
 // sabe qué pasó, se dice lo que contestó el servidor.
+// Envuelve un paso para que, si revienta, se sepa CUÁL reventó. El error
+// original se conserva entero: solo se le cuelga una etiqueta.
+const DONDE: Record<string, string> = {
+  turno: 'pidiendo la palabra',
+  micro: 'abriendo el micrófono',
+  grabadora: 'preparando la grabadora',
+  arrancar: 'arrancando la grabación',
+};
+
+async function paso<T>(cual: string, hacer: () => Promise<T> | T): Promise<T> {
+  try {
+    return await hacer();
+  } catch (error) {
+    if (error && typeof error === 'object') {
+      (error as { pasoRadio?: string }).pasoRadio = cual;
+    }
+    throw error;
+  }
+}
+
 function mensajeDeFallo(error: unknown): string {
-  const e = error as { name?: string; estado?: number; message?: string } | null;
+  const e = error as {
+    name?: string; estado?: number; message?: string; pasoRadio?: string;
+  } | null;
+  const donde = e?.pasoRadio ? ` ${DONDE[e.pasoRadio] ?? e.pasoRadio}` : '';
   if (e?.name === 'ErrorDelServidor') {
     return `El servidor no dio la palabra (${e.estado}). ${e.message ?? ''}`.trim();
   }
   if (e?.name === 'NotSupportedError') {
     return 'Este navegador no sabe grabar voz en ningún formato.';
   }
-  return `No se pudo pedir la palabra${e?.name ? ` (${e.name})` : ''}.`;
+  return `Falló${donde}${e?.name ? ` (${e.name})` : ''}.`;
 }
 
 export function radioDisponible(): PuedeGrabar {
@@ -296,9 +319,14 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
         // El turno y el micrófono a la vez: pedirlos en fila sumaría las dos
         // esperas, y lo que se está midiendo es el tiempo que pasa entre
         // apretar y poder hablar.
+        // Cada paso, etiquetado. El nombre de una excepción no dice dónde
+        // ocurrió, y `InvalidStateError` puede salir de tres sitios muy
+        // distintos: la petición del turno, el permiso del micrófono o la
+        // grabadora. Sin saber cuál, se arregla a ciegas —y se estuvo
+        // arreglando el que no era—.
         const [turno, media] = await Promise.all([
-          api.pedirTurnoRadio(),
-          navigator.mediaDevices.getUserMedia(RESTRICCIONES),
+          paso('turno', () => api.pedirTurnoRadio()),
+          paso('micro', () => navigator.mediaDevices.getUserMedia(RESTRICCIONES)),
         ]);
         flujo = media;
 
@@ -340,13 +368,13 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
             ...(tipo ? { mimeType: tipo } : {}),
           });
         } catch {
-          g = new MediaRecorder(flujo);
+          g = await paso('grabadora', async () => new MediaRecorder(flujo!));
         }
         trozos.current = [];
         g.ondataavailable = (e) => { if (e.data.size > 0) trozos.current.push(e.data); };
         grabadora.current = g;
         empezoEn.current = Date.now();
-        g.start();
+        await paso('arrancar', async () => g.start());
 
         sonarRadioAdelante();
         setSegundosMax(turno.segundosMax);

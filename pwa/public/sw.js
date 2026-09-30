@@ -31,6 +31,20 @@ self.addEventListener('install', (evento) => {
   evento.waitUntil(
     caches.open(CACHE).then((cache) => cache.addAll(RECURSOS)),
   );
+  // Y se pone al mando en cuanto está listo, sin esperar a que se cierren las
+  // ventanas de la versión vieja.
+  //
+  // EL FALLO QUE ARREGLA (30/09). Antes no se llamaba, a propósito: la idea era
+  // no cambiarle el código bajo los pies a alguien que está a mitad de un viaje,
+  // y que la versión nueva entrara «al siguiente arranque, que en un teléfono es
+  // cuestión de minutos». Esa suposición es falsa en una aplicación INSTALADA:
+  // no hay siguiente arranque, porque no se cierra nunca del todo. El resultado
+  // es que un teléfono se queda ejecutando el JavaScript de hace días y ningún
+  // arreglo le llega —se estuvo persiguiendo un fallo que ya estaba corregido—.
+  //
+  // La intención original se conserva donde toca: la página no se recarga a
+  // media faena, sino la próxima vez que se vuelve a ella (ver `main.tsx`).
+  self.skipWaiting();
 });
 
 // Al activar se tiran las versiones viejas. Sin esto cada publicación dejaría

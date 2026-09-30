@@ -12,16 +12,33 @@ const enGaleria = new URLSearchParams(window.location.search).has('galeria');
 // después de pintar para no competir por la red con lo que el usuario está
 // esperando ver.
 //
-// No se fuerza a que la versión nueva tome el mando de inmediato: si alguien
-// está en mitad de un viaje, cambiarle el código bajo los pies es peor que
-// dejarle terminar con la versión que ya tenía cargada. Entra al siguiente
-// arranque, que en un teléfono es cuestión de minutos.
+// La versión nueva toma el mando en cuanto está lista (`skipWaiting` en el
+// service worker), pero la PÁGINA no se recarga a media faena: se recarga la
+// próxima vez que se vuelve a la aplicación, que es un momento en el que nadie
+// está haciendo nada.
+//
+// Antes no se forzaba nada, con el argumento de que la versión nueva entraría
+// «al siguiente arranque». En una aplicación instalada no hay siguiente
+// arranque —no se cierra nunca del todo— y un teléfono se quedaba ejecutando el
+// JavaScript de hace días: se persiguió durante días un fallo que ya estaba
+// corregido, porque el arreglo no había llegado al aparato.
 if ('serviceWorker' in navigator && !enGaleria) {
   window.addEventListener('load', () => {
     void navigator.serviceWorker.register('/sw.js').catch(() => {
       // Sin service worker la aplicación funciona igual: solo deja de abrir
       // sin red. No es motivo para romper nada.
     });
+  });
+
+  let hayVersionNueva = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    hayVersionNueva = true;
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (hayVersionNueva && document.visibilityState === 'visible') {
+      hayVersionNueva = false;
+      window.location.reload();
+    }
   });
 }
 
