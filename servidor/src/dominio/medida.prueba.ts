@@ -96,6 +96,39 @@ test('el viaje dura lo que dice el rastro, no lo que dicen los botones', async (
     `el desfase tiene que delatar el cierre (${m.desfaseMin})`);
 });
 
+test('que el taxista VUELVA por el origen no invalida el viaje', async () => {
+  // El fallo que se vio en producción (30/09): cuatro viajes tenían las dos
+  // puntas a menos de cien metros del recorrido y aun así salían como «no se
+  // puede medir».
+  //
+  // La causa era el orden en que se buscaban. Se cogía la última vez junto al
+  // origen y luego la primera vez junto al destino DESPUÉS de esa; y como la
+  // ventana mira 45 minutos más allá del cierre, un taxista que regresa por el
+  // barrio del origen al terminar movía esa «última vez» al final del
+  // recorrido, y ya no quedaba ningún paso por el destino detrás.
+  const conductor = await taxista();
+  const base = new Date(Date.now() - 6 * 3600_000);
+  await anotar(conductor, [
+    { ...ORIGEN, min: 0 },
+    { ...ENMEDIO, min: 5 },
+    { ...DESTINO, min: 10 },   // aquí terminó el viaje: diez minutos
+    { ...ENMEDIO, min: 15 },
+    { ...ORIGEN, min: 20 },    // y volvió por donde vino
+    { ...ORIGEN, min: 25 },
+  ], base);
+
+  const m = await medirViaje(pool, {
+    conductorId: conductor,
+    origen: ORIGEN,
+    destino: DESTINO,
+    recogidoEn: base,
+    completadoEn: new Date(base.getTime() + 11 * 60_000),
+  });
+  assert.equal(m.calidad, 'buena', 'volver al barrio no puede invalidar el viaje');
+  assert.equal(Math.round(m.minutos!), 10,
+    `el viaje duró diez minutos; lo de después es otra cosa (salió ${m.minutos})`);
+});
+
 test('sin rastro no se inventa una duración: se dice que no se sabe', async () => {
   // Es la mitad del arreglo. Un viaje de 6 km «hecho en 30 segundos» metido en
   // una media se lleva por delante el resultado; en producción tres filas así

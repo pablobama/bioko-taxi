@@ -25,10 +25,22 @@ import { distanciaMetros } from './geo.js';
 
 type Lector = pg.Pool | pg.ClientBase;
 
-// Cerca del origen o del destino. Doscientos metros es una manzana larga: lo
-// bastante para no exigirle al GPS una precisión que no tiene, y lo bastante
-// poco para no confundir «pasó por la calle de al lado» con «estuvo allí».
-export const METROS_CERCA = 200;
+// Cerca del origen o del destino.
+//
+// Empezó en 200 m y se subió a 350 tras medir en producción (30/09): los fallos
+// se agrupaban entre 300 y 800 metros, casi todos por el lado del destino, y no
+// era mala suerte sino aritmética. El recorrido se guarda un punto cada 60
+// segundos: a 40 km/h eso son hasta 660 metros entre dos puntos seguidos, así
+// que exigir que ALGUNO caiga a menos de 200 m de un sitio concreto es exigir
+// una precisión que el muestreo no puede dar.
+//
+// LO QUE CUESTA AFLOJARLO, dicho claro: el reloj puede arrancar hasta 350 m
+// después de salir y pararse hasta 350 m antes de llegar, así que la duración
+// medida sale CORTA. En ciudad son unos cuarenta segundos por punta. Por eso el
+// informe enseña a cuántos metros se quedó de verdad en los viajes que sí
+// acepta: si esa mediana sube, el número que se está midiendo se está
+// ensuciando, y hay que verlo en vez de confiar.
+export const METROS_CERCA = 350;
 
 // Cuánto se mira antes de que conste la recogida y después del cierre. Los dos
 // sellos pueden llegar tarde o pronto —eso es justo lo que se está esquivando—
@@ -124,17 +136,33 @@ export async function medirViaje(
   const cerca = (p: Punto, sitio: { lat: number; lng: number }) =>
     distanciaMetros(p.lat, p.lng, sitio.lat, sitio.lng) <= metrosCerca;
 
-  // La ÚLTIMA vez junto al origen, no la primera: un taxi puede dar vueltas por
-  // la zona antes de que suba el pasajero, y lo que cuenta es cuándo se fue de
-  // allí. Y a partir de ahí, la PRIMERA vez junto al destino, porque lo que
-  // haga después ya no es este viaje.
-  let salida = -1;
-  for (let i = 0; i < puntos.length; i += 1) {
-    if (cerca(puntos[i], origen)) salida = i;
-  }
+  // Primero se busca la LLEGADA y después la salida, y ese orden es el arreglo
+  // de un fallo que se vio en producción (30/09).
+  //
+  // La primera versión hacía lo contrario: cogía la última vez junto al origen
+  // y luego la primera vez junto al destino después de esa. Parece razonable
+  // —un taxi da vueltas por la zona antes de que suba el pasajero— pero se
+  // rompe con algo que los taxistas hacen todo el rato: VOLVER. La ventana mira
+  // 45 minutos después del cierre, así que si el taxista regresa por el barrio
+  // del origen al terminar, esa «última vez» se va al final del recorrido y ya
+  // no queda ningún paso por el destino detrás. El viaje se descartaba por una
+  // vuelta que ocurrió cuando ya había acabado.
+  //
+  // Se vio porque cuatro viajes de producción tenían las DOS puntas a menos de
+  // cien metros del recorrido y aun así salían como «no se puede medir».
+  //
+  // Así que: la PRIMERA llegada al destino que tenga alguna salida por delante
+  // —lo que haga el coche después de llegar ya no es este viaje— y, para esa
+  // llegada, la ÚLTIMA vez junto al origen antes de ella.
   let llegada = -1;
-  for (let i = salida + 1; i < puntos.length; i += 1) {
-    if (cerca(puntos[i], destino)) { llegada = i; break; }
+  let vistoElOrigen = false;
+  for (let i = 0; i < puntos.length; i += 1) {
+    if (cerca(puntos[i], origen)) vistoElOrigen = true;
+    if (vistoElOrigen && cerca(puntos[i], destino)) { llegada = i; break; }
+  }
+  let salida = -1;
+  for (let i = 0; i < llegada; i += 1) {
+    if (cerca(puntos[i], origen)) salida = i;
   }
 
   if (salida === -1 || llegada === -1) {

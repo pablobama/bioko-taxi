@@ -136,6 +136,7 @@ async function main(): Promise<void> {
   // Para los que no se pudieron medir: lo más que se acercó el coche a la punta
   // que falló. Es lo que dice si hay que aflojar el listón o mirar otra cosa.
   const lejos: number[] = [];
+  const cercaniaBuenas: number[] = [];
   const porCalidad = new Map<Calidad, number>();
   // «Botones» es lo que dicen RECOGIDO y COMPLETADO; «rastro» es lo que tardó
   // el coche de verdad en ir del origen al destino. Cuando no coinciden manda el
@@ -217,6 +218,12 @@ async function main(): Promise<void> {
       // Lo que se equivocaron los botones. Es la medida de P74-01, y ahora sale
       // viaje a viaje en vez de por sospecha.
       if (medidaReal.desfaseMin !== null) desfases.push(medidaReal.desfaseMin);
+      // A cuántos metros se quedó de las puntas en los que SÍ se aceptan. Es lo
+      // que cuesta haber aflojado el listón: cuanto más lejos, más corta sale
+      // la duración medida. Se enseña en vez de confiar en que no importa.
+      cercaniaBuenas.push(Math.max(
+        medidaReal.masCercaDelOrigenM ?? 0, medidaReal.masCercaDelDestinoM ?? 0,
+      ));
     } else {
       descartados += 1;
       if (medidaReal.calidad === 'parcial') {
@@ -306,6 +313,15 @@ async function main(): Promise<void> {
   // Lo que se equivocaron los botones. Es la medida de P74-01, y hasta ahora
   // solo se tenía por sospecha: viajes de 6 km «cerrados en 30 segundos». Aquí
   // sale el número, y sale de comparar dos cosas que se midieron aparte.
+  if (cercaniaBuenas.length > 0) {
+    console.log('');
+    console.log(`En los viajes que SÍ se miden, el coche se quedó a`
+      + ` ${percentil(cercaniaBuenas, 0.5).toFixed(0)} m de la punta más lejana`
+      + ` (p90 ${percentil(cercaniaBuenas, 0.9).toFixed(0)} m).`);
+    console.log('  Eso es lo que cuesta haber aflojado el listón: la duración medida');
+    console.log('  sale corta en ese trozo. Si sube mucho, el número se ensucia.');
+  }
+
   if (lejos.length > 0) {
     // «El rastro no cubre el viaje» son tres problemas distintos y sin repartir
     // no se sabe cuál arreglar. Con el listón en 200 m: si el coche pasó a 300
