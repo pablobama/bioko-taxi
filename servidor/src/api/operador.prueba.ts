@@ -519,6 +519,62 @@ test('nombrar agente a un pasajero le alcanza en TODOS sus teléfonos', async ()
   await pool.query('DELETE FROM dispositivo WHERE id = ANY($1)', [[viejo, nuevo]]);
 });
 
+test('el pasajero agente puede VER los barrios desde cualquiera de sus teléfonos', async () => {
+  // El fallo de verdad (30/09): la regla de «quién es agente» estaba escrita
+  // dos veces. Al arreglar la de la sesión, a la persona le aparecía el botón
+  // de trabajo de campo, y al pulsarlo se llevaba un «este dispositivo no puede
+  // hacer trabajo de campo» del guardián, que seguía mirando la bandera del
+  // aparato. Ahora la regla está en un solo sitio.
+  const telefono = `+2402225${String(Math.floor(Math.random() * 100000)).padStart(5, '0')}`;
+  const { marcado, deHoy } = await enTransaccion(pool, async (c) => {
+    const viejo = await c.query(
+      `INSERT INTO dispositivo (uuid_persistente, tipo)
+       VALUES (gen_random_uuid(), 'cliente') RETURNING id, uuid_persistente`,
+    );
+    const nuevo = await c.query(
+      `INSERT INTO dispositivo (uuid_persistente, tipo)
+       VALUES (gen_random_uuid(), 'cliente') RETURNING id, uuid_persistente`,
+    );
+    // El viejo es el que tiene la bandera; el de hoy, no. Es el caso de
+    // producción tal cual.
+    await c.query(
+      `INSERT INTO perfil_cliente (dispositivo_id, telefono, telefono_verificado_en,
+                                   telefono_vigente, es_agente)
+       VALUES ($1, $2, now(), false, true)`,
+      [viejo.rows[0].id, telefono],
+    );
+    await c.query(
+      `INSERT INTO perfil_cliente (dispositivo_id, telefono, telefono_verificado_en,
+                                   telefono_vigente, es_agente)
+       VALUES ($1, $2, now(), true, false)`,
+      [nuevo.rows[0].id, telefono],
+    );
+    return { marcado: viejo.rows[0], deHoy: nuevo.rows[0] };
+  });
+
+  // Desde el teléfono de hoy, que NO tiene la bandera puesta.
+  const res = await app.inject({
+    method: 'GET', url: '/api/operador/zonas', headers: cabeceras(deHoy.uuid_persistente),
+  });
+  assert.equal(res.statusCode, 200,
+    `el papel es de la persona: tiene que poder ver los barrios (${res.body})`);
+
+  // Y alguien sin ningún papel sigue sin poder, que es lo que protege esto.
+  const ajeno = await pool.query(
+    `INSERT INTO dispositivo (uuid_persistente, tipo)
+     VALUES (gen_random_uuid(), 'cliente') RETURNING uuid_persistente`,
+  );
+  const negado = await app.inject({
+    method: 'GET', url: '/api/operador/zonas',
+    headers: cabeceras(ajeno.rows[0].uuid_persistente),
+  });
+  assert.equal(negado.statusCode, 403);
+
+  await pool.query('DELETE FROM perfil_cliente WHERE telefono = $1', [telefono]);
+  await pool.query('DELETE FROM dispositivo WHERE id = ANY($1)',
+    [[marcado.id, deHoy.id]]);
+});
+
 test('el listado de cambios es solo del operador: quién vigila a los agentes no es un agente', async () => {
   const agente = await enTransaccion(pool, async (c) => {
     const conductor = await c.query(

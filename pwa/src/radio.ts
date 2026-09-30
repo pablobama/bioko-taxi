@@ -99,9 +99,46 @@ function mensajeDeFallo(error: unknown): string {
   return `Falló${donde}${e?.name ? ` (${e.name})` : ''}.`;
 }
 
+// ¿Está corriendo dentro de la aplicación INSTALADA, y no en el navegador?
+//
+// Importa porque ahí es donde iOS no deja grabar: `navigator.mediaDevices`
+// existe y `getUserMedia` hasta pide el permiso, pero luego rechaza con
+// `InvalidStateError`. Medido en un iPhone el 30/09, con el mensaje por pasos
+// que se puso justo para esto: «falló abriendo el micrófono». Abriendo la misma
+// página en Safari sí funciona.
+export function esAplicacionInstalada(): boolean {
+  try {
+    return window.matchMedia('(display-mode: standalone)').matches
+      || (navigator as unknown as { standalone?: boolean }).standalone === true;
+  } catch {
+    return false;
+  }
+}
+
+// Un aparato que ya demostró que no puede grabar se recuerda: volver a
+// preguntárselo es quitarle el turno al gremio para fallar igual.
+const CLAVE_NO_PUEDE = 'radio:sinMicrofono';
+
+export function recordarQueNoPuedeGrabar(): void {
+  try {
+    localStorage.setItem(CLAVE_NO_PUEDE, esAplicacionInstalada() ? 'instalada' : 'si');
+  } catch {
+    // Sin almacenamiento se vuelve a intentar la próxima vez.
+  }
+}
+
 export function radioDisponible(): PuedeGrabar {
   if (typeof navigator.mediaDevices?.getUserMedia !== 'function') return 'sin_micro';
   if (typeof MediaRecorder === 'undefined') return 'sin_grabadora';
+  try {
+    // Lo que ya se sabe de este aparato, y solo mientras siga en la aplicación
+    // instalada: el mismo teléfono abierto en el navegador SÍ puede.
+    if (localStorage.getItem(CLAVE_NO_PUEDE) === 'instalada' && esAplicacionInstalada()) {
+      return 'sin_micro';
+    }
+  } catch {
+    // Sin almacenamiento, se intenta.
+  }
   return 'si';
 }
 
@@ -143,7 +180,7 @@ export interface UsoRadio {
 export function useRadio({ activa }: { activa: boolean }): UsoRadio {
   const [estado, setEstado] = useState<EstadoBoton>('libre');
   // Se mira una vez: no cambia mientras la página está abierta.
-  const [puedeGrabar] = useState<PuedeGrabar>(() => radioDisponible());
+  const [puedeGrabar, setPuedeGrabar] = useState<PuedeGrabar>(() => radioDisponible());
   const [encendida, setEncendida] = useState(false);
   const [habla, setHabla] = useState<string | null>(null);
   const [quedan, setQuedan] = useState(0);
@@ -388,6 +425,15 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
         flujo?.getTracks().forEach((t) => t.stop());
         soltarMicro();
         setEstado('libre');
+        // Si lo que falló fue ABRIR EL MICRÓFONO dentro de la aplicación
+        // instalada, no es un tropiezo: ahí no se puede, y reintentarlo solo
+        // sirve para volver a quitarle el turno al gremio. Se apunta, y el
+        // botón pasa a «solo escuchar» con su explicación.
+        const paso = (error as { pasoRadio?: string } | null)?.pasoRadio;
+        if (paso === 'micro' && esAplicacionInstalada()) {
+          recordarQueNoPuedeGrabar();
+          setPuedeGrabar('sin_micro');
+        }
         // El turno y el micrófono se piden a la vez, así que el micrófono puede
         // fallar con el turno YA concedido. Si no se devuelve, el gremio se
         // queda sin radio hasta que caduque, y encima por alguien que ni

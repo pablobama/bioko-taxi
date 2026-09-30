@@ -9,6 +9,7 @@
 // se verifican. La identidad real sigue siendo el uuid del dispositivo.
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { esAgenteDeCampo } from '../dominio/agentes.js';
 import type pg from 'pg';
 import { enTransaccion } from '../bd/conexion.js';
 import { ocupacionDe } from '../dominio/ocupacion.js';
@@ -111,16 +112,8 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
     // Se hereda por el TELÉFONO y solo si está VERIFICADO en los dos lados. Sin
     // esa condición, escribir el número de otro en el perfil daría sus permisos.
     const perfil = await pool.query(
-      `SELECT p.telefono, p.correo, p.nombre, p.edad, p.genero, p.telefono_verificado_en,
-              (p.es_agente OR EXISTS (
-                 SELECT 1 FROM perfil_cliente o
-                 WHERE o.telefono = p.telefono
-                   AND o.telefono IS NOT NULL
-                   AND o.telefono_verificado_en IS NOT NULL
-                   AND p.telefono_verificado_en IS NOT NULL
-                   AND o.es_agente
-               )) AS es_agente
-       FROM perfil_cliente p WHERE p.dispositivo_id = $1`,
+      `SELECT telefono, correo, nombre, edad, genero, telefono_verificado_en
+       FROM perfil_cliente WHERE dispositivo_id = $1`,
       [fila.id],
     );
     if (perfil.rowCount === 0) {
@@ -142,7 +135,7 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
         // Pasajero con papel de campo (migración 072): puede situar barrios y
         // corregir sitios, como un taxista agente. Es lo que hace aparecer el
         // botón del mapa en su panel.
-        agente: p.es_agente === true,
+        agente: await esAgenteDeCampo(pool, Number(fila.id)),
       },
     };
   });

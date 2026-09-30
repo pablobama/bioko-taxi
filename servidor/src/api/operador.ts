@@ -11,6 +11,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { enTransaccion } from '../bd/conexion.js';
+import { esAgenteDeCampoPorUuid } from '../dominio/agentes.js';
 import { iniciarDespacho } from '../dominio/despacho.js';
 import { ErrorEntidadInexistente } from '../dominio/errores.js';
 import type { EmisorEventos } from '../dominio/eventos.js';
@@ -170,15 +171,11 @@ export function registrarRutasOperador(
     // mejor sitúa un barrio es a veces alguien que ni conduce: el del mercado,
     // la enfermera del centro de salud. Lo que puede hacer es lo mismo en los
     // dos casos — mapa sí, dinero y verificaciones no.
-    const agente = await pool.query(
-      `SELECT 1 FROM dispositivo d
-       LEFT JOIN conductor c ON c.id = d.conductor_id
-       LEFT JOIN perfil_cliente pc ON pc.dispositivo_id = d.id
-       WHERE d.uuid_persistente = $1
-         AND ((d.tipo = 'conductor' AND c.es_agente) OR (d.tipo = 'cliente' AND pc.es_agente))`,
-      [uuid],
-    );
-    if (agente.rowCount === 0) {
+    // La regla vive en `dominio/agentes.ts` y no aquí. Estaba escrita dos
+    // veces —una al preguntar «quién eres» y otra en este guardián— y se
+    // separaron: al arreglar la primera, a la persona le aparecía el botón de
+    // trabajo de campo y al pulsarlo se llevaba este mismo 403.
+    if (!await esAgenteDeCampoPorUuid(pool, uuid)) {
       throw errorHttp(403, 'Este dispositivo no puede hacer trabajo de campo.');
     }
   }
