@@ -344,13 +344,33 @@ export function registrarRutasOperador(
     const id = Number((req.params as { id: string }).id);
     const { agente } = (req.body ?? {}) as { agente?: boolean };
     if (typeof agente !== 'boolean') throw errorHttp(400, 'Falta agente (true/false).');
+    // Se marcan TODOS los perfiles de esa persona, no solo el dispositivo que
+    // el operador tiene delante (30/09).
+    //
+    // `perfil_cliente` va por dispositivo, y una misma persona acumula uno por
+    // cada navegador, reinstalación o borrado de datos. Marcando uno solo, el
+    // operador veía «agente» en su panel y la persona no tenía el botón,
+    // porque estaba usando otro de sus teléfonos. Se vio con un número que
+    // tenía ocho perfiles: tres marcados y el de ese día sin marcar.
+    //
+    // Por teléfono VERIFICADO, que es lo único que identifica a una persona
+    // aquí. Sin verificar solo se toca el dispositivo señalado: escribir el
+    // número de otro no puede repartir permisos.
     const res = await pool.query(
-      `UPDATE perfil_cliente SET es_agente = $2 WHERE dispositivo_id = $1
+      `UPDATE perfil_cliente SET es_agente = $2
+       WHERE dispositivo_id = $1
+          OR (telefono IS NOT NULL
+              AND telefono_verificado_en IS NOT NULL
+              AND telefono = (SELECT telefono FROM perfil_cliente
+                              WHERE dispositivo_id = $1
+                                AND telefono_verificado_en IS NOT NULL))
        RETURNING dispositivo_id, nombre, telefono, es_agente`,
       [id, agente],
     );
     if (res.rowCount === 0) throw errorHttp(404, 'Ese pasajero no tiene perfil.');
-    return res.rows[0];
+    // El del operador va primero: es la ficha que tiene abierta.
+    const suyo = res.rows.find((f) => Number(f.dispositivo_id) === id) ?? res.rows[0];
+    return { ...suyo, perfilesTocados: res.rowCount };
   });
 
   // Nombrar agente de campo a un conductor, o retirarle el papel. Solo el

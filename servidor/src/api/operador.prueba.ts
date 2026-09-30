@@ -452,6 +452,73 @@ test('el registro de cambios no se puede editar ni borrar', async () => {
   );
 });
 
+test('nombrar agente a un pasajero le alcanza en TODOS sus teléfonos', async () => {
+  // El fallo que arregla, visto en producción (30/09): `perfil_cliente` va por
+  // dispositivo, y una persona acumula un perfil por cada navegador,
+  // reinstalación o borrado de datos. Un número tenía OCHO perfiles, tres
+  // marcados como agente y el que usaba ese día sin marcar: el operador veía
+  // «agente» en su panel y la persona no tenía el botón.
+  const telefono = `+2402224${String(Math.floor(Math.random() * 100000)).padStart(5, '0')}`;
+  const { viejo, nuevo } = await enTransaccion(pool, async (c) => {
+    const uno = await c.query(
+      `INSERT INTO dispositivo (uuid_persistente, tipo)
+       VALUES (gen_random_uuid(), 'cliente') RETURNING id`,
+    );
+    const dos = await c.query(
+      `INSERT INTO dispositivo (uuid_persistente, tipo)
+       VALUES (gen_random_uuid(), 'cliente') RETURNING id`,
+    );
+    // Como en la vida real: el viejo dejó de ser el vigente cuando la persona
+    // reclamó su número desde el teléfono nuevo (migración 024). El perfil
+    // viejo conserva su fila y su historial, pero ya no es el suyo de ahora.
+    await c.query(
+      `INSERT INTO perfil_cliente (dispositivo_id, telefono, telefono_verificado_en,
+                                   telefono_vigente)
+       VALUES ($1, $2, now(), false)`,
+      [uno.rows[0].id, telefono],
+    );
+    await c.query(
+      `INSERT INTO perfil_cliente (dispositivo_id, telefono, telefono_verificado_en,
+                                   telefono_vigente)
+       VALUES ($1, $2, now(), true)`,
+      [dos.rows[0].id, telefono],
+    );
+    return { viejo: Number(uno.rows[0].id), nuevo: Number(dos.rows[0].id) };
+  });
+
+  // El operador marca el perfil VIEJO —que es lo que pasó: en producción se
+  // marcó un dispositivo de hace dos días y la persona usaba otro—.
+  const res = await app.inject({
+    method: 'POST',
+    url: `/api/operador/pasajeros/${viejo}/agente`,
+    headers: cabeceras(UUID_OPERADOR),
+    payload: { agente: true },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+
+  // Y le alcanza también al teléfono que usa hoy, que es de lo que se trata.
+  const otro = await pool.query(
+    'SELECT es_agente FROM perfil_cliente WHERE dispositivo_id = $1', [nuevo],
+  );
+  assert.equal(otro.rows[0].es_agente, true,
+    'el papel es de la persona, no del aparato con el que se conectó aquel día');
+
+  // Y quitarlo lo quita en los dos: si no, se creería haberlo retirado.
+  await app.inject({
+    method: 'POST',
+    url: `/api/operador/pasajeros/${viejo}/agente`,
+    headers: cabeceras(UUID_OPERADOR),
+    payload: { agente: false },
+  });
+  const tras = await pool.query(
+    'SELECT es_agente FROM perfil_cliente WHERE telefono = $1', [telefono],
+  );
+  assert.ok(tras.rows.every((f) => f.es_agente === false), 'se retira de todos');
+
+  await pool.query('DELETE FROM perfil_cliente WHERE telefono = $1', [telefono]);
+  await pool.query('DELETE FROM dispositivo WHERE id = ANY($1)', [[viejo, nuevo]]);
+});
+
 test('el listado de cambios es solo del operador: quién vigila a los agentes no es un agente', async () => {
   const agente = await enTransaccion(pool, async (c) => {
     const conductor = await c.query(

@@ -98,9 +98,29 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
       };
     }
 
+    // El papel de agente de campo SIGUE A LA PERSONA, no al teléfono con el que
+    // se conecta hoy (30/09).
+    //
+    // EL FALLO QUE ARREGLA: `perfil_cliente` va por dispositivo, así que la
+    // bandera se guardaba en un aparato concreto. Cambiar de navegador,
+    // reinstalar o borrar los datos creaba un perfil nuevo SIN el papel, y no
+    // avisaba de nada: el operador veía «agente» en su panel y la persona no
+    // tenía el botón. Se vio con un número que tenía ocho perfiles, tres
+    // marcados y el que usaba ese día sin marcar.
+    //
+    // Se hereda por el TELÉFONO y solo si está VERIFICADO en los dos lados. Sin
+    // esa condición, escribir el número de otro en el perfil daría sus permisos.
     const perfil = await pool.query(
-      `SELECT telefono, correo, nombre, edad, genero, telefono_verificado_en, es_agente
-       FROM perfil_cliente WHERE dispositivo_id = $1`,
+      `SELECT p.telefono, p.correo, p.nombre, p.edad, p.genero, p.telefono_verificado_en,
+              (p.es_agente OR EXISTS (
+                 SELECT 1 FROM perfil_cliente o
+                 WHERE o.telefono = p.telefono
+                   AND o.telefono IS NOT NULL
+                   AND o.telefono_verificado_en IS NOT NULL
+                   AND p.telefono_verificado_en IS NOT NULL
+                   AND o.es_agente
+               )) AS es_agente
+       FROM perfil_cliente p WHERE p.dispositivo_id = $1`,
       [fila.id],
     );
     if (perfil.rowCount === 0) {
