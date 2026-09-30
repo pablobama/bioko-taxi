@@ -30,6 +30,7 @@ import { ordenarParadas, distanciaRectaM, type ParadaPendiente } from '../domini
 import { rutaParaLlegar } from '../dominio/carreteras.js';
 import { puntoDeRecogida } from '../dominio/recogida.js';
 import { recargasDe, solicitarRecarga } from '../dominio/recargas.js';
+import { avisarTaxiLibre } from '../dominio/esperas.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
 import {
   avisoDeTurnoLargo, entrarEnServicio, registrarHeartbeat, salirDeServicio,
@@ -376,7 +377,11 @@ export function registrarRutasConductor(
           );
         }
         await entrarEnServicio(cliente, sesion.conductorId, zonaId, new Date(), momento);
-        return { enServicio: true, zonaId, zona: nombre };
+        // Y se avisa a quien se quedó sin taxi en este barrio hace un rato
+        // (migración 076). Es el aviso que sí le importa a un pasajero: está
+        // en la calle esperando, y acaba de aparecer lo que esperaba.
+        const avisados = await avisarTaxiLibre(cliente, emisor, zonaId);
+        return { enServicio: true, zonaId, zona: nombre, avisados };
       });
     } catch (error) {
       if (error instanceof ErrorTransicionInvalida) {

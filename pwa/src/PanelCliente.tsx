@@ -38,6 +38,7 @@ import MandosFlotantes from './MandosFlotantes';
 import {
   encolar, guardarUltimo, olvidarUltimo, sincronizar, ultimoGuardado, usePendientes,
 } from './sinRed';
+import { activarAvisos, estadoAviso, type EstadoAviso } from './avisoPush';
 import Mapa from './Mapa';
 import PanelLlamada from './PanelLlamada';
 import VistaCliente from './VistaCliente';
@@ -306,6 +307,16 @@ export default function PanelCliente({
   // Hoja recogida: el plano se ve entero. Lo manda el botón flotante.
   const [panelPlegado, setPanelPlegado] = useState(false);
   // La hoja de «mírame llegar», abierta desde su botón flotante.
+  // El permiso para avisarle cuando entre un taxi (migración 076). Se relee al
+  // volver a la pantalla porque se puede cambiar desde los ajustes del
+  // navegador sin pasar por aquí.
+  const [avisosTaxi, setAvisosTaxi] = useState<EstadoAviso>(() => estadoAviso());
+  useEffect(() => {
+    const releer = () => setAvisosTaxi(estadoAviso());
+    document.addEventListener('visibilitychange', releer);
+    return () => document.removeEventListener('visibilitychange', releer);
+  }, []);
+
   const [compartiendo, setCompartiendo] = useState(false);
   // Los coches que podrían venir y cuál ha elegido (migración 062).
   // `elegido === null` es «el que antes llegue», que es lo que había siempre y
@@ -1079,6 +1090,7 @@ export default function PanelCliente({
           flotantes. Es un momento, y al volver está todo como estaba. */}
       {!compartiendo && fase !== 'estadisticas' && fase !== 'ajustes' && (
         <VistaCliente
+          avisosTaxi={avisosTaxi}
           plegada={panelPlegado}
           sinRed={datosDe !== null || pendientes > 0 ? { datosDe, pendientes } : null}
           fase={fase}
@@ -1135,6 +1147,15 @@ export default function PanelCliente({
             ),
             alMarcarCobroDeMas: () => setCobroDeMas((actual) => !actual),
             alQuitarOrigen: () => { origenQuitadoAMano.current = true; setOrigen(null); },
+            // «Avísame cuando haya taxi» (migración 076). El permiso se pide
+            // AQUÍ y no automáticamente: el navegador solo lo concede desde un
+            // gesto, así que preguntar solo no funcionaría en un iPhone. Y es
+            // el momento en que la pregunta se entiende sola —está en la calle
+            // y sin taxi—, igual que al taxista se le pide al entrar en
+            // servicio.
+            alAvisarmeSiHayTaxi: () => {
+              void activarAvisos(true).then(setAvisosTaxi);
+            },
             alVolverASituarme: () => { void volverASituarme(); },
             alElegirDestino: (destinoElegido) => { setDestino(destinoElegido); setAviso(''); },
             // Elegir coche, o volver a «el que antes llegue» tocando el mismo.

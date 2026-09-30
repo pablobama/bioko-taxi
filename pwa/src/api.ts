@@ -774,6 +774,24 @@ export const api = {
     ),
 
   // Notificaciones que suenan con la aplicación cerrada (migración 058).
+  // El mismo mecanismo para el PASAJERO (migración 076). Rutas distintas
+  // porque a él se le identifica por su teléfono y no por una ficha de
+  // taxista, y se le pide el permiso en otro momento: cuando oye «no hay taxi».
+  clavePushCliente: () =>
+    pedirJson<{ clavePublica: string }>('/api/notificaciones/clave'),
+
+  guardarPushCliente: (suscripcion: {
+    endpoint: string; claves: { p256dh: string; auth: string };
+  }) =>
+    pedirJson<{ guardada: boolean }>('/api/notificaciones', {
+      method: 'POST', body: JSON.stringify(suscripcion), reintentos: 1,
+    }),
+
+  borrarPushCliente: (endpoint: string) =>
+    pedirJson<{ borrada: boolean }>('/api/notificaciones', {
+      method: 'DELETE', body: JSON.stringify({ endpoint }), reintentos: 1,
+    }),
+
   clavePush: () =>
     pedirJson<{ clavePublica: string }>('/api/conductor/notificaciones/clave'),
 

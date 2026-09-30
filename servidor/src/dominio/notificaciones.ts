@@ -159,13 +159,50 @@ export interface ResultadoEnvio {
 // El texto va dentro y cifrado —el protocolo lo exige—, así que el servicio de
 // push no ve de qué carrera se trata. Se manda lo justo para decidir si merece
 // la pena mirar el teléfono: nunca el teléfono del pasajero ni su posición.
+// El buzón de UN dispositivo. Lo usa el aviso al pasajero (migración 076): un
+// pasajero no tiene «cuenta» a la que mandarle nada, tiene el teléfono con el
+// que pidió, y ese es el que está esperando en la calle.
+export async function suscripcionesDelDispositivo(
+  cliente: pg.ClientBase | pg.Pool,
+  dispositivoId: number,
+): Promise<SuscripcionWeb[]> {
+  const res = await cliente.query(
+    `SELECT id, endpoint, clave_p256dh, clave_auth
+     FROM suscripcion_web WHERE dispositivo_id = $1`,
+    [dispositivoId],
+  );
+  return res.rows.map((f) => ({
+    id: Number(f.id),
+    endpoint: f.endpoint,
+    clave_p256dh: f.clave_p256dh,
+    clave_auth: f.clave_auth,
+  }));
+}
+
+export async function enviarADispositivo(
+  cliente: pg.ClientBase | pg.Pool,
+  dispositivoId: number,
+  carga: Record<string, unknown>,
+  ttlSeg = 60,
+): Promise<ResultadoEnvio> {
+  return enviarA(cliente, await suscripcionesDelDispositivo(cliente, dispositivoId), carga, ttlSeg);
+}
+
 export async function enviarAlConductor(
   cliente: pg.ClientBase | pg.Pool,
   conductorId: number,
   carga: Record<string, unknown>,
   ttlSeg = 60,
 ): Promise<ResultadoEnvio> {
-  const buzones = await suscripcionesDelConductor(cliente, conductorId);
+  return enviarA(cliente, await suscripcionesDelConductor(cliente, conductorId), carga, ttlSeg);
+}
+
+async function enviarA(
+  cliente: pg.ClientBase | pg.Pool,
+  buzones: SuscripcionWeb[],
+  carga: Record<string, unknown>,
+  ttlSeg: number,
+): Promise<ResultadoEnvio> {
   if (buzones.length === 0) return { entregados: 0, caducados: 0, error: null };
 
   const claves = await clavesVapid(cliente);

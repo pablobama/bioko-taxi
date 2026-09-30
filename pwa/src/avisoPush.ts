@@ -71,7 +71,12 @@ function esDeEstaClave(suscripcion: PushSubscription, clavePublica: string): boo
   }
 }
 
-export async function activarAvisos(): Promise<EstadoAviso> {
+// `comoCliente`: el mismo mecanismo sirve para los dos, pero el buzón se
+// guarda en un sitio distinto —al taxista se le busca por su ficha, al
+// pasajero por el teléfono con el que pidió— y se le pregunta en momentos
+// distintos: al taxista al entrar en servicio, al pasajero cuando se queda sin
+// taxi, que es cuando la pregunta se entiende sola.
+export async function activarAvisos(comoCliente = false): Promise<EstadoAviso> {
   if (estadoAviso() === 'no_disponible') return 'no_disponible';
   try {
     if (Notification.permission === 'default') {
@@ -82,7 +87,9 @@ export async function activarAvisos(): Promise<EstadoAviso> {
     }
 
     const registro = await navigator.serviceWorker.ready;
-    const { clavePublica } = await api.clavePush();
+    const { clavePublica } = comoCliente
+      ? await api.clavePushCliente()
+      : await api.clavePush();
     // La que ya hubiera vale, y hay que reenviarla igual: el servidor puede
     // haberla borrado —el navegador contestó 410 una vez— mientras el buzón
     // sigue vivo en el teléfono.
@@ -106,7 +113,8 @@ export async function activarAvisos(): Promise<EstadoAviso> {
         applicationServerKey: aBytes(clavePublica),
       });
     }
-    await api.guardarPush({
+    const guardar = comoCliente ? api.guardarPushCliente : api.guardarPush;
+    await guardar({
       endpoint: suscripcion.endpoint,
       claves: {
         p256dh: aBase64(suscripcion.getKey('p256dh')),

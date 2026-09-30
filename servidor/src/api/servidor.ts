@@ -23,6 +23,9 @@ import { registrarPosicion } from '../dominio/proximidad.js';
 import { puntoDeRecogida } from '../dominio/recogida.js';
 import { proponerSitio, publicarSiSeUsa } from '../dominio/sitios.js';
 import { declararPrecio, recalcularBandaDe } from '../dominio/precios.js';
+import {
+  borrarSuscripcion, clavesVapid, guardarSuscripcion,
+} from '../dominio/notificaciones.js';
 import { emitirSecreto, secretoValido } from '../dominio/secretos.js';
 import { llegadaDeViaje } from '../dominio/llegada.js';
 import { reputacionDe, valorarViaje } from '../dominio/reputacion.js';
@@ -227,6 +230,44 @@ export function crearServidor(
   // del gazetteer con sus coordenadas: la PWA dibuja el mapa en SVG a partir
   // de esto. No hay baldosas ni cartografía de calles; el payload son unos
   // pocos KB y se cachea en el cliente.
+  // --- El aviso al pasajero que se quedó sin taxi (migración 076) ---------
+  //
+  // Mismas tres llamadas que las del taxista, y por el mismo camino. La
+  // diferencia es CUÁNDO se le pide el permiso: al taxista, al entrar en
+  // servicio; al pasajero, justo después de oír «no hay taxi», que es el único
+  // momento en que la pregunta se entiende sola —está en la calle, sin taxi, y
+  // lo que se le ofrece es que le avisen cuando aparezca uno—.
+  app.get('/api/notificaciones/clave', async (_req, reply) => {
+    const claves = await clavesVapid(pool);
+    void reply.header('cache-control', 'no-store');
+    return { clavePublica: claves.publica };
+  });
+
+  app.post('/api/notificaciones', async (req) => {
+    const dispositivo = await dispositivoDesde(req);
+    const cuerpo = (req.body ?? {}) as {
+      endpoint?: unknown;
+      claves?: { p256dh?: unknown; auth?: unknown };
+    };
+    const endpoint = typeof cuerpo.endpoint === 'string' ? cuerpo.endpoint : '';
+    const p256dh = typeof cuerpo.claves?.p256dh === 'string' ? cuerpo.claves.p256dh : '';
+    const auth = typeof cuerpo.claves?.auth === 'string' ? cuerpo.claves.auth : '';
+    if (!endpoint.startsWith('https://') || p256dh === '' || auth === '') {
+      throw errorHttp(400, 'Suscripción incompleta: hacen falta endpoint y las dos claves.');
+    }
+    await guardarSuscripcion(pool, Number(dispositivo.id), { endpoint, p256dh, auth });
+    return { guardada: true };
+  });
+
+  app.delete('/api/notificaciones', async (req) => {
+    await dispositivoDesde(req);
+    const cuerpo = (req.body ?? {}) as { endpoint?: unknown };
+    if (typeof cuerpo.endpoint === 'string' && cuerpo.endpoint !== '') {
+      await borrarSuscripcion(pool, cuerpo.endpoint);
+    }
+    return { borrada: true };
+  });
+
   app.get('/api/mapa', async (_req, reply) => {
     // Tope explícito: el catálogo previsto son 300-800 referencias (sección 7)
     // y a 800 el payload ronda los 12 KB comprimidos. Si algún día se pasa de

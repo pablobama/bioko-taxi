@@ -15,6 +15,7 @@ import { renovarSuscripcion } from '../dominio/monedero.js';
 import { caducarPresencias } from '../dominio/presencia.js';
 import { caducarViajesColgados } from '../dominio/caducidad.js';
 import { procesarProximidad } from '../dominio/proximidad.js';
+import { purgarEsperas } from '../dominio/esperas.js';
 import { purgarRastro } from '../dominio/rastro.js';
 import { purgarMensajes } from '../dominio/radio.js';
 import { AdaptadorFcm } from '../eventos/adaptador-fcm.js';
@@ -210,6 +211,11 @@ async function principal(): Promise<void> {
         // cuando devuelve algo son una o dos filas.
         await caducarViajesColgados(pool, emisor);
         await rescatarSolicitadas(pool, emisor);
+        // Esperas de taxi vencidas (migración 076). Barato como lo de arriba:
+        // casi nunca borra nada, y cuando borra son una o dos filas. Una espera
+        // vieja que se quedara ahí volvería a avisar a alguien que hace horas
+        // que resolvió lo suyo.
+        await purgarEsperas(pool);
         await renovarSuscripcionesCaducadas(pool, emisor);
       } catch (error) {
         console.error('Error del planificador:', error);

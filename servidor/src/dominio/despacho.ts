@@ -27,6 +27,7 @@ import { rutaParaLlegar } from './carreteras.js';
 import { evaluarDesvio, type MedidorViaje, type Veredicto } from './desvio.js';
 import { estadoPorOcupacion, ocupacionDe } from './ocupacion.js';
 import { distanciaRectaM, type ParadaPendiente } from './paradas.js';
+import { anotarEspera, dejarDeEsperar } from './esperas.js';
 import { leerParametroEntero } from './parametros.js';
 import { caducarPresencias } from './presencia.js';
 import { registrarTransicion, transicionarConductor, transicionarSolicitud } from './transiciones.js';
@@ -497,6 +498,10 @@ export async function iniciarDespacho(
         dispositivoClienteId: solicitud.dispositivoClienteId,
         datos: { motivo: 'zona_vacia' },
       }, cliente);
+      // Se queda esperando: si entra un taxi en su barrio en los próximos
+      // minutos, se le avisa (migración 076). Es el único aviso de este tipo
+      // que le importa a alguien, porque está en la calle esperándolo.
+      await anotarEspera(cliente, solicitudId, ahora);
       return { resultado: 'SIN_OFERTA' as const, ofertas: 0 };
     }
 
@@ -559,6 +564,9 @@ async function expirarSolicitud(
     dispositivoClienteId: solicitud.dispositivoClienteId,
     datos: { motivo: 'oleadas_agotadas' },
   }, cliente);
+  // Se queda esperando: si entra un taxi en su barrio en los próximos minutos,
+  // se le avisa (migración 076).
+  await anotarEspera(cliente, solicitud.id);
 }
 
 // Tique periódico del planificador: avanza oleadas y expira lo vencido.
@@ -755,6 +763,10 @@ export async function reclamarSolicitud(
     await registrarTransicion(
       cliente, 'solicitud', solicitudId, null, 'EMITIDO', 'ACEPTADO', 'conductor', 'reclamacion_atomica',
     );
+    // Quien consigue taxi deja de esperar (migración 076). Sin esto, alguien
+    // que se quedó sin taxi, volvió a pedir y esta vez tuvo suerte seguiría
+    // recibiendo el aviso de que «ya hay taxis» mientras va montado en uno.
+    await dejarDeEsperar(cliente, Number(solicitud.dispositivoClienteId));
     await cliente.query(
       `UPDATE oferta SET resultado = 'aceptada', respondida_en = $3
        WHERE solicitud_id = $1 AND conductor_id = $2`,

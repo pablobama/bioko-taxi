@@ -70,6 +70,10 @@ export function prepararSonido(): void {
   try {
     declararReproduccion();
     despertarAlVolver();
+    // Un contexto CERRADO no se puede reanudar y todo lo que se le pida lanza
+    // `InvalidStateError`. iOS lo cierra solo tras una llamada entrante o un
+    // rato en segundo plano. Se tira y se hace otro.
+    if (contexto && contexto.state === 'closed') contexto = null;
     if (!contexto) {
       const Constructor = window.AudioContext
         ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -163,8 +167,25 @@ interface Nota {
   volumen?: number;
 }
 
+// UN PITIDO NO PUEDE ROMPER NADA. Esto no es una precaución teórica: en un
+// iPhone, `createOscillator()` lanza `InvalidStateError` cuando el contexto de
+// audio se quedó cerrado —una llamada entrante, la página al fondo—, y ese
+// error salía disparado hacia arriba. Como el pitido de «adelante, habla» se
+// toca dentro del mismo bloque que abre el micrófono, un pitido fallido
+// abortaba el habla ENTERA: el taxista veía «no se pudo pedir la palabra» con
+// el turno ya concedido y la grabadora ya en marcha.
+//
+// El sonido es un adorno; lo que no puede es llevarse por delante la función.
 function tocar(notas: Nota[]): void {
   if (silenciado) return;
+  try {
+    tocarDeVerdad(notas);
+  } catch {
+    // Sin sonido se sigue: la pantalla y la vibración ya lo dicen.
+  }
+}
+
+function tocarDeVerdad(notas: Nota[]): void {
   prepararSonido();
   if (!contexto) return;
   const ahora = contexto.currentTime;

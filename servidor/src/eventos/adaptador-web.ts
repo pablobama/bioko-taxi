@@ -11,13 +11,15 @@
 // el servicio de push mueve el sobre sin poder leerlo.
 
 import type pg from 'pg';
-import { enviarAlConductor } from '../dominio/notificaciones.js';
+import { enviarADispositivo, enviarAlConductor } from '../dominio/notificaciones.js';
 import type { Adaptador, EventoSalida } from './bus.js';
 
 // Lo que la notificación dice según el evento. Texto corto y sin datos de
 // nadie: es una pantalla de bloqueo, la puede leer cualquiera que pase.
 function texto(evento: EventoSalida): { titulo: string; cuerpo: string } {
-  const datos = evento.datos as { origen?: string; destino?: string; resultado?: string };
+  const datos = evento.datos as {
+    origen?: string; destino?: string; resultado?: string; zona?: string | null;
+  };
   if (evento.tipo === 'D1_broadcast_solicitud') {
     return {
       titulo: 'Nueva carrera',
@@ -31,21 +33,39 @@ function texto(evento: EventoSalida): { titulo: string; cuerpo: string } {
       ? { titulo: 'La carrera es tuya', cuerpo: 'Toca para ver dónde recoges.' }
       : { titulo: 'Carrera adjudicada a otro taxista', cuerpo: 'Sigues disponible.' };
   }
+  // El aviso al pasajero que se quedó sin taxi (migración 076). Es el único
+  // que le llega, y por eso puede permitirse ser concreto: si dijera «tienes un
+  // aviso» no sabría si merece sacar el teléfono del bolsillo.
+  if (evento.tipo === 'C7_taxi_disponible') {
+    return {
+      titulo: 'Ya hay taxi',
+      cuerpo: datos.zona
+        ? `Ha entrado un taxi en ${datos.zona}. Vuelve a pedirlo.`
+        : 'Ha entrado un taxi en tu barrio. Vuelve a pedirlo.',
+    };
+  }
   return { titulo: 'Taxi Malabo', cuerpo: 'Tienes un aviso.' };
 }
 
 export class AdaptadorWeb implements Adaptador {
   async entregar(evento: EventoSalida, cliente: pg.ClientBase): Promise<string | void> {
-    if (evento.conductorId === null) {
-      throw new Error(`El evento ${evento.id} (${evento.tipo}) no tiene conductor destinatario.`);
+    // Al taxista se le busca por su ficha —puede tener dos móviles y la carrera
+    // debe sonar en los dos—; al pasajero, por el teléfono con el que pidió,
+    // que es el que lleva encima esperando en la calle. No tiene otra cosa.
+    const alDispositivo = evento.conductorId === null;
+    if (alDispositivo && evento.dispositivoClienteId === null) {
+      throw new Error(`El evento ${evento.id} (${evento.tipo}) no tiene a quién avisar.`);
     }
     const { titulo, cuerpo } = texto(evento);
-    const resultado = await enviarAlConductor(cliente, Number(evento.conductorId), {
+    const carga = {
       tipo: evento.tipo,
       solicitudId: evento.solicitudId === null ? null : String(evento.solicitudId),
       titulo,
       cuerpo,
-    });
+    };
+    const resultado = alDispositivo
+      ? await enviarADispositivo(cliente, Number(evento.dispositivoClienteId), carga)
+      : await enviarAlConductor(cliente, Number(evento.conductorId), carga);
 
     if (resultado.entregados > 0) return 'web';
 
@@ -55,8 +75,9 @@ export class AdaptadorWeb implements Adaptador {
       throw new Error(`Notificación web no entregada: ${resultado.error}`);
     }
 
-    // Y no lo tiene cuando no hay a dónde mandarla: este taxista no ha dado
-    // permiso de notificaciones, o usa la app de Android, o la desinstaló. Eso
+    // Y no lo tiene cuando no hay a dónde mandarla: quien tenía que recibirla
+    // no ha dado permiso de notificaciones, o usa la app de Android, o la
+    // desinstaló. Eso
     // no se arregla reintentando diez veces; se deja escrito y se acaba, que
     // es lo que distingue «no se pudo» de «no había a quién».
     return resultado.caducados > 0 ? 'web_suscripcion_caducada' : 'web_sin_suscripcion';

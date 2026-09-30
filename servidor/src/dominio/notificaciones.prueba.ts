@@ -124,9 +124,14 @@ test('el adaptador distingue «no había a quién» de «no se pudo»', async ()
   assert.equal(detalle, 'web_sin_suscripcion');
 });
 
-test('un evento de notificación web sin conductor destinatario falla ruidosamente', async () => {
-  // Un evento del pasajero enrutado por error a este canal no puede quedarse
-  // callado: no hay a quién mandárselo y hay que verlo en el registro.
+test('un evento sin NADIE a quien avisar falla ruidosamente', async () => {
+  // Antes esto era «sin conductor», y dejó de valer con la migración 076: al
+  // pasajero que se quedó sin taxi se le avisa por este mismo canal, y a él se
+  // le busca por el teléfono con el que pidió, no por una ficha de taxista.
+  //
+  // Lo que sigue sin poder pasar es que un evento llegue aquí sin destinatario
+  // de ninguno de los dos tipos: no hay a quién mandárselo y tiene que verse en
+  // el registro en vez de quedarse callado.
   const adaptador = new AdaptadorWeb();
   await assert.rejects(
     () => adaptador.entregar({
@@ -135,9 +140,32 @@ test('un evento de notificación web sin conductor destinatario falla ruidosamen
       rol: 'cliente',
       solicitudId: null,
       conductorId: null,
-      dispositivoClienteId: 7,
+      dispositivoClienteId: null,
       datos: {},
     }, pool as unknown as pg.ClientBase),
-    /no tiene conductor destinatario/,
+    /no tiene a quién avisar/,
   );
+});
+
+test('al pasajero se le avisa por su teléfono, no por una ficha de taxista', async () => {
+  // El aviso de «ya hay taxi» (migración 076). Sin buzón no hay a dónde
+  // mandarlo, y eso NO es un fallo: es un pasajero que no dio permiso de
+  // notificaciones. Lo que importa aquí es que no se vaya por el camino del
+  // taxista buscando un conductor que no existe.
+  const dispositivo = await pool.query(
+    `INSERT INTO dispositivo (uuid_persistente, tipo)
+     VALUES (gen_random_uuid(), 'cliente') RETURNING id`,
+  );
+  const adaptador = new AdaptadorWeb();
+  const detalle = await adaptador.entregar({
+    id: 3,
+    tipo: 'C7_taxi_disponible',
+    rol: 'cliente',
+    solicitudId: null,
+    conductorId: null,
+    dispositivoClienteId: Number(dispositivo.rows[0].id),
+    datos: { zona: 'Semu' },
+  }, pool as unknown as pg.ClientBase);
+  assert.equal(detalle, 'web_sin_suscripcion');
+  await pool.query('DELETE FROM dispositivo WHERE id = $1', [dispositivo.rows[0].id]);
 });

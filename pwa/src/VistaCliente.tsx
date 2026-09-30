@@ -38,6 +38,9 @@ export interface AccionesCliente {
   // Volver a leer el GPS a mano: para quien no aceptó la ubicación la primera
   // vez, y para quien pidió desde el portal y salió a la acera.
   alVolverASituarme: () => void;
+  // «Avísame cuando haya taxi» (migración 076). Opcional: solo existe donde el
+  // navegador sabe de notificaciones.
+  alAvisarmeSiHayTaxi?: () => void;
   alLlamar: () => void;
   alElegirDestino: (destino: DestinoSugerido) => void;
   alElegirCoche: (conductorId: number) => void;
@@ -45,6 +48,8 @@ export interface AccionesCliente {
 }
 
 export interface PropiedadesVistaCliente {
+  // Estado del permiso para avisarle cuando entre un taxi (migración 076).
+  avisosTaxi?: 'no_disponible' | 'bloqueado' | 'sin_pedir' | 'activo';
   fase: FaseCliente;
   detalle: DetalleSolicitud | null;
   origen: ReferenciaSugerida | null;
@@ -118,7 +123,8 @@ export default function VistaCliente({
   elegibles = [], elegido = null,
   valorada, valoracionPendiente = null, importeElegido = null, cobroDeMas = false,
   aviso, t, sugeridos, escribiendo, puedeDeshacer, segundosGracia,
-  buscadorDestino, buscadorOrigen, plegada = false, sinRed = null, acciones,
+  buscadorDestino, buscadorOrigen, plegada = false, sinRed = null,
+  avisosTaxi = 'no_disponible', acciones,
 }: PropiedadesVistaCliente & { acciones: AccionesCliente }) {
   return (
     <section className={plegada ? 'hoja hoja-plegada' : 'hoja'} aria-hidden={plegada}>
@@ -340,6 +346,27 @@ export default function VistaCliente({
         <>
           <h1>{t('sinTaxi.titulo')}</h1>
           <p className="nota">{t('sinTaxi.nota')}</p>
+          {/* «Avísame cuando haya» (migración 076). Es el único momento en que
+              esta pregunta se entiende sola: está en la calle, sin taxi, y lo
+              que se le ofrece es exactamente lo que quiere.
+              Va como BOTÓN y no como pregunta automática porque el navegador
+              solo deja pedir el permiso desde un gesto: preguntar solo, sin
+              que nadie toque nada, no funciona en un iPhone. */}
+          {acciones.alAvisarmeSiHayTaxi && avisosTaxi !== 'activo' && (
+            <button
+              type="button"
+              className="secundario"
+              onClick={acciones.alAvisarmeSiHayTaxi}
+              disabled={avisosTaxi === 'bloqueado'}
+            >
+              {avisosTaxi === 'bloqueado'
+                ? t('sinTaxi.avisoBloqueado')
+                : t('sinTaxi.avisame')}
+            </button>
+          )}
+          {avisosTaxi === 'activo' && (
+            <p className="nota">{t('sinTaxi.avisoPuesto')}</p>
+          )}
           <button type="button" className="principal grande" onClick={acciones.alLimpiar}>
             {t('accion.volverAPedir')}
           </button>
