@@ -256,6 +256,36 @@ export default function App() {
     void activarOperadorPorUrl().then(() => cargarSesion());
   }, []);
 
+  // Volver a leer QUIÉN ERES al volver a la aplicación.
+  //
+  // La sesión se leía una sola vez, al abrir. El papel de una persona casi
+  // nunca cambia, pero cuando cambia es porque alguien acaba de cambiarlo y
+  // está esperando a que aparezca: el operador nombra agente de campo a un
+  // pasajero y en su teléfono no pasa nada, porque la aplicación sigue con el
+  // perfil que leyó al arrancar. Había que cerrarla y volver a abrirla, y eso
+  // no lo adivina nadie.
+  //
+  // Solo se actualiza el perfil, NO la pantalla: quien esté a mitad de pedir un
+  // taxi o dentro de los ajustes no puede verse expulsado porque el servidor
+  // haya contestado algo.
+  useEffect(() => {
+    const refrescarPapel = () => {
+      if (document.visibilityState !== 'visible') return;
+      void api.sesion().then((sesion) => {
+        if (sesion.rol === 'cliente' && sesion.cliente) setPerfil(sesion.cliente);
+        else if (sesion.rol === 'conductor' && sesion.conductor) setConductor(sesion.conductor);
+      }).catch(() => undefined);
+    };
+    document.addEventListener('visibilitychange', refrescarPapel);
+    // Y cada pocos minutos con la aplicación delante, para el caso de quedarse
+    // mirando la pantalla mientras el operador hace el cambio.
+    const reloj = setInterval(refrescarPapel, 120_000);
+    return () => {
+      clearInterval(reloj);
+      document.removeEventListener('visibilitychange', refrescarPapel);
+    };
+  }, []);
+
   // Aviso visible cuando la identidad o la ubicación vienen forzadas por la
   // URL, para que no se confunda una sesión de pruebas con una de verdad.
   const parametros = new URLSearchParams(window.location.search);

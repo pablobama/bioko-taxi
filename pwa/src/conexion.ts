@@ -73,7 +73,19 @@ export class ErrorDeRed extends Error {
 // acción: se reintenta—. Hereda de Error, así que todo lo que ya leía
 // `error.message` sigue igual.
 export class ErrorDelServidor extends Error {
-  constructor(readonly estado: number, mensaje: string) {
+  constructor(
+    readonly estado: number,
+    mensaje: string,
+    // El cuerpo de la respuesta, tal cual.
+    //
+    // Antes se tiraba, y eso costó un fallo: el servidor contesta 409 cuando el
+    // canal de la radio está ocupado, con el nombre de quien habla y los
+    // segundos que quedan en el cuerpo. Al convertirlo en una excepción sin
+    // cuerpo, la pantalla perdía la única información útil y acababa diciendo
+    // «no se pudo, inténtalo otra vez» —que manda a repetir— en vez de «habla
+    // Pablo, espera cuatro segundos».
+    readonly datos?: unknown,
+  ) {
     super(mensaje);
     this.name = 'ErrorDelServidor';
   }

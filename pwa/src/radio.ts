@@ -58,6 +58,24 @@ function formatoSoportado(): string {
 // la misma página en Safari sí funciona. Eso hay que decirlo, no esconderlo.
 export type PuedeGrabar = 'si' | 'sin_micro' | 'sin_grabadora';
 
+// Qué decir cuando el fallo no es ninguno de los conocidos.
+//
+// Nunca «inténtalo otra vez» a secas. Eso fue lo que se leyó en un iPhone
+// durante días mientras el problema era otro —el servidor contestaba que el
+// canal estaba ocupado y el cliente lo convertía en un error sin cuerpo—, y un
+// mensaje que manda a repetir esconde justo lo que hay que arreglar. Si no se
+// sabe qué pasó, se dice lo que contestó el servidor.
+function mensajeDeFallo(error: unknown): string {
+  const e = error as { name?: string; estado?: number; message?: string } | null;
+  if (e?.name === 'ErrorDelServidor') {
+    return `El servidor no dio la palabra (${e.estado}). ${e.message ?? ''}`.trim();
+  }
+  if (e?.name === 'NotSupportedError') {
+    return 'Este navegador no sabe grabar voz en ningún formato.';
+  }
+  return `No se pudo pedir la palabra${e?.name ? ` (${e.name})` : ''}.`;
+}
+
 export function radioDisponible(): PuedeGrabar {
   if (typeof navigator.mediaDevices?.getUserMedia !== 'function') return 'sin_micro';
   if (typeof MediaRecorder === 'undefined') return 'sin_grabadora';
@@ -310,11 +328,20 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
         }
 
         micro.current = flujo;
+        // La grabadora, con red de seguridad. `isTypeSupported` miente en
+        // algunos navegadores —dice que sí y luego el constructor revienta— y
+        // en otros no existe. Si falla con el formato elegido, se intenta sin
+        // pedir nada y que el navegador use el suyo, que es lo que sabe hacer.
         const tipo = formatoSoportado();
-        const g = new MediaRecorder(flujo, {
-          audioBitsPerSecond: BITRATE,
-          ...(tipo ? { mimeType: tipo } : {}),
-        });
+        let g: MediaRecorder;
+        try {
+          g = new MediaRecorder(flujo, {
+            audioBitsPerSecond: BITRATE,
+            ...(tipo ? { mimeType: tipo } : {}),
+          });
+        } catch {
+          g = new MediaRecorder(flujo);
+        }
         trozos.current = [];
         g.ondataavailable = (e) => { if (e.data.size > 0) trozos.current.push(e.data); };
         grabadora.current = g;
@@ -350,7 +377,7 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
               : esFalloDeMicrofono(error)
                 ? 'El navegador no deja usar el micrófono aquí. Prueba a abrir la'
                   + ' página en el navegador en vez de la aplicación instalada.'
-                : 'No se pudo pedir la palabra. Inténtalo otra vez.',
+                : mensajeDeFallo(error),
         );
       }
     })();

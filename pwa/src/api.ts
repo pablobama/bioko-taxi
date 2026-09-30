@@ -130,6 +130,7 @@ async function pedirJsonUnaVez<T>(ruta: string, opciones: RequestInit): Promise<
     throw new ErrorDelServidor(
       respuesta.status,
       (cuerpo as { error?: string }).error ?? `Error ${respuesta.status}`,
+      cuerpo,
     );
   }
   return cuerpo as T;
@@ -1222,8 +1223,25 @@ export const api = {
   // Apretar el botón. Sin reintentos a propósito: si la petición se pierde en la
   // red, repetirla llegaría tarde —el turno dura diez segundos— y podría pisarle
   // la palabra a otro que ya empezó a hablar.
-  pedirTurnoRadio: () =>
-    pedirJson<RespuestaTurno>('/api/conductor/radio/turno', { method: 'POST', body: '{}' }),
+  // «Ocupado» y «apagada» NO son errores: son la respuesta. El servidor las
+  // manda con 409 y 404 porque eso es lo correcto en HTTP, y aquí se vuelven a
+  // convertir en lo que la pantalla necesita. Sin esto saltaban al camino de los
+  // fallos y el taxista leía «no se pudo pedir la palabra, inténtalo otra vez»
+  // cada vez que otro estaba hablando.
+  pedirTurnoRadio: async (): Promise<RespuestaTurno> => {
+    try {
+      return await pedirJson<RespuestaTurno>(
+        '/api/conductor/radio/turno', { method: 'POST', body: '{}' },
+      );
+    } catch (error) {
+      if (error instanceof ErrorDelServidor && (error.estado === 409 || error.estado === 404)) {
+        const cuerpo = error.datos as RespuestaTurno | undefined;
+        if (cuerpo && cuerpo.dada === false) return cuerpo;
+        return { dada: false, motivo: error.estado === 404 ? 'apagada' : 'ocupado', habla: '', quedanSeg: 0 };
+      }
+      throw error;
+    }
+  },
 
   soltarTurnoRadio: () =>
     pedirJson<{ soltado: boolean }>('/api/conductor/radio/turno', { method: 'DELETE' }),
