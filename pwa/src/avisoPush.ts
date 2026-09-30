@@ -55,6 +55,22 @@ export function estadoAviso(): EstadoAviso {
 // servicio y un fallo aquí no puede impedir empezar a trabajar — sin
 // notificaciones se sigue recibiendo todo con la aplicación abierta, que es
 // como funcionaba hasta ahora.
+// ¿El buzón que ya hay se creó con la clave que este servidor usa ahora? El
+// navegador guarda la clave con la que se suscribió, así que se puede comparar
+// sin preguntarle a nadie.
+function esDeEstaClave(suscripcion: PushSubscription, clavePublica: string): boolean {
+  try {
+    const suya = suscripcion.options?.applicationServerKey;
+    // Sin dato no se puede saber. Se da por buena: tirar un buzón que a lo
+    // mejor funciona es peor que dejarlo, porque volver a suscribirse puede
+    // fallar y entonces no queda ninguno.
+    if (!suya) return true;
+    return aBase64(suya) === clavePublica.replace(/=+$/, '');
+  } catch {
+    return true;
+  }
+}
+
 export async function activarAvisos(): Promise<EstadoAviso> {
   if (estadoAviso() === 'no_disponible') return 'no_disponible';
   try {
@@ -66,12 +82,23 @@ export async function activarAvisos(): Promise<EstadoAviso> {
     }
 
     const registro = await navigator.serviceWorker.ready;
+    const { clavePublica } = await api.clavePush();
     // La que ya hubiera vale, y hay que reenviarla igual: el servidor puede
     // haberla borrado —el navegador contestó 410 una vez— mientras el buzón
     // sigue vivo en el teléfono.
     let suscripcion = await registro.pushManager.getSubscription();
+
+    // PERO SOLO SI ES DE ESTE SERVIDOR. Un buzón se crea atado a una clave
+    // concreta, y si la del servidor cambió, el servicio de push rechaza todos
+    // los envíos con un 403. Reutilizarla sin mirar —que es lo que se hacía—
+    // dejaba al taxista sin avisos PARA SIEMPRE: la suscripción existía, se
+    // reenviaba tal cual en cada intento, y ninguno llegaba nunca.
+    if (suscripcion !== null && !esDeEstaClave(suscripcion, clavePublica)) {
+      await suscripcion.unsubscribe().catch(() => undefined);
+      suscripcion = null;
+    }
+
     if (suscripcion === null) {
-      const { clavePublica } = await api.clavePush();
       suscripcion = await registro.pushManager.subscribe({
         // Obligatorio en todos los navegadores: sin esto la suscripción
         // permitiría mandar avisos silenciosos, que es rastreo.

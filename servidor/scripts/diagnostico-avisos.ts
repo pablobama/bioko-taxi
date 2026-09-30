@@ -62,6 +62,35 @@ async function main(): Promise<void> {
     console.log('    rechazó una vez, el navegador no lo vuelve a preguntar solo.');
   }
 
+  // Buzones rotos. Un buzón creado con OTRA clave VAPID existe, se reenvía en
+  // cada intento y el servicio de push lo rechaza siempre con un 403. Hasta el
+  // 30/09 eso no se borraba, así que ese taxista no recibía un aviso nunca y
+  // nada lo curaba. Aquí se ve uno por uno.
+  const rotos = await pool.query(
+    `SELECT c.nombre, s.ultimo_error, s.usado_en,
+            substring(s.endpoint from 'https?://([^/]+)') AS servicio
+     FROM suscripcion_web s
+     JOIN dispositivo d ON d.id = s.dispositivo_id
+     LEFT JOIN conductor c ON c.id = d.conductor_id
+     WHERE s.ultimo_error IS NOT NULL
+     ORDER BY s.usado_en NULLS FIRST`,
+  );
+  if ((rotos.rowCount ?? 0) > 0) {
+    console.log('');
+    console.log(`  Buzones que están fallando (${rotos.rowCount}):`);
+    console.log('');
+    for (const f of rotos.rows) {
+      console.log(`    ${f.nombre ?? 'sin nombre'} · ${f.servicio ?? '?'}`);
+      console.log(`      ${String(f.ultimo_error).slice(0, 100)}`);
+      console.log(`      último envío bueno: ${f.usado_en ?? 'NINGUNO'}`);
+    }
+    console.log('');
+    console.log('    Si el error habla de un código inesperado y nunca hubo un');
+    console.log('    envío bueno, el buzón se creó con otra clave VAPID. Desde el');
+    console.log('    30/09 esos se borran solos y el navegador crea uno nuevo la');
+    console.log('    próxima vez que el taxista entre en servicio.');
+  }
+
   // 1, 3 y 4. Qué pasó con los avisos de carrera emitidos.
   const avisos = await pool.query(
     `SELECT canal_entregado, count(*)::int AS n

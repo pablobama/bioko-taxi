@@ -340,6 +340,29 @@ test('al volver a primer plano se deja de despertar el teléfono', async () => {
   assert.equal((await filaEvento(tipo)).canal_entregado, 'sse');
 });
 
+test('el «estoy mirando» caduca solo si la pantalla deja de repetirlo', async () => {
+  // Es la parte que hace que esto no dependa de que llegue ninguna despedida.
+  // Cuando el teléfono se bloquea, el navegador puede congelar la página antes
+  // de mandar el «me voy», y sin caducidad el servidor se quedaría creyendo
+  // para siempre que hay alguien delante — y no mandaría la notificación, que
+  // es justo el fallo que se vino a arreglar.
+  const conexiones = new ConexionesSse();
+  const baja = conexiones.suscribir(dispositivoClienteId, () => undefined);
+  const ahora = Date.now();
+
+  assert.equal(conexiones.hayAlguienMirando(dispositivoClienteId, ahora), true);
+  // Un minuto después sin decir nada: todavía vale, para no dejar de sonar por
+  // dos peticiones perdidas con mala cobertura.
+  assert.equal(conexiones.hayAlguienMirando(dispositivoClienteId, ahora + 60_000), true);
+  // Pasados los noventa segundos, ya no.
+  assert.equal(conexiones.hayAlguienMirando(dispositivoClienteId, ahora + 95_000), false);
+
+  // Y repetirlo lo renueva.
+  conexiones.marcarVisibilidad(dispositivoClienteId, true, ahora + 60_000);
+  assert.equal(conexiones.hayAlguienMirando(dispositivoClienteId, ahora + 95_000), true);
+  baja();
+});
+
 test('una conexión recién abierta cuenta como mirando', async () => {
   // Importa para no estropear lo que ya funcionaba: si un cliente viejo nunca
   // dice si está mirando, se comporta como antes de todo esto. Equivocarse por

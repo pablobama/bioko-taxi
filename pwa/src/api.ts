@@ -1207,6 +1207,13 @@ export const api = {
     pedirJson<{ visible: boolean }>('/api/conductor/visibilidad', {
       method: 'POST',
       body: JSON.stringify({ visible }),
+      // `keepalive`: el aviso de «me voy» se manda justo cuando el navegador
+      // está guardando la página, y una petición normal ahí se cancela a
+      // medias. Con esto el navegador se compromete a terminarla aunque la
+      // pestaña desaparezca —es lo mismo que hace `sendBeacon`, pero
+      // conservando las cabeceras, así que el secreto del dispositivo no tiene
+      // que viajar por la URL.
+      keepalive: true,
     }),
 
   // La radio del gremio (migración 075).

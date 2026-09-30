@@ -24,10 +24,25 @@ export type EnvioSse = (carga: string) => void;
 // conexión abierta», así que la notificación que sí suena no se usó ni una vez.
 interface Conexion {
   envio: EnvioSse;
-  // Empieza en `true`: quien acaba de abrir la conexión está delante. Si el
-  // cliente nunca dice lo contrario, se comporta como antes de todo esto.
-  visible: boolean;
+  // HASTA CUÁNDO vale el «estoy mirando», no un sí o un no.
+  //
+  // La primera versión guardaba un booleano y confiaba en que la pantalla
+  // avisaría al irse a segundo plano. No siempre avisa: cuando el teléfono se
+  // bloquea, el navegador puede congelar la página antes de que salga ese
+  // último mensaje, y entonces el servidor se queda creyendo para siempre que
+  // hay alguien delante — y no manda la notificación que habría sonado. Es
+  // justo el caso que se venía a arreglar.
+  //
+  // Con una caducidad no hace falta que llegue ninguna despedida: si la
+  // pantalla no vuelve a decir «sigo aquí», a los noventa segundos deja de
+  // contar sola. Se cura sin depender de nadie.
+  mirandoHasta: number;
 }
+
+// Cuánto vale un «estoy mirando» sin repetirlo. La pantalla lo renueva cada
+// treinta segundos, así que noventa da margen para perder dos seguidos por mala
+// cobertura sin dejar de sonar por la cara.
+export const MIRANDO_VALE_MS = 90_000;
 
 export class ConexionesSse {
   private readonly porDispositivo = new Map<number, Set<Conexion>>();
@@ -52,7 +67,10 @@ export class ConexionesSse {
       conjunto = new Set();
       this.porDispositivo.set(clave, conjunto);
     }
-    const conexion: Conexion = { envio, visible: true };
+    // Quien acaba de abrir la conexión está delante. Si el cliente nunca dice
+    // nada más, a los noventa segundos deja de contar, que es lo correcto: una
+    // pantalla que no da señales no es una pantalla que alguien esté mirando.
+    const conexion: Conexion = { envio, mirandoHasta: Date.now() + MIRANDO_VALE_MS };
     conjunto.add(conexion);
     return () => {
       conjunto.delete(conexion);
@@ -64,18 +82,22 @@ export class ConexionesSse {
 
   // Lo dice la propia pantalla cuando pasa a segundo plano o vuelve. Vale para
   // todas las conexiones del dispositivo: son la misma persona mirando o no.
-  marcarVisibilidad(dispositivoId: number | string, visible: boolean): void {
+  marcarVisibilidad(
+    dispositivoId: number | string,
+    visible: boolean,
+    ahora = Date.now(),
+  ): void {
     for (const c of this.porDispositivo.get(ConexionesSse.clave(dispositivoId)) ?? []) {
-      c.visible = visible;
+      c.mirandoHasta = visible ? ahora + MIRANDO_VALE_MS : 0;
     }
   }
 
   // ¿Hay alguien delante de la pantalla? Es la pregunta que decide si el aviso
   // se queda en el socket o hay que despertar el teléfono.
-  hayAlguienMirando(dispositivoId: number | string): boolean {
+  hayAlguienMirando(dispositivoId: number | string, ahora = Date.now()): boolean {
     const conjunto = this.porDispositivo.get(ConexionesSse.clave(dispositivoId));
     if (!conjunto) return false;
-    for (const c of conjunto) if (c.visible) return true;
+    for (const c of conjunto) if (c.mirandoHasta > ahora) return true;
     return false;
   }
 

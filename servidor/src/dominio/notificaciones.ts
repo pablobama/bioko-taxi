@@ -170,7 +170,17 @@ export async function enviarAlConductor(
     } catch (error) {
       const estado = (error as { statusCode?: number }).statusCode ?? 0;
       const mensaje = error instanceof Error ? error.message : String(error);
-      if (estado === 404 || estado === 410) {
+      // 404 y 410: el buzón ya no existe (se desinstaló el navegador, o el
+      // servicio de push lo tiró).
+      //
+      // 403: el buzón existe pero se creó con OTRA clave VAPID, así que este
+      // servidor no puede escribir en él. Hasta hoy eso solo se apuntaba como
+      // error y la suscripción rota se quedaba ahí para siempre: ese taxista no
+      // volvía a recibir un aviso NUNCA, y nada lo curaba. Borrándola, la
+      // próxima vez que entre en servicio se crea una nueva con la clave de
+      // ahora. Perder un buzón que no sirve no cuesta nada; conservarlo cuesta
+      // todas las carreras.
+      if (estado === 404 || estado === 410 || estado === 403) {
         await borrarSuscripcion(cliente, buzon.endpoint);
         resultado.caducados += 1;
       } else {

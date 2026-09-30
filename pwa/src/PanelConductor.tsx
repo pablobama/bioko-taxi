@@ -324,7 +324,17 @@ export default function PanelConductor({
     document.addEventListener('visibilitychange', avisar);
     // Al cerrar la pestaña o bloquear, por si `visibilitychange` no llega.
     window.addEventListener('pagehide', avisar);
+    // Y REPETIRLO mientras haya alguien delante. Esto es lo que hace que el
+    // arreglo no dependa de que llegue ninguna despedida: cuando el teléfono se
+    // bloquea, el navegador puede congelar la página antes de mandar nada, y
+    // entonces el servidor se quedaría creyendo que hay alguien mirando. Como
+    // el permiso caduca a los noventa segundos, dejar de repetirlo es también
+    // una forma de decir que ya no hay nadie — y esa sí no se puede perder.
+    const reloj = setInterval(() => {
+      if (document.visibilityState === 'visible') avisar();
+    }, 30_000);
     return () => {
+      clearInterval(reloj);
       document.removeEventListener('visibilitychange', avisar);
       window.removeEventListener('pagehide', avisar);
     };
