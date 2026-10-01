@@ -20,7 +20,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, bajarVozRadio, type EstadoRadio, type MensajeRadio } from './api';
 import { esFalloDeMicrofono } from './llamada';
 import {
-  reproducirVoz, sonarRadioAdelante, sonarRadioEntra, sonarRadioOcupada,
+  permitirGrabar, reproducirVoz, sonarRadioAdelante, sonarRadioEntra,
+  sonarRadioOcupada, volverAReproducir,
 } from './sonidos';
 
 // Voz, no música. El mismo caudal que las llamadas y por el mismo motivo: aquí
@@ -117,7 +118,11 @@ export function esAplicacionInstalada(): boolean {
 
 // Un aparato que ya demostró que no puede grabar se recuerda: volver a
 // preguntárselo es quitarle el turno al gremio para fallar igual.
-const CLAVE_NO_PUEDE = 'radio:sinMicrofono';
+// La clave lleva versión a propósito. El apunte viejo se hizo cuando la
+// aplicación declaraba una sesión de audio que NO permitía grabar, así que
+// marcaba como imposibles teléfonos que sí pueden. Al cambiar la causa hay que
+// darles otra oportunidad, y lo limpio es estrenar clave en vez de ir borrando.
+const CLAVE_NO_PUEDE = 'radio:sinMicrofono2';
 
 export function recordarQueNoPuedeGrabar(): void {
   try {
@@ -246,6 +251,10 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
     }
     micro.current?.getTracks().forEach((t) => t.stop());
     micro.current = null;
+    // Se devuelve la sesión de audio a «reproducción»: es lo que hace que los
+    // avisos suenen con el interruptor de silencio, y es el estado en el que la
+    // aplicación pasa casi todo el tiempo.
+    volverAReproducir();
     grabadora.current = null;
     trozos.current = [];
   }, []);
@@ -356,11 +365,22 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
         // El turno y el micrófono a la vez: pedirlos en fila sumaría las dos
         // esperas, y lo que se está midiendo es el tiempo que pasa entre
         // apretar y poder hablar.
+        // ANTES de pedir el micrófono: declarar que esta página va a grabar.
+        //
+        // iOS no deja grabar desde una sesión de audio de tipo «playback», y
+        // «playback» es justo lo que se declara para que los avisos suenen con
+        // el interruptor de silencio puesto. Sin esta línea, `getUserMedia`
+        // rechaza con `InvalidStateError` en la aplicación instalada — que es
+        // el fallo que se estuvo persiguiendo tres días.
+        //
+        // Va aquí, dentro del mismo gesto que abre el micrófono: cambiar el
+        // tipo después ya no sirve.
+        permitirGrabar();
+
         // Cada paso, etiquetado. El nombre de una excepción no dice dónde
         // ocurrió, y `InvalidStateError` puede salir de tres sitios muy
         // distintos: la petición del turno, el permiso del micrófono o la
-        // grabadora. Sin saber cuál, se arregla a ciegas —y se estuvo
-        // arreglando el que no era—.
+        // grabadora. Sin saber cuál, se arregla a ciegas.
         const [turno, media] = await Promise.all([
           paso('turno', () => api.pedirTurnoRadio()),
           paso('micro', () => navigator.mediaDevices.getUserMedia(RESTRICCIONES)),

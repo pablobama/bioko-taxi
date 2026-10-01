@@ -33,15 +33,53 @@ export function alternarSilencio(): boolean {
 // TypeScript porque solo existe en Safari, de ahí el acceso a mano.
 //
 // Se hace una sola vez y no rompe nada donde no existe.
-function declararReproduccion(): void {
+// El tipo de sesión de audio que declara la página ante iOS.
+//
+// Y ES UN EQUILIBRIO, no una constante. Poner «playback» es lo que hace que los
+// avisos suenen con el interruptor de silencio puesto —sin eso, en un iPhone no
+// se oye nada y la aplicación parece muda—. Pero una sesión de reproducción NO
+// PERMITE GRABAR: `getUserMedia` la rechaza con `InvalidStateError`, que es
+// exactamente lo que empezó a pasarle al walkie-talkie el día que se arregló el
+// sonido. Un arreglo rompió el otro, y costó tres días verlo porque el nombre
+// de la excepción no señalaba aquí.
+//
+// Así que el tipo cambia según lo que se esté haciendo: reproducción mientras
+// solo se escucha, y «play-and-record» mientras se habla por la radio. Se
+// vuelve al primero en cuanto se suelta el micrófono, porque ese es el estado
+// en el que la aplicación pasa el 99 % del tiempo y es el que no se puede
+// perder.
+type TipoSesion = 'playback' | 'play-and-record';
+
+let tipoDeseado: TipoSesion = 'playback';
+
+function aplicarTipoDeSesion(): void {
   try {
     const sesion = (navigator as unknown as {
       audioSession?: { type: string };
     }).audioSession;
-    if (sesion && sesion.type !== 'playback') sesion.type = 'playback';
+    if (sesion && sesion.type !== tipoDeseado) sesion.type = tipoDeseado;
   } catch {
     // Navegador que no lo tiene o no deja cambiarlo: se sigue igual.
   }
+}
+
+function declararReproduccion(): void {
+  aplicarTipoDeSesion();
+}
+
+// Antes de abrir el micrófono. Hay que llamarlo DENTRO del mismo gesto que va a
+// pedir `getUserMedia`: cambiar el tipo después ya no sirve de nada.
+export function permitirGrabar(): void {
+  tipoDeseado = 'play-and-record';
+  aplicarTipoDeSesion();
+}
+
+// Al soltar el micrófono. Volver a «playback» no es cosmética: es lo que
+// devuelve el sonido con el interruptor de silencio puesto, que es como está
+// casi siempre el teléfono de un taxista.
+export function volverAReproducir(): void {
+  tipoDeseado = 'playback';
+  aplicarTipoDeSesion();
 }
 
 // El contexto se queda SUSPENDIDO cuando la aplicación se va al fondo, y al
