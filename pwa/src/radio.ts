@@ -490,7 +490,8 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
     const d = (datos ?? {}) as {
       mensajeId?: number; conductorId?: number; nombre?: string; caducaEn?: string;
     };
-    if (tipo === 'radio_mensaje' && typeof d.mensajeId === 'number') {
+    if ((tipo === 'radio_mensaje' || tipo === 'D8_radio_mensaje')
+      && typeof d.mensajeId === 'number') {
       encolar(d.mensajeId);
       dejarDeEsperar();
       void cargar();

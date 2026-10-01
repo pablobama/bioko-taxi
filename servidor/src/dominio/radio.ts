@@ -266,6 +266,39 @@ export async function oyentesDe(
   return res.rows.map((f) => Number(f.id));
 }
 
+// Los oyentes agrupados por PERSONA, con todas sus pantallas.
+//
+// Hace falta para decidir a quién hay que despertar el teléfono (migración
+// 077): el aviso con la aplicación cerrada solo sale si NINGUNA de las
+// pantallas de ese taxista tiene a alguien delante. Con una mirando, el mensaje
+// ya suena en la página y la notificación sobraría —y una notificación que
+// sobra es la que hace que se apaguen todas—.
+export async function oyentesPorConductor(
+  cliente: Lector,
+  canal: string,
+  exceptoConductorId: number | null = null,
+): Promise<Array<{ conductorId: number; dispositivos: number[] }>> {
+  void canal;
+  const res = await cliente.query(
+    `SELECT d.conductor_id, d.id
+     FROM dispositivo d
+     JOIN presencia p ON p.conductor_id = d.conductor_id
+     WHERE d.tipo = 'conductor'
+       AND p.estado <> 'DESCONECTADO'
+       AND ($1::bigint IS NULL OR d.conductor_id <> $1)
+     ORDER BY d.conductor_id, COALESCE(d.ultimo_heartbeat, d.creado_en) DESC`,
+    [exceptoConductorId],
+  );
+  const porConductor = new Map<number, number[]>();
+  for (const f of res.rows) {
+    const id = Number(f.conductor_id);
+    const lista = porConductor.get(id);
+    if (lista) lista.push(Number(f.id));
+    else porConductor.set(id, [Number(f.id)]);
+  }
+  return [...porConductor].map(([conductorId, dispositivos]) => ({ conductorId, dispositivos }));
+}
+
 export interface MensajeListado {
   id: number;
   conductorId: number;

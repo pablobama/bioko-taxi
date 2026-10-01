@@ -19,6 +19,7 @@ import type { Adaptador, EventoSalida } from './bus.js';
 function texto(evento: EventoSalida): { titulo: string; cuerpo: string } {
   const datos = evento.datos as {
     origen?: string; destino?: string; resultado?: string; zona?: string | null;
+    nombre?: string; duracionMs?: number;
   };
   if (evento.tipo === 'D1_broadcast_solicitud') {
     return {
@@ -33,6 +34,18 @@ function texto(evento: EventoSalida): { titulo: string; cuerpo: string } {
       ? { titulo: 'La carrera es tuya', cuerpo: 'Toca para ver dónde recoges.' }
       : { titulo: 'Carrera adjudicada a otro taxista', cuerpo: 'Sigues disponible.' };
   }
+  // La radio del gremio con la aplicación cerrada (migración 077). Dice QUIÉN
+  // ha hablado, que es lo que decide si merece sacar el teléfono del bolsillo.
+  // La voz no viaja aquí: la notificación pesa lo que pesa un nombre y el
+  // mensaje se oye al abrir.
+  if (evento.tipo === 'D8_radio_mensaje') {
+    const seg = typeof datos.duracionMs === 'number' ? Math.round(datos.duracionMs / 1000) : 0;
+    return {
+      titulo: datos.nombre ? `Habla ${datos.nombre}` : 'Radio del gremio',
+      cuerpo: seg > 0 ? `${seg} segundos. Toca para oírlo.` : 'Toca para oírlo.',
+    };
+  }
+
   // El aviso al pasajero que se quedó sin taxi (migración 076). Es el único
   // que le llega, y por eso puede permitirse ser concreto: si dijera «tienes un
   // aviso» no sabría si merece sacar el teléfono del bolsillo.

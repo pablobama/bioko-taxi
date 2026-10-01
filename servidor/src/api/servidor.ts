@@ -125,7 +125,7 @@ export function crearServidor(
   registrarRutasConductor(app, pool, emisor, conexionesSse);
   registrarRutasLlamadas(app, pool, conexionesSse);
   registrarRutasOperador(app, pool, emisor);
-  registrarRutasRadio(app, pool, conexionesSse);
+  registrarRutasRadio(app, pool, emisor, conexionesSse);
   registrarRutasVerificacion(app, pool, servicioVerificacion);
 
   // Resuelve (y da de alta si es nuevo) el dispositivo del cliente.

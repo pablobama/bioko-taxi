@@ -438,7 +438,11 @@ export default function PanelConductor({
       // La radio: quién tiene la palabra y los mensajes que entran. Va por el
       // mismo canal vivo que las carreras, y no por la bandeja con reintentos:
       // «habla Pablo» entregado treinta segundos tarde es peor que no entregarlo.
-      if (evento.tipo.startsWith('radio_')) {
+      // `D8_radio_mensaje` es el mismo mensaje por el camino con escalada
+      // (migración 077): si nadie está mirando, el servidor lo manda igual por
+      // aquí y además despierta el teléfono con una notificación. Si la
+      // pantalla vuelve a tiempo, este es el que lo reproduce.
+      if (evento.tipo.startsWith('radio_') || evento.tipo === 'D8_radio_mensaje') {
         recibirRadio.current?.(evento.tipo, evento.datos);
         return;
       }

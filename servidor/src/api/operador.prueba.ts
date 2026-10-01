@@ -803,7 +803,17 @@ test('el recorrido: lo ve el operador, no un agente de campo, y sale por tramos'
       [conductorId],
     );
     // Dos puntos hace un rato y dos hace mucho menos: dos tramos.
-    const hace = (min: number) => new Date(Date.now() - min * 60_000);
+    //
+    // Los minutos se cuentan desde la MEDIANOCHE DE HOY y no desde ahora, y se
+    // consulta la semana. «Día» significa hoy desde las 00:00 —no las últimas
+    // 24 horas, y es deliberado (ver `inicioDelDiaEnMalabo`)—, así que puntos
+    // «de hace cinco horas» caen en ayer si la batería se lanza de madrugada.
+    // Esta prueba falló a las 00:19 por eso: lo que mide son los TRAMOS, no la
+    // frontera del día, y atarla a la hora del reloj la hacía fallar sola unas
+    // horas al día.
+    const medianoche = new Date();
+    medianoche.setHours(0, 0, 0, 0);
+    const hace = (min: number) => new Date(medianoche.getTime() - min * 60_000);
     await c.query(
       `INSERT INTO rastro (conductor_id, lat, lng, creado_en) VALUES
         ($1, 3.750, 8.780, $2), ($1, 3.753, 8.780, $3),
@@ -816,13 +826,13 @@ test('el recorrido: lo ve el operador, no un agente de campo, y sale por tramos'
   // Un agente de campo sitúa barrios; no le toca saber por dónde anduvo un
   // compañero. Esta ruta pide operador, no campo, y esto lo fija.
   const agente = await app.inject({
-    method: 'GET', url: `/api/operador/conductores/${conductorId}/recorrido?periodo=dia`,
+    method: 'GET', url: `/api/operador/conductores/${conductorId}/recorrido?periodo=semana`,
     headers: cabeceras(uuidAgente),
   });
   assert.equal(agente.statusCode, 403, 'un agente de campo no vigila a sus compañeros');
 
   const res = await app.inject({
-    method: 'GET', url: `/api/operador/conductores/${conductorId}/recorrido?periodo=dia`,
+    method: 'GET', url: `/api/operador/conductores/${conductorId}/recorrido?periodo=semana`,
     headers: cabeceras(UUID_OPERADOR),
   });
   assert.equal(res.statusCode, 200, res.body);

@@ -15,9 +15,12 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import {
-  audioDeMensaje, canalDe, guardarMensaje, limitesDeLaRadio, oyentesDe, pedirLaPalabra,
-  quienHabla, radioEncendida, soltarLaPalabra, ultimosMensajes,
+  audioDeMensaje, canalDe, guardarMensaje, limitesDeLaRadio, oyentesDe,
+  oyentesPorConductor, pedirLaPalabra, quienHabla, radioEncendida, soltarLaPalabra,
+  ultimosMensajes,
 } from '../dominio/radio.js';
+import type { EmisorEventos } from '../dominio/eventos.js';
+import { leerParametroEntero } from '../dominio/parametros.js';
 import type { ConexionesSse } from '../eventos/adaptador-sse.js';
 
 const PATRON_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -44,6 +47,7 @@ interface SesionConductor {
 export function registrarRutasRadio(
   app: FastifyInstance,
   pool: pg.Pool,
+  emisor: EmisorEventos,
   conexionesSse: ConexionesSse,
 ): void {
   // El audio llega como cuerpo binario y no como formulario ni como base64. En
@@ -167,15 +171,37 @@ export function registrarRutasRadio(
       return r;
     }
 
-    // Se avisa con los datos del mensaje, no con el audio: cada teléfono decide
-    // si lo baja. Hoy lo baja siempre y lo suena —es una radio—, pero el día que
-    // alguien quiera un modo «solo texto» para ahorrar, la puerta está abierta.
+    // A quién le llega, y por dónde. Dos caminos, y la regla que los separa es
+    // la misma que la de las carreras (migración 077): el aviso que despierta el
+    // teléfono SOLO sale si no hay nadie mirando.
+    //
+    // Con una pantalla delante, el mensaje ya suena en la propia página; una
+    // notificación encima de lo que se está viendo es la forma más rápida de
+    // que alguien apague los avisos — y al apagarlos pierde también las
+    // carreras, que es lo que de verdad le da de comer.
+    const carga = JSON.stringify({
+      tipo: 'radio_mensaje',
+      datos: { mensajeId: r.mensajeId, conductorId: yo.conductorId, duracionMs },
+    });
+    const avisoPush = (await leerParametroEntero(pool, 'radio_aviso_push')) === 1;
     let entregados = 0;
-    for (const dispositivoId of r.oyentes) {
-      entregados += conexionesSse.entregarA(dispositivoId, JSON.stringify({
-        tipo: 'radio_mensaje',
-        datos: { mensajeId: r.mensajeId, conductorId: yo.conductorId, duracionMs },
-      }));
+    for (const oyente of await oyentesPorConductor(pool, yo.canal, yo.conductorId)) {
+      const mirando = oyente.dispositivos.some((d) => conexionesSse.hayAlguienMirando(d));
+      if (mirando || !avisoPush) {
+        for (const d of oyente.dispositivos) entregados += conexionesSse.entregarA(d, carga);
+        continue;
+      }
+      // Nadie delante: va por la bandeja de eventos, que intenta la conexión
+      // abierta y escala a la notificación. El audio NO viaja en el aviso —son
+      // 25 KB y la notificación debe pesar lo que pesa un nombre—: dice quién ha
+      // hablado y el teléfono lo baja al abrirse.
+      await emisor.emitir({
+        tipo: 'D8_radio_mensaje',
+        rol: 'conductor',
+        conductorId: oyente.conductorId,
+        datos: { mensajeId: r.mensajeId, nombre: yo.nombre, duracionMs },
+      }, pool as unknown as Parameters<typeof emisor.emitir>[1]);
+      entregados += 1;
     }
     // Se devuelve a cuántos llegó. Quien habla tiene derecho a saber si le oyó
     // alguien o si habló solo, que es la diferencia entre repetirlo y no.

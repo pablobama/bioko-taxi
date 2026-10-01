@@ -376,6 +376,30 @@ test('con el interruptor apagado la radio no existe', async () => {
   }
 });
 
+test('los oyentes se agrupan por PERSONA, con todas sus pantallas', async () => {
+  // Hace falta para la regla del aviso con la aplicación cerrada (migración
+  // 077): solo se despierta el teléfono si NINGUNA pantalla de ese taxista
+  // tiene a alguien delante. Para saberlo hay que tenerlas todas, no una.
+  const canal = canalNuevo();
+  const yo = await taxista();
+  const escucha = await taxista();
+  const segundo = await pool.query(
+    `INSERT INTO dispositivo (uuid_persistente, tipo, conductor_id, ultimo_heartbeat)
+     VALUES (gen_random_uuid(), 'conductor', $1, now()) RETURNING id`,
+    [escucha.conductorId],
+  );
+
+  const { oyentesPorConductor } = await import('./radio.js');
+  const grupos = await oyentesPorConductor(pool, canal, yo.conductorId);
+  const suyo = grupos.find((g) => g.conductorId === escucha.conductorId);
+  assert.ok(suyo, 'el que escucha tiene que salir');
+  assert.ok(suyo!.dispositivos.includes(escucha.dispositivoId));
+  assert.ok(suyo!.dispositivos.includes(Number(segundo.rows[0].id)),
+    'y con sus DOS pantallas, que es de lo que se trata');
+  assert.ok(!grupos.some((g) => g.conductorId === yo.conductorId),
+    'el que habló no se oye a sí mismo');
+});
+
 test('el oyente se cuenta una vez aunque tenga la aplicación en dos teléfonos', async () => {
   const canal = canalNuevo();
   const yo = await taxista();
