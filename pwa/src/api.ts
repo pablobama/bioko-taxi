@@ -735,6 +735,31 @@ export const api = {
       body: JSON.stringify({ codigo }),
     }),
 
+  // --- Volver a entrar con el teléfono (migración 078) ----------------------
+  //
+  // El paso previo de las dos altas. `buscar` dice si hay algo con ese número;
+  // si lo hay, `pedirCodigo` manda el SMS y `reclamar` devuelve la cuenta. El
+  // teléfono se manda crudo: el servidor lo normaliza y devuelve la forma
+  // canónica, que es la que se usa en los dos pasos siguientes.
+
+  buscarCuenta: (telefono: string) =>
+    pedirJson<{ conductor: boolean; cliente: boolean; telefono: string }>(
+      '/api/cuenta/buscar',
+      { method: 'POST', body: JSON.stringify({ telefono }) },
+    ),
+
+  pedirCodigoCuenta: (telefono: string) =>
+    pedirJson<{ enviado: boolean }>('/api/cuenta/codigo', {
+      method: 'POST',
+      body: JSON.stringify({ telefono }),
+    }),
+
+  reclamarCuenta: (telefono: string, codigo: string, rol: 'conductor' | 'cliente') =>
+    pedirJson<{ rol: 'conductor' | 'cliente'; nombre: string | null }>('/api/cuenta/reclamar', {
+      method: 'POST',
+      body: JSON.stringify({ telefono, codigo, rol }),
+    }),
+
   // --- Conductor -----------------------------------------------------------
 
   registroConductor: (telefono: string) =>

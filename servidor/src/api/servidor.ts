@@ -37,6 +37,7 @@ import { crearSolicitud, transicionarConductor, transicionarSolicitud } from '..
 import type { ConexionesSse } from '../eventos/adaptador-sse.js';
 import { ServicioVerificacionRegistro, type ServicioVerificacionTelefono } from '../dominio/verificacion-telefono.js';
 import { registrarRutasConductor } from './conductor.js';
+import { registrarRutasCuenta } from './cuenta.js';
 import { registrarRutasLlamadas } from './llamadas.js';
 import { registrarRutasOperador } from './operador.js';
 import { registrarRutasRadio } from './radio.js';
@@ -127,6 +128,7 @@ export function crearServidor(
   registrarRutasOperador(app, pool, emisor);
   registrarRutasRadio(app, pool, emisor, conexionesSse);
   registrarRutasVerificacion(app, pool, servicioVerificacion);
+  registrarRutasCuenta(app, pool, servicioVerificacion);
 
   // Resuelve (y da de alta si es nuevo) el dispositivo del cliente.
   async function dispositivoDesde(req: FastifyRequest): Promise<DispositivoCliente> {

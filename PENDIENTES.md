@@ -4,6 +4,23 @@ Cada entrada lleva su motivo. Nada de TODO sin ticket.
 
 ## Abiertos
 
+- **[P78-01] La app de Android todavía entra con solo el teléfono.** La
+  migración 078 puso el paso previo de «¿ya estás registrado?» con código por
+  SMS en la PWA, y ahí recuperar una cuenta exige el código. Pero
+  `POST /api/conductor/registro` —que es la pantalla de entrada de la app de
+  Android (`Api.kt:54`, `ActividadPrincipal.kt:105`)— sigue vinculando un
+  dispositivo NUEVO a la ficha de un taxista con solo el número, sin código. Eso
+  es la cuenta de otro, con su monedero y su suscripción dentro, a cambio de
+  acertar nueve dígitos que en Malabo empiezan casi todos igual.
+  No se ha cerrado en el mismo commit a propósito: cerrarlo deja a la flota de
+  Android sin poder entrar hasta que salga una versión nueva de la app, y eso no
+  se decide desde el servidor. **El arreglo, cuando se haga, son dos cosas a la
+  vez:** la app pasa a usar `/api/cuenta/buscar` + `/codigo` + `/reclamar` como
+  la PWA, y entonces `/api/conductor/registro` se queda SOLO para refrescar el
+  token de FCM de un dispositivo que ya era de ese taxista —es decir, falla si
+  la vinculación es nueva—. Hasta entonces, el agujero sigue abierto y conviene
+  saberlo.
+
 - **[P75-05] Falta confirmar en un iPhone de verdad que ya se oye.** Se pusieron
   los tres arreglos el 29/09 —declarar el audio como reproducción para que el
   interruptor de silencio no lo calle, despertar el contexto al volver a primer

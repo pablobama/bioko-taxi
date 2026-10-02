@@ -56,7 +56,7 @@ function SelectorIdioma({ idioma, alCambiar }: { idioma: Idioma; alCambiar: (i: 
 }
 
 type Pantalla =
-  | 'cargando' | 'elegir_rol' | 'alta_cliente' | 'alta_conductor'
+  | 'cargando' | 'elegir_rol' | 'volver' | 'alta_cliente' | 'alta_conductor'
   | 'cliente' | 'conductor' | 'ajustes_conductor' | 'estadisticas_conductor'
   | 'operador' | 'campo' | 'verificar_telefono';
 
@@ -184,6 +184,12 @@ async function activarOperadorPorUrl(): Promise<boolean> {
 
 export default function App() {
   const [pantalla, setPantalla] = useState<Pantalla>('cargando');
+  // Qué papel se eligió en la pantalla anterior, y el número que ya se
+  // comprobó (migración 078). El número viaja hasta el formulario de alta para
+  // no pedirlo dos veces; en null significa «sin teléfono, solo correo», que es
+  // un camino que el pasajero sigue teniendo.
+  const [rolDeAlta, setRolDeAlta] = useState<'cliente' | 'conductor'>('cliente');
+  const [telefonoDeAlta, setTelefonoDeAlta] = useState<string | null>(null);
   const [perfil, setPerfil] = useState<Perfil | null>(null);
   const [conductor, setConductor] = useState<DatosConductor | null>(null);
   const [puntos, setPuntos] = useState<PuntoMapa[]>([]);
@@ -406,14 +412,20 @@ export default function App() {
             <button
               type="button"
               className="principal"
-              onClick={() => { prepararSonido(); setAviso(''); setPantalla('alta_cliente'); }}
+              onClick={() => {
+                prepararSonido(); setAviso('');
+                setRolDeAlta('cliente'); setPantalla('volver');
+              }}
             >
               {t('rol.pasajero')}
             </button>
             <button
               type="button"
               className="secundario"
-              onClick={() => { prepararSonido(); setAviso(''); setPantalla('alta_conductor'); }}
+              onClick={() => {
+                prepararSonido(); setAviso('');
+                setRolDeAlta('conductor'); setPantalla('volver');
+              }}
             >
               {t('rol.taxista')}
             </button>
@@ -421,21 +433,43 @@ export default function App() {
           </>
         )}
 
-        {pantalla === 'alta_cliente' && (
-          <AltaCliente
+        {pantalla === 'volver' && (
+          <VolverConTelefono
+            rol={rolDeAlta}
             t={t}
-            alTerminar={() => { setAviso(''); void cargarSesion(); }}
-            alFallar={setAviso}
+            alEntrar={() => { setAviso(''); void cargarSesion(); }}
+            alDarDeAlta={(telefono) => {
+              setAviso('');
+              setTelefonoDeAlta(telefono);
+              setPantalla(rolDeAlta === 'conductor' ? 'alta_conductor' : 'alta_cliente');
+            }}
+            alSinTelefono={() => {
+              setAviso('');
+              setTelefonoDeAlta(null);
+              setPantalla('alta_cliente');
+            }}
             alVolver={() => { setAviso(''); setPantalla('elegir_rol'); }}
+            alFallar={setAviso}
           />
         )}
 
-        {pantalla === 'alta_conductor' && (
-          <AltaConductorFormulario
+        {pantalla === 'alta_cliente' && (
+          <AltaCliente
             t={t}
+            telefono={telefonoDeAlta}
             alTerminar={() => { setAviso(''); void cargarSesion(); }}
             alFallar={setAviso}
-            alVolver={() => { setAviso(''); setPantalla('elegir_rol'); }}
+            alVolver={() => { setAviso(''); setPantalla('volver'); }}
+          />
+        )}
+
+        {pantalla === 'alta_conductor' && telefonoDeAlta && (
+          <AltaConductorFormulario
+            t={t}
+            telefono={telefonoDeAlta}
+            alTerminar={() => { setAviso(''); void cargarSesion(); }}
+            alFallar={setAviso}
+            alVolver={() => { setAviso(''); setPantalla('volver'); }}
           />
         )}
 
@@ -570,21 +604,213 @@ function VerificarTelefono({
   );
 }
 
+// --- Volver a entrar con el teléfono (migración 078) -----------------------
+//
+// El primer paso de las dos altas, y el que faltaba: se pide el NÚMERO y nada
+// más, y se mira si ya hay algo con él. Casi siempre lo hay —reinstalar la
+// aplicación, cambiar de móvil o borrar los datos del navegador no borra una
+// cuenta— y entonces no se pide nada más que el código del SMS. Si no hay nada,
+// se sigue al formulario de siempre con el número ya puesto.
+//
+// POR QUÉ EL CÓDIGO NO SE PUEDE SALTAR. Lo que se entrega al volver es una
+// cuenta, con el monedero y la reputación del taxista dentro. Un número de
+// Malabo son nueve dígitos que empiezan casi todos igual: si bastara con
+// escribirlos, las cuentas serían de quien acertase. El SMS es lo que distingue
+// al dueño de la línea de quien solo conoce el número.
+
+function VolverConTelefono({
+  rol, t, alEntrar, alDarDeAlta, alSinTelefono, alVolver, alFallar,
+}: {
+  rol: 'cliente' | 'conductor';
+  t: T;
+  alEntrar: () => void;
+  alDarDeAlta: (telefono: string) => void;
+  alSinTelefono: () => void;
+  alVolver: () => void;
+  alFallar: (m: string) => void;
+}) {
+  const [telefono, setTelefono] = useState('');
+  const [fase, setFase] = useState<'telefono' | 'codigo'>('telefono');
+  // El número en forma canónica, tal como lo devuelve el servidor. Es el que
+  // vale para los dos pasos siguientes: normalizarlo otra vez aquí sería tener
+  // la misma regla en dos sitios, y en cuanto se separasen dejaría de encontrar
+  // cuentas que sí existen.
+  const [canonico, setCanonico] = useState('');
+  // Registrado, pero con el OTRO papel. Es lo que pasa cuando alguien se
+  // equivoca de botón en la pantalla anterior, y hay que decirlo antes de
+  // mandarle a un formulario de alta que no quería.
+  const [otroPapel, setOtroPapel] = useState(false);
+  const [codigo, setCodigo] = useState('');
+  const [ocupado, setOcupado] = useState(false);
+  const [segundosParaReenviar, setSegundosParaReenviar] = useState(0);
+
+  useEffect(() => {
+    if (segundosParaReenviar <= 0) return;
+    const reloj = setTimeout(() => setSegundosParaReenviar((s) => s - 1), 1000);
+    return () => clearTimeout(reloj);
+  }, [segundosParaReenviar]);
+
+  async function enviarCodigo(numero: string) {
+    try {
+      await api.pedirCodigoCuenta(numero);
+      setSegundosParaReenviar(COOLDOWN_REENVIO_S);
+    } catch (error) {
+      // El SMS puede no salir —cooldown, o Twilio caído— y aun así hay que
+      // dejar escribir el código: puede que ya tenga uno del intento anterior.
+      alFallar(mensajeDeError(error, t('verificacion.enviando')));
+    }
+  }
+
+  async function comprobar() {
+    setOcupado(true);
+    alFallar('');
+    try {
+      const hallazgo = await api.buscarCuenta(telefono.trim());
+      setCanonico(hallazgo.telefono);
+      const miPapel = rol === 'conductor' ? hallazgo.conductor : hallazgo.cliente;
+      const elOtro = rol === 'conductor' ? hallazgo.cliente : hallazgo.conductor;
+      if (miPapel) {
+        setOtroPapel(false);
+        await enviarCodigo(hallazgo.telefono);
+        setFase('codigo');
+      } else if (elOtro) {
+        setOtroPapel(true);
+      } else {
+        alDarDeAlta(hallazgo.telefono);
+      }
+    } catch (error) {
+      alFallar(mensajeDeError(error, t('volver.titulo')));
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  async function entrar() {
+    setOcupado(true);
+    alFallar('');
+    try {
+      await api.reclamarCuenta(canonico, codigo, rol);
+      alEntrar();
+    } catch (error) {
+      alFallar(mensajeDeError(error, t('verificacion.codigoIncorrecto')));
+      setCodigo('');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  if (fase === 'codigo') {
+    return (
+      <>
+        <h1>{t('verificacion.titulo')}</h1>
+        <p className="nota">{t('volver.yaEstas')}</p>
+        <p className="nota">{t('verificacion.nota', { telefono: canonico })}</p>
+        <input
+          type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
+          value={codigo} placeholder={t('verificacion.placeholder')}
+          onChange={(e) => setCodigo(e.target.value.replace(/\D/g, '').slice(0, 6))}
+        />
+        <button
+          type="button" className="principal"
+          disabled={codigo.length !== 6 || ocupado}
+          onClick={entrar}
+        >
+          {ocupado ? t('verificacion.comprobando') : t('verificacion.comprobar')}
+        </button>
+        <button
+          type="button" className="secundario"
+          disabled={ocupado || segundosParaReenviar > 0}
+          onClick={() => void enviarCodigo(canonico)}
+        >
+          {segundosParaReenviar > 0
+            ? t('verificacion.reenviarEn', { seg: segundosParaReenviar })
+            : t('verificacion.reenviar')}
+        </button>
+        <button
+          type="button" className="tenue"
+          onClick={() => { alFallar(''); setCodigo(''); setFase('telefono'); }}
+        >
+          {t('volver.cambiarNumero')}
+        </button>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <h1>{t('volver.titulo')}</h1>
+      <p className="nota">{t('volver.nota')}</p>
+      <input
+        type="tel" value={telefono} placeholder={t('campo.telefono')}
+        onChange={(e) => {
+          setTelefono(e.target.value);
+          // Si cambia el número, lo que se averiguó del anterior ya no vale.
+          if (otroPapel) setOtroPapel(false);
+        }}
+      />
+      {otroPapel && (
+        <>
+          <p className="aviso">
+            {t('volver.esOtroPapel', {
+              papel: t(rol === 'conductor' ? 'papel.pasajero' : 'papel.taxista'),
+            })}
+          </p>
+          <button
+            type="button" className="principal"
+            disabled={ocupado}
+            onClick={() => alDarDeAlta(canonico)}
+          >
+            {t('volver.altaIgualmente')}
+          </button>
+        </>
+      )}
+      {!otroPapel && (
+        <button
+          type="button" className="principal"
+          disabled={telefono.trim().length === 0 || ocupado}
+          onClick={comprobar}
+        >
+          {ocupado ? t('volver.comprobando') : t('volver.continuar')}
+        </button>
+      )}
+      {/* El pasajero puede darse de alta con solo el correo (migración 015), y
+          ese camino no se puede cerrar por el paso nuevo: hay quien no tiene
+          número propio. El taxista no lo tiene: su teléfono es su identidad. */}
+      {rol === 'cliente' && (
+        <button type="button" className="tenue" onClick={alSinTelefono}>
+          {t('volver.sinTelefono')}
+        </button>
+      )}
+      <button type="button" className="secundario" onClick={alVolver}>
+        {t('accion.volver')}
+      </button>
+    </>
+  );
+}
+
 // --- Alta del pasajero: teléfono y/o correo, nada más ----------------------
 
 function AltaCliente({
-  t, alTerminar, alFallar, alVolver,
-}: { t: T; alTerminar: () => void; alFallar: (m: string) => void; alVolver: () => void }) {
-  const [telefono, setTelefono] = useState('');
+  t, telefono, alTerminar, alFallar, alVolver,
+}: {
+  t: T;
+  // Ya comprobado en el paso previo (migración 078), y en null cuando se eligió
+  // darse de alta solo con el correo. Aquí no se vuelve a pedir ni se puede
+  // cambiar: si se cambiara, el número que entra sería uno sin comprobar.
+  telefono: string | null;
+  alTerminar: () => void;
+  alFallar: (m: string) => void;
+  alVolver: () => void;
+}) {
   const [correo, setCorreo] = useState('');
   const [guardando, setGuardando] = useState(false);
-  const listo = telefono.trim().length > 0 || correo.trim().length > 0;
+  const listo = telefono !== null || correo.trim().length > 0;
 
   async function guardar() {
     setGuardando(true);
     try {
       await api.guardarPerfil({
-        telefono: telefono.trim() || null,
+        telefono,
         correo: correo.trim() || null,
       });
       alTerminar();
@@ -599,14 +825,15 @@ function AltaCliente({
     <>
       <h1>{t('altaCliente.titulo')}</h1>
       <p className="nota">{t('altaCliente.nota')}</p>
-      <input type="tel" value={telefono} placeholder={t('campo.telefono')}
-        onChange={(e) => setTelefono(e.target.value)} />
+      {telefono && <p className="nota">{t('volver.numero', { telefono })}</p>}
       <input type="email" value={correo} placeholder={t('campo.correo')}
         onChange={(e) => setCorreo(e.target.value)} />
       <button type="button" className="principal" disabled={!listo || guardando} onClick={guardar}>
         {guardando ? t('accion.guardando') : t('accion.empezar')}
       </button>
-      <button type="button" className="secundario" onClick={alVolver}>{t('accion.volver')}</button>
+      <button type="button" className="secundario" onClick={alVolver}>
+        {t('volver.cambiarNumero')}
+      </button>
     </>
   );
 }
@@ -614,10 +841,19 @@ function AltaCliente({
 // --- Alta del taxista -----------------------------------------------------
 
 function AltaConductorFormulario({
-  t, alTerminar, alFallar, alVolver,
-}: { t: T; alTerminar: () => void; alFallar: (m: string) => void; alVolver: () => void }) {
+  t, telefono, alTerminar, alFallar, alVolver,
+}: {
+  t: T;
+  // Ya comprobado en el paso previo (migración 078): este número NO está dado
+  // de alta como taxista, y por eso se llega aquí. No se vuelve a pedir, y
+  // cambiarlo es volver atrás: el teléfono es la identidad del conductor, y uno
+  // escrito aquí de nuevo se saltaría la comprobación.
+  telefono: string;
+  alTerminar: () => void;
+  alFallar: (m: string) => void;
+  alVolver: () => void;
+}) {
   const [nombre, setNombre] = useState('');
-  const [telefono, setTelefono] = useState('');
   const [correo, setCorreo] = useState('');
   const [matricula, setMatricula] = useState('');
   const [marca, setMarca] = useState('');
@@ -626,14 +862,14 @@ function AltaConductorFormulario({
   const [seguro, setSeguro] = useState(false);
   const [guardando, setGuardando] = useState(false);
 
-  const listo = [nombre, telefono, matricula, marca].every((v) => v.trim().length > 0);
+  const listo = [nombre, matricula, marca].every((v) => v.trim().length > 0);
 
   async function guardar() {
     setGuardando(true);
     try {
       const respuesta = await api.altaConductor({
         nombre: nombre.trim(),
-        telefono: telefono.trim(),
+        telefono,
         correo: correo.trim() || undefined,
         matricula: matricula.trim(),
         marca: marca.trim(),
@@ -654,10 +890,9 @@ function AltaConductorFormulario({
     <>
       <h1>{t('altaConductor.titulo')}</h1>
       <p className="nota">{t('altaConductor.nota')}</p>
+      <p className="nota">{t('volver.numero', { telefono })}</p>
       <input type="text" value={nombre} placeholder={t('campo.nombreCompleto')}
         onChange={(e) => setNombre(e.target.value)} />
-      <input type="tel" value={telefono} placeholder={t('campo.telefono')}
-        onChange={(e) => setTelefono(e.target.value)} />
       <input type="email" value={correo} placeholder={t('campo.correoOpcionalSolo')}
         onChange={(e) => setCorreo(e.target.value)} />
       <input type="text" value={matricula} placeholder={t('campo.matricula')}
@@ -693,7 +928,9 @@ function AltaConductorFormulario({
       <button type="button" className="principal" disabled={!listo || guardando} onClick={guardar}>
         {guardando ? t('accion.enviando') : t('accion.darseDeAlta')}
       </button>
-      <button type="button" className="secundario" onClick={alVolver}>{t('accion.volver')}</button>
+      <button type="button" className="secundario" onClick={alVolver}>
+        {t('volver.cambiarNumero')}
+      </button>
     </>
   );
 }

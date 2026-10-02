@@ -15,6 +15,7 @@ import { renovarSuscripcion } from '../dominio/monedero.js';
 import { caducarPresencias } from '../dominio/presencia.js';
 import { caducarViajesColgados } from '../dominio/caducidad.js';
 import { procesarProximidad } from '../dominio/proximidad.js';
+import { purgarIntentos } from '../dominio/cuentas.js';
 import { purgarEsperas } from '../dominio/esperas.js';
 import { purgarRastro } from '../dominio/rastro.js';
 import { purgarMensajes } from '../dominio/radio.js';
@@ -216,6 +217,10 @@ async function principal(): Promise<void> {
         // vieja que se quedara ahí volvería a avisar a alguien que hace horas
         // que resolvió lo suyo.
         await purgarEsperas(pool);
+        // Intentos de recuperar cuenta de hace más de un día
+        // (migración 078). Es un contador con ventana de una hora, no
+        // un archivo: lo de ayer ya no frena a nadie.
+        await purgarIntentos(pool);
         await renovarSuscripcionesCaducadas(pool, emisor);
       } catch (error) {
         console.error('Error del planificador:', error);
