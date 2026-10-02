@@ -883,6 +883,13 @@ export default function Galeria() {
               />
             </Marco>
 
+            <Marco
+              titulo="Radio - solo escuchar"
+              descripcion="Cuando el telefono no deja grabar. El boton se apaga pero NO se muere: apretarlo vuelve a probar el microfono, sin pedir el turno. Antes, un mal momento -una llamada entrante, un 'no' al permiso- dejaba la radio perdida para siempre, porque no quedaba ningun gesto que la devolviera."
+            >
+              <RadioDeMuestra estado="libre" puedeGrabar="sin_micro" />
+            </Marco>
+
             <Marco titulo="Tus números" descripcion="Aceptación, nota y monedero. Sin comisiones: solo cuota.">
               <HojaSuelta>
                 <h1>Tus números</h1>
@@ -962,11 +969,13 @@ function RadioDeMuestra(props: {
   aviso?: string | null;
   oyentes?: number | null;
   mensajes?: typeof MENSAJES_RADIO;
+  puedeGrabar?: 'si' | 'sin_micro' | 'sin_grabadora';
 }) {
   return (
     <PanelRadio
       estado={props.estado}
       encendida
+      puedeGrabar={props.puedeGrabar ?? 'si'}
       habla={props.habla ?? null}
       quedan={props.quedan ?? 0}
       segundosMax={10}

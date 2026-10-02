@@ -2382,6 +2382,12 @@ button.importe.elegido-importe {
   cursor: default;
 }
 
+/* Mudo: se ve apagado como cuando estaba deshabilitado —no promete hablar— pero
+   se puede apretar, porque apretarlo es lo que vuelve a probar el micrófono. */
+.radio-boton-mudo {
+  opacity: 0.5;
+}
+
 /* El pulso: «estoy aquí». Un aro que sale del botón y se desvanece, cada tres
    segundos, y solo cuando se puede hablar —mientras uno habla manda el aro del
    turno, y si habla otro no hay nada que ofrecer—. Va en `::after` para no

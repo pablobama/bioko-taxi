@@ -118,17 +118,64 @@ export function esAplicacionInstalada(): boolean {
 
 // Un aparato que ya demostró que no puede grabar se recuerda: volver a
 // preguntárselo es quitarle el turno al gremio para fallar igual.
-// La clave lleva versión a propósito. El apunte viejo se hizo cuando la
-// aplicación declaraba una sesión de audio que NO permitía grabar, así que
-// marcaba como imposibles teléfonos que sí pueden. Al cambiar la causa hay que
-// darles otra oportunidad, y lo limpio es estrenar clave en vez de ir borrando.
-const CLAVE_NO_PUEDE = 'radio:sinMicrofono2';
+// La clave lleva versión a propósito, y ésta es la tercera. Cada vez que cambia
+// QUÉ se estaba apuntando, los apuntes viejos dejan de significar lo que decían
+// y hay que darle otra oportunidad a todo el mundo; estrenar clave es más limpio
+// que ir borrando.
+//
+//   v2 — se apuntó mientras la aplicación declaraba una sesión de audio que no
+//        permitía grabar, así que marcaba teléfonos que sí podían.
+//   v3 — se apuntaba ante CUALQUIER fallo del micrófono, así que marcaba a quien
+//        dijo que no al permiso una vez, o a quien apretó mientras hablaba por
+//        teléfono. Todos esos apuntes son falsos y tienen que caer.
+const CLAVE_NO_PUEDE = 'radio:sinMicrofono3';
+
+// QUÉ FALLOS SIGNIFICAN «AQUÍ NO SE PUEDE» Y CUÁLES NO. Esta distinción es todo
+// el arreglo del 02/10, y nació de que la radio «se deshizo» en un iPhone donde
+// llevaba días funcionando.
+//
+// Antes se apuntaba el aparato como mudo ante CUALQUIER fallo al abrir el
+// micrófono. Pero casi ninguno de esos fallos quiere decir que el aparato no
+// pueda:
+//
+//   · NotAllowedError ..... dijo que NO al permiso. Puede decir que sí mañana.
+//   · NotReadableError .... el micrófono está cogido AHORA. Un taxista recibe
+//     llamadas: durante una llamada, el micrófono es del teléfono. Al colgar
+//     vuelve a estar libre.
+//   · AbortError / NotFoundError … lo mismo, mala suerte momentánea.
+//
+// Y el apunte no caducaba ni se podía quitar desde ningún sitio. Así que una
+// llamada entrante en el momento de apretar, o un «no» al permiso, convertía la
+// aplicación instalada en un receptor para siempre. Eso no es un diagnóstico,
+// es una condena.
+//
+// InvalidStateError sí lo es: es el fallo medido el 30/09 en la aplicación
+// instalada de iOS, donde `getUserMedia` pide el permiso y después rechaza pase
+// lo que pase. Solo ése se apunta — y aun así se puede deshacer, porque iOS
+// cambia con cada versión y una medida de un día no puede valer para siempre.
+const FALLOS_DEFINITIVOS = ['InvalidStateError', 'NotSupportedError'];
+
+export function esFalloDefinitivo(error: unknown): boolean {
+  const nombre = (error as { name?: string } | null)?.name;
+  return nombre !== undefined && FALLOS_DEFINITIVOS.includes(nombre);
+}
 
 export function recordarQueNoPuedeGrabar(): void {
   try {
     localStorage.setItem(CLAVE_NO_PUEDE, esAplicacionInstalada() ? 'instalada' : 'si');
   } catch {
     // Sin almacenamiento se vuelve a intentar la próxima vez.
+  }
+}
+
+// La vuelta atrás. La pide la persona desde el botón «volver a probar», que es
+// lo que faltaba: sin ella, el único camino conocido para recuperar la radio
+// era desinstalar la aplicación y volver a instalarla.
+export function olvidarQueNoPuedeGrabar(): void {
+  try {
+    localStorage.removeItem(CLAVE_NO_PUEDE);
+  } catch {
+    // Si no se puede escribir, tampoco se pudo apuntar: no hay nada que quitar.
   }
 }
 
@@ -199,6 +246,9 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
   const trozos = useRef<Blob[]>([]);
   const empezoEn = useRef<number>(0);
   const corte = useRef<number | null>(null);
+  // Hay una prueba de micrófono en marcha. Sin esto, apretar tres veces mientras
+  // iOS enseña el diálogo del permiso lanza tres pruebas.
+  const probando = useRef(false);
   // Si se suelta el botón antes de que conteste el servidor, no hay que
   // empezar a grabar cuando llegue el permiso: el taxista ya no está hablando.
   const soltado = useRef(false);
@@ -349,10 +399,52 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
     // fallar acto seguido deja el canal pillado para el resto del gremio por
     // alguien que no iba a poder hablar.
     if (puedeGrabar !== 'si') {
-      setAviso(puedeGrabar === 'sin_micro'
-        ? 'Esta aplicación instalada no puede usar el micrófono. Abre la página en'
-          + ' el navegador para hablar por la radio.'
-        : 'Este navegador no sabe grabar voz.');
+      // Sin grabadora no hay nada que probar: falta una pieza del navegador, no
+      // un permiso que se pueda volver a pedir.
+      if (puedeGrabar === 'sin_grabadora') {
+        setAviso('Este navegador no sabe grabar voz.');
+        return;
+      }
+      // APRETAR ESTANDO MUDO ES VOLVER A PROBAR. No hace falta un segundo botón:
+      // el gesto de querer hablar ya es apretar éste, y quien ve «solo escuchar»
+      // y aprieta está pidiendo exactamente esto.
+      //
+      // Y se prueba SOLO EL MICRÓFONO, sin pedir el turno. Es la precaución que
+      // da sentido a todo lo demás: pedir el turno y fallar después deja el canal
+      // pillado para el gremio entero por alguien que no iba a poder hablar, que
+      // es justo el daño que este apunte existía para evitar.
+      if (probando.current) return;
+      probando.current = true;
+      setAviso('Espera…');
+      void (async () => {
+        try {
+          permitirGrabar();
+          const prueba = await paso(
+            'micro', () => navigator.mediaDevices.getUserMedia(RESTRICCIONES),
+          );
+          prueba.getTracks().forEach((t) => t.stop());
+          volverAReproducir();
+          olvidarQueNoPuedeGrabar();
+          setPuedeGrabar('si');
+          // No se encadena con la grabación: para cuando el permiso se concede,
+          // el dedo lleva rato fuera del botón. Se dice que ya está, y el
+          // siguiente apretón es el de siempre.
+          setAviso('Listo. Aprieta para hablar.');
+        } catch (error) {
+          if (esFalloDefinitivo(error)) {
+            recordarQueNoPuedeGrabar();
+            setPuedeGrabar('sin_micro');
+            setAviso('Aquí no se puede grabar. Ábrela en el navegador.');
+          } else {
+            // Un «no» al permiso, o el micrófono cogido por una llamada. Ni
+            // condena al aparato ni se queda escondido: se dice qué pasó y que
+            // se puede volver a apretar.
+            setAviso(`${mensajeDeFallo(error)} Aprieta otra vez.`);
+          }
+        } finally {
+          probando.current = false;
+        }
+      })();
       return;
     }
     soltado.current = false;
@@ -450,7 +542,7 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
         // sirve para volver a quitarle el turno al gremio. Se apunta, y el
         // botón pasa a «solo escuchar» con su explicación.
         const paso = (error as { pasoRadio?: string } | null)?.pasoRadio;
-        if (paso === 'micro' && esAplicacionInstalada()) {
+        if (paso === 'micro' && esAplicacionInstalada() && esFalloDefinitivo(error)) {
           recordarQueNoPuedeGrabar();
           setPuedeGrabar('sin_micro');
         }

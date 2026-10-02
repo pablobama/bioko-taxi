@@ -179,8 +179,11 @@ export default function PanelRadio({
   const lado = pos.x + LADO / 2 > cajaDe(caja.current).ancho / 2 ? 'derecha' : 'izquierda';
 
   // Un teléfono que no puede grabar se dice ANTES de que alguien apriete, no
-  // después de fallar: el botón sigue estando para escuchar y volver a oír, y
-  // lo que cambia es que no promete algo que no va a pasar.
+  // después de fallar: lo que cambia es que el botón no promete algo que no va a
+  // pasar. Pero NO se apaga, y eso es deliberado: apretarlo vuelve a probar el
+  // micrófono. Un botón muerto convertía un mal momento —una llamada entrante,
+  // un «no» al permiso— en una radio perdida para siempre, porque no quedaba
+  // ningún gesto que pudiera devolverla.
   const mudo = puedeGrabar !== 'si';
 
   const rotulo = mudo
@@ -266,7 +269,8 @@ export default function PanelRadio({
           type="button"
           className={`radio-boton${hablando ? ' radio-boton-hablando' : ''}`
             + `${ocupado ? ' radio-boton-ocupado' : ''}`
-            + `${estado === 'libre' && !moviendo && !mudo ? ' radio-boton-late' : ''}`}
+            + `${estado === 'libre' && !moviendo && !mudo ? ' radio-boton-late' : ''}`
+            + `${mudo ? ' radio-boton-mudo' : ''}`}
           // Puntero y no clic: hay que saber cuándo se aprieta y cuándo se
           // suelta. `onPointerLeave` y `onPointerCancel` también sueltan, porque
           // un dedo que resbala fuera del botón nunca manda el «arriba», y sin
@@ -276,7 +280,7 @@ export default function PanelRadio({
           onPointerLeave={alSoltar}
           onPointerCancel={alSoltar}
           onContextMenu={(e) => e.preventDefault()}
-          disabled={esperando || ocupado || mudo}
+          disabled={esperando || ocupado}
           aria-pressed={hablando}
           aria-label={rotulo}
           // El aro que se vacía marca lo que queda de turno. Se ve de reojo, sin
