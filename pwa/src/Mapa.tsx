@@ -43,7 +43,10 @@ export type Encuadre =
   // El trayecto del viaje, ya a bordo.
   | 'viaje'
   // Todo lo que anduvo un taxi en un periodo. Solo lo usa el operador.
-  | 'recorrido';
+  | 'recorrido'
+  // La flota entera a la vez, para la consola de despacho: lo que importa es
+  // ver de un vistazo dónde hay taxis y dónde no hay ninguno.
+  | 'flota';
 
 export interface PropiedadesMapa {
   puntos: PuntoMapa[];
@@ -55,6 +58,16 @@ export interface PropiedadesMapa {
   // minutos, o el taxista no sabe a cuál de los dos hacer caso.
   origenEnVivo?: boolean;
   taxi?: { lat: number; lng: number } | null;
+  // La flota, para la consola del operador. Es distinto de `taxi`: aquél es EL
+  // coche de este viaje, dibujado grande y orientado; éstos son muchos, y lo
+  // único que se les pide es decir dónde están y si están libres.
+  taxis?: Array<{
+    id: number;
+    lat: number;
+    lng: number;
+    matricula: string | null;
+    libre: boolean;
+  }>;
   buscando?: boolean;
   encuadre?: Encuadre;
   // Paradas del taxi compartido: solo el lugar, nunca de quién es.
@@ -124,7 +137,7 @@ const PRIORIDAD: Record<string, number> = {
 };
 
 export default function Mapa({
-  puntos, origen, destino, taxi, buscando, encuadre = 'persona', paradas, recorrido,
+  puntos, origen, destino, taxi, taxis, buscando, encuadre = 'persona', paradas, recorrido,
   origenEnVivo = false,
   maxPasadas = 1, rumbo = null, rumboCoche = null, yo = null, alCalcularRuta,
 }: PropiedadesMapa) {
@@ -268,6 +281,21 @@ export default function Mapa({
       if (destino) enfoque.push(aMundo(destino.lat, destino.lng));
       for (const p of rutaViaje ?? []) enfoque.push(aMundo(p.lat, p.lng));
       for (const p of paradas ?? []) enfoque.push(aMundo(p.lat, p.lng));
+    } else if (encuadre === 'flota') {
+      // Todos, aunque uno se haya ido al otro extremo de la isla: un taxi que
+      // no cabe en el encuadre es un taxi que el operador no va a mandar a
+      // ningún sitio porque no sabe que existe.
+      for (const t of taxis ?? []) enfoque.push(aMundo(t.lat, t.lng));
+      // Sin ninguno, la isla entera. El respaldo de más abajo —cinco kilómetros
+      // alrededor del centro del recuadro— cae en mitad de Bioko, que es selva:
+      // el operador veía un rectángulo negro y no sabía si el mapa estaba roto
+      // o es que no había taxis. Enseñando la isla, el mapa dice dónde está
+      // mirando aunque no haya nada que enseñar encima.
+      if ((taxis ?? []).length === 0) {
+        const { recuadro: caja } = listo.plano;
+        enfoque.push(aMundo(caja.sur, caja.oeste));
+        enfoque.push(aMundo(caja.norte, caja.este));
+      }
     } else if (encuadre === 'recorrido') {
       // Entero: el sentido de esta vista es ver hasta dónde llegó, y un
       // encuadre que recorte la punta del recorrido no dice nada.
@@ -280,6 +308,10 @@ export default function Mapa({
       margen: Math.min(52, Math.max(24, Math.round(ancho * 0.11))),
       // Encuadrando a una sola persona no hace falta ver medio Malabo.
       metrosMinimos: encuadre === 'persona' ? 700 : 420,
+      // La flota puede estar repartida por toda la isla, que son setenta
+      // kilómetros: con el tope de siempre (14 km) se recortaría y habría taxis
+      // fuera de pantalla sin que nada lo dijera.
+      metrosMaximos: encuadre === 'flota' ? 90_000 : undefined,
       // El giro entra en el encuadre, no solo en el dibujo: una ruta que en
       // vertical cabe justa, en diagonal no, y sin esto se saldría media.
       rumbo: rumboMapa,
@@ -298,8 +330,8 @@ export default function Mapa({
       escala: ancho / (5_000 * listo.proy.unidadesPorMetro),
       rumbo: rumboMapa,
     };
-  }, [listo, ancho, alto, origen, destino, taxi, yo, encuadre, rutaTaxi, rutaViaje, paradas,
-    recorrido, rumboMapa]);
+  }, [listo, ancho, alto, origen, destino, taxi, taxis, yo, encuadre, rutaTaxi, rutaViaje,
+    paradas, recorrido, rumboMapa]);
 
   const camara = camaraManual ?? camaraAuto;
 
@@ -705,6 +737,40 @@ export default function Mapa({
               </g>
             );
           })()}
+
+          {/* La flota, para la consola del operador. Puntos y no coches: a
+              treinta taxis en pantalla, el dibujo del coche se convierte en
+              una mancha y deja de poderse distinguir uno de otro. Ámbar el que
+              está libre, apagado el que lleva a alguien — es la única pregunta
+              que se hace quien despacha.
+
+              La matrícula va al lado, pequeña: sin ella el mapa dice que «hay
+              un taxi ahí» pero no cuál, y el operador no puede llamarle. */}
+          {(taxis ?? []).map((t) => {
+            const xy = pantalla(t.lat, t.lng);
+            return (
+              <g key={t.id} transform={`translate(${xy[0].toFixed(1)},${xy[1].toFixed(1)})`}>
+                <circle
+                  r={7}
+                  fill={t.libre ? '#ffb020' : '#5a5a64'}
+                  stroke="#16161a"
+                  strokeWidth={2}
+                />
+                {t.matricula !== null && (
+                  <text
+                    x={11} y={4}
+                    fontSize={11}
+                    fill={t.libre ? '#ffb020' : '#8a8a94'}
+                    stroke="#16161a"
+                    strokeWidth={3}
+                    paintOrder="stroke"
+                  >
+                    {t.matricula}
+                  </text>
+                )}
+              </g>
+            );
+          })}
 
           {/* El coche, orientado según su rumbo. Desaparece en cuanto el
               pasajero sube: a partir de ahí su posición no es asunto de nadie

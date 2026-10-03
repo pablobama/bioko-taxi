@@ -202,6 +202,44 @@ export interface PuntoMapa {
   categoria: string;
 }
 
+// --- La consola de despacho (03/10) ----------------------------------------
+// Lo que está pasando ahora mismo, en una sola petición: el mapa y las listas
+// de al lado tienen que contar lo mismo, y tres peticiones sueltas serían tres
+// relojes distintos.
+
+export interface TaxiVivo {
+  conductor_id: number;
+  nombre: string;
+  matricula: string | null;
+  estado: string;
+  zona: string | null;
+  // Sin posición cuando el taxi está en servicio pero todavía no ha mandado
+  // ninguna miga de rastro. Se enseña igual: un taxi en servicio del que no se
+  // sabe dónde está es justo el que hay que mirar.
+  lat: number | null;
+  lng: number | null;
+  visto_hace_seg: number | null;
+  latido_hace_seg: number | null;
+  solicitud_id: number | null;
+}
+
+export interface ViajeVivo {
+  id: number;
+  estado: string;
+  creada_en: string;
+  telefono_cliente: string | null;
+  espera_seg: number;
+  origen: string;
+  origen_lat: number;
+  origen_lng: number;
+  destino: string;
+  destino_lat: number;
+  destino_lng: number;
+  conductor_id: number | null;
+  conductor: string | null;
+  matricula: string | null;
+}
+
 // Un viaje terminado al que le falta la valoración del pasajero (P7-03).
 export interface ValoracionPendiente {
   solicitudId: number;
@@ -534,6 +572,37 @@ export interface RecorridoOperador {
   // colorea el mapa de calor, de azul (una vez) a rojo (lo que más repite).
   tramos: Array<Array<{ lat: number; lng: number; n: number }>>;
   maxPasadas: number;
+  // Un renglón por salida: el mapa dice POR DÓNDE anduvo, esto dice CUÁNDO y
+  // cuánto. Son las dos mitades de la misma pregunta y ninguna sustituye a la
+  // otra: con el dibujo no se contrasta una queja con hora, y con la tabla no
+  // se ve que todas las salidas pasan por la misma calle.
+  salidas: SalidaRecorrido[];
+}
+
+export interface SalidaRecorrido {
+  desde: string;
+  hasta: string;
+  segundos: number;
+  metros: number;
+  // Estuvo ahí pero no se movió: la espera en la parada. No es un hueco —de
+  // eso no hay fila— y mezclarlos escondería las esperas, que son media
+  // jornada de un taxista.
+  parado: boolean;
+}
+
+// Una carrera, como se lee en la tabla del operador. Crudo del servidor, en
+// snake_case, igual que las incidencias.
+export interface ViajeOperador {
+  id: number;
+  estado: string;
+  creada_en: string;
+  cerrada_en: string | null;
+  telefono_cliente: string | null;
+  precio_xaf: number | null;
+  origen: string;
+  destino: string;
+  conductor: string | null;
+  matricula: string | null;
 }
 
 export interface ZonaOperador {
@@ -1054,6 +1123,21 @@ export const api = {
     pedirJson<{ dispositivo_id: number; strikes: number; bloqueado_en: string | null }>(
       `/api/operador/pasajeros/${dispositivoId}/desbloquear`,
       { method: 'POST', body: '{}', reintentos: 1 },
+    ),
+
+  viajesOperador: (estado?: string, q?: string) => {
+    const partes = [
+      estado ? `estado=${encodeURIComponent(estado)}` : '',
+      q ? `q=${encodeURIComponent(q)}` : '',
+    ].filter(Boolean);
+    return pedirJson<{ viajes: ViajeOperador[] }>(
+      `/api/operador/viajes${partes.length > 0 ? `?${partes.join('&')}` : ''}`,
+    );
+  },
+
+  vivoOperador: () =>
+    pedirJson<{ taxis: TaxiVivo[]; viajes: ViajeVivo[]; momento: string }>(
+      '/api/operador/vivo',
     ),
 
   incidenciasOperador: (estado?: 'pendientes' | 'resueltas') =>

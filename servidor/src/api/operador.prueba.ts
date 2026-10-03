@@ -104,10 +104,70 @@ async function crearIncidencia(): Promise<{
 
 test('operador: sin el uuid en la lista, 403 en todas las rutas', async () => {
   const intruso = randomUUID();
-  for (const url of ['/api/operador/estadisticas', '/api/operador/incidencias', '/api/operador/pasajeros']) {
+  for (const url of ['/api/operador/estadisticas', '/api/operador/incidencias', '/api/operador/pasajeros', '/api/operador/vivo']) {
     const res = await app.inject({ method: 'GET', url, headers: cabeceras(intruso) });
     assert.equal(res.statusCode, 403, `${url} debería negarse`);
   }
+});
+
+// La consola de despacho (03/10). Lo que se comprueba no es que devuelva una
+// lista —eso es casi gratis— sino que NO cuente como «en servicio» a un taxi
+// cuyo último latido es de hace horas. Esa fila existe de verdad en la tabla:
+// quien apaga la presencia es un reloj que puede llevar parado un rato, y sin
+// el filtro la consola manda al operador a llamar a alguien que apagó el móvil
+// ayer, que es peor que no enseñarle nada.
+test('vivo: un taxi con el latido viejo no sale como en servicio', async () => {
+  const telefono = telefonoUnico();
+  const alta = await app.inject({
+    method: 'POST', url: '/api/conductor/alta', headers: cabeceras(randomUUID()),
+    payload: {
+      nombre: 'Taxista fantasma', telefono,
+      matricula: `MB-${telefono.slice(-5)}F`, marca: 'Toyota', carroceria: 'turismo',
+    },
+  });
+  assert.equal(alta.statusCode, 200, alta.body);
+  // Con Number() a propósito: el alta devuelve el id tal como lo serializa
+  // Postgres, que para un bigint es TEXTO. Comparar eso con el número que da
+  // /vivo sale siempre falso, y la prueba pasaría sin comprobar nada.
+  const conductorId = Number(alta.json().conductorId);
+
+  // En servicio según la tabla, pero sin dar señales desde hace dos horas.
+  await pool.query(
+    `UPDATE presencia SET estado = 'DISPONIBLE', ultimo_heartbeat = now() - interval '2 hours'
+     WHERE conductor_id = $1`,
+    [conductorId],
+  );
+  await pool.query(
+    'INSERT INTO rastro (conductor_id, lat, lng) VALUES ($1, 3.752, 8.779)',
+    [conductorId],
+  );
+
+  const viejo = await app.inject({
+    method: 'GET', url: '/api/operador/vivo', headers: cabeceras(UUID_OPERADOR),
+  });
+  assert.equal(viejo.statusCode, 200, viejo.body);
+  assert.ok(
+    !viejo.json().taxis.some((t: { conductor_id: number }) => t.conductor_id === conductorId),
+    'un taxi sin latido reciente no se despacha',
+  );
+
+  // Con el latido fresco sí, y con la posición que acaba de mandar.
+  await pool.query(
+    "UPDATE presencia SET ultimo_heartbeat = now() WHERE conductor_id = $1",
+    [conductorId],
+  );
+  const ahora = await app.inject({
+    method: 'GET', url: '/api/operador/vivo', headers: cabeceras(UUID_OPERADOR),
+  });
+  const suyo = ahora.json().taxis
+    .find((t: { conductor_id: number }) => t.conductor_id === conductorId);
+  assert.ok(suyo, 'con el latido fresco tiene que salir');
+  assert.equal(suyo.lat, 3.752);
+  assert.equal(suyo.estado, 'DISPONIBLE');
+  // El id llega como número y no como texto: el bigint de Postgres se serializa
+  // como cadena si no se le pide otra cosa, y entonces el mapa no encuentra el
+  // taxi al cruzarlo con la lista.
+  assert.equal(typeof suyo.conductor_id, 'number');
 });
 
 test('incidencias: la cola lista el caso con su contexto y sancionar aplica el strike', async () => {

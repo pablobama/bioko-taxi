@@ -568,6 +568,16 @@ export function registrarRutasOperador(
       tramos: recorrido.tramos.map(
         (t) => t.map((p) => ({ lat: p.lat, lng: p.lng, n: p.pasadas ?? 1 })),
       ),
+      // Un renglón por salida, para poder LEER el recorrido además de verlo.
+      // Aquí sí van las horas: son pocas filas —las salidas de un día— y son
+      // justo el dato que no se puede sacar mirando el dibujo.
+      salidas: recorrido.resumenTramos.map((t) => ({
+        desde: t.desde.toISOString(),
+        hasta: t.hasta.toISOString(),
+        segundos: t.segundos,
+        metros: t.metros,
+        parado: t.parado,
+      })),
     };
   });
 
@@ -1093,6 +1103,126 @@ export function registrarRutasOperador(
     return reply.send({
       solicitudId: creada.solicitudId, estado: actual.rows[0].estado, yaExistia: true,
     });
+  });
+
+  // --- La consola de despacho: qué está pasando AHORA MISMO (03/10) ---------
+  //
+  // Una sola petición, porque es para pintar una pantalla que se refresca sola
+  // cada pocos segundos y quien la mira está sentado delante del ordenador todo
+  // el día. Tres consultas sueltas serían tres relojes desincronizados: el mapa
+  // enseñando un taxi que la lista de al lado ya da por ocupado.
+  //
+  // POR QUÉ ESTO NO EXISTÍA. Hasta ahora el panel servía para revisar cosas
+  // —incidencias, pagos, fichas—, que es trabajo de «cuando puedas». Despachar
+  // es lo contrario: es saber dónde hay un taxi libre cerca de quien acaba de
+  // llamar, y eso no se puede hacer con una lista ordenada por fecha.
+  app.get('/api/operador/vivo', async (req) => {
+    exigirOperador(req);
+
+    // Dónde está cada taxi. La última miga de `rastro` por conductor (migración
+    // 042), con LATERAL para que el índice (conductor_id, creado_en) haga el
+    // trabajo: sin él esto sería leer el rastro entero y quedarse con la última
+    // fila de cada grupo, y el rastro son millones de filas.
+    //
+    // Se piden TODOS los que no están desconectados, incluidos los que no tienen
+    // ni una posición: un taxi en servicio del que no sabemos dónde está es
+    // justo el que hay que mirar, y esconderlo del mapa lo haría invisible.
+    const taxis = await pool.query(
+      `SELECT c.id::int AS conductor_id, c.nombre, v.matricula,
+              p.estado, z.nombre AS zona,
+              r.lat, r.lng,
+              EXTRACT(EPOCH FROM (now() - r.creado_en))::int AS visto_hace_seg,
+              EXTRACT(EPOCH FROM (now() - p.ultimo_heartbeat))::int AS latido_hace_seg,
+              s.id AS solicitud_id
+       FROM presencia p
+       JOIN conductor c ON c.id = p.conductor_id
+       LEFT JOIN vehiculo v ON v.conductor_id = c.id
+       LEFT JOIN zona z ON z.id = p.zona_id
+       LEFT JOIN LATERAL (
+         SELECT lat, lng, creado_en FROM rastro
+         WHERE conductor_id = c.id
+         ORDER BY creado_en DESC LIMIT 1
+       ) r ON true
+       LEFT JOIN LATERAL (
+         SELECT id FROM solicitud
+         WHERE conductor_id = c.id
+           AND estado IN ('ACEPTADO', 'EN_CAMINO', 'RECOGIDO')
+         ORDER BY creada_en DESC LIMIT 1
+       ) s ON true
+       WHERE p.estado <> 'DESCONECTADO'
+         -- Y con el latido vivo. Que la presencia no diga DESCONECTADO no basta:
+         -- quien la apaga es un reloj que corre cada pocos segundos y que puede
+         -- llevar parado un rato, así que en la tabla hay taxis «en servicio»
+         -- cuyo último latido es de hace días. Para despachar eso es peor que un
+         -- hueco: manda al operador a llamar a alguien que apagó el móvil el
+         -- martes. Quince minutos es flojo a propósito —un taxi que pierde un
+         -- latido por un túnel no debe desaparecer del mapa— pero corta en seco
+         -- a los fantasmas.
+         AND p.ultimo_heartbeat > now() - interval '15 minutes'
+       ORDER BY c.nombre`,
+    );
+
+    // Los viajes vivos. `SOLICITADO` y `EMITIDO` son los que todavía no tienen
+    // taxi: son los que de verdad importan, y por eso van con los segundos que
+    // llevan esperando — un pasajero que lleva tres minutos sin taxi es una
+    // llamada que el operador puede hacer antes de que cuelgue y se vaya.
+    const viajes = await pool.query(
+      `SELECT s.id::int AS id, s.estado, s.creada_en, s.telefono_cliente,
+              EXTRACT(EPOCH FROM (now() - s.creada_en))::int AS espera_seg,
+              ro.nombre AS origen, ro.lat AS origen_lat, ro.lng AS origen_lng,
+              rd.nombre AS destino, rd.lat AS destino_lat, rd.lng AS destino_lng,
+              c.id::int AS conductor_id, c.nombre AS conductor, v.matricula
+       FROM solicitud s
+       JOIN referencia ro ON ro.id = s.referencia_origen_id
+       JOIN referencia rd ON rd.id = s.referencia_destino_id
+       LEFT JOIN conductor c ON c.id = s.conductor_id
+       LEFT JOIN vehiculo v ON v.conductor_id = c.id
+       WHERE s.estado IN ('SOLICITADO', 'EMITIDO', 'ACEPTADO', 'EN_CAMINO', 'RECOGIDO')
+       ORDER BY s.creada_en ASC
+       LIMIT 60`,
+    );
+
+    return { taxis: taxis.rows, viajes: viajes.rows, momento: new Date().toISOString() };
+  });
+
+  // Todas las carreras, no solo las que dictó el operador (03/10).
+  //
+  // La lista de la Central solo enseña las que nacieron de una llamada —tiene
+  // su propio `EXISTS` sobre la transición del operador— y eso dejaba fuera el
+  // 95 % de lo que pasa en la plataforma. Para mirar un día entero, contrastar
+  // una queja o ver cuántas se quedaron sin taxi hacía falta entrar en la base.
+  //
+  // Se devuelve en crudo y en tabla: aquí no se decide nada, se lee. Por eso
+  // lleva las dos cosas que se buscan de verdad —un teléfono y un estado— y
+  // nada más: un buscador por sitio sonaría bien y sería otra consulta lenta
+  // sobre una tabla que crece todos los días.
+  app.get('/api/operador/viajes', async (req) => {
+    exigirOperador(req);
+    const { estado, q } = (req.query ?? {}) as { estado?: string; q?: string };
+    const buscado = q?.trim() || null;
+    const filas = await pool.query(
+      `SELECT s.id::int AS id, s.estado, s.creada_en, s.telefono_cliente,
+              -- Lo que el pasajero dijo que pagó, si lo dijo (migración 066).
+              -- Vive en su propia tabla y cuelga del viaje, no de la solicitud.
+              (SELECT pd.importe_xaf FROM viaje vi
+               JOIN precio_declarado pd ON pd.viaje_id = vi.id AND pd.emisor = 'cliente'
+               WHERE vi.solicitud_id = s.id)::int AS precio_xaf,
+              ro.nombre AS origen, rd.nombre AS destino,
+              c.nombre AS conductor, v.matricula,
+              (SELECT max(t.creado_en) FROM transicion t
+               WHERE t.solicitud_id = s.id) AS cerrada_en
+       FROM solicitud s
+       JOIN referencia ro ON ro.id = s.referencia_origen_id
+       JOIN referencia rd ON rd.id = s.referencia_destino_id
+       LEFT JOIN conductor c ON c.id = s.conductor_id
+       LEFT JOIN vehiculo v ON v.conductor_id = c.id
+       WHERE ($1::text IS NULL OR s.estado = $1)
+         AND ($2::text IS NULL OR s.telefono_cliente LIKE '%' || $2 || '%')
+       ORDER BY s.creada_en DESC
+       LIMIT 200`,
+      [estado?.trim() || null, buscado],
+    );
+    return { viajes: filas.rows };
   });
 
   // Las últimas solicitudes de la central, con lo que el operador tiene que

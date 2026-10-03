@@ -45,6 +45,24 @@ export interface Recorrido {
   // cliente: sin esto, «tres pasadas» no significa nada — puede ser mucho o
   // casi nada según el taxista y el periodo.
   maxPasadas: number;
+  // Un renglón por tramo, para poder LEER el recorrido además de verlo. El
+  // mapa dice por dónde anduvo; esto dice cuándo y cuánto, que es lo que hace
+  // falta para contrastar una queja («a las once y media no aparecía») o para
+  // ver de un vistazo que un turno de ocho horas son dos salidas y seis horas
+  // parado. Va aparte de `tramos` a propósito: aquéllos se aligeran para
+  // dibujarlos, y estas cifras salen de los puntos completos.
+  resumenTramos: ResumenTramo[];
+}
+
+export interface ResumenTramo {
+  desde: Date;
+  hasta: Date;
+  segundos: number;
+  metros: number;
+  // Estuvo ahí pero no se movió: la parada del mercado esperando pasaje. No es
+  // lo mismo que un hueco —de eso no hay tramo— y mezclarlos escondería
+  // precisamente las esperas, que es la mitad del día de un taxista.
+  parado: boolean;
 }
 
 // Un hueco de más de esto empieza tramo nuevo. Diez minutos es más que
@@ -302,10 +320,22 @@ export async function recorridoDe(
   let metros = 0;
   let segundosEnMovimiento = 0;
   const trazados: Tramo[] = [];
+  const resumenTramos: ResumenTramo[] = [];
   for (const tramo of tramosCompletos) {
     const andado = andarPorCalles(tramo, ruidoM, maximaKmh);
     metros += andado.metros;
     segundosEnMovimiento += andado.segundos;
+    // El renglón se arma aquí, con el tramo COMPLETO: sus extremos son las
+    // horas de verdad, y los metros los que acaba de contar `andarPorCalles`.
+    resumenTramos.push({
+      desde: tramo[0].en,
+      hasta: tramo[tramo.length - 1].en,
+      segundos: Math.round(
+        (tramo[tramo.length - 1].en.getTime() - tramo[0].en.getTime()) / 1000,
+      ),
+      metros: Math.round(andado.metros),
+      parado: andado.trazado.length < 2,
+    });
     if (andado.trazado.length >= 2) {
       trazados.push(andado.trazado);
     } else {
@@ -335,6 +365,7 @@ export async function recorridoDe(
     desde,
     hasta,
     tramos: aligerar(trazados, maxPuntos),
+    resumenTramos,
     puntos: todos.length,
     metros: Math.round(metros),
     segundosEnMovimiento: Math.round(segundosEnMovimiento),

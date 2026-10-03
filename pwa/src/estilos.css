@@ -2647,3 +2647,392 @@ button.importe.elegido-importe {
   font-weight: 700;
   cursor: pointer;
 }
+
+/* ======================================================= consola de despacho */
+/* El panel de operador en un ordenador (03/10).
+ *
+ * El mismo componente y las mismas secciones que en el teléfono: lo único que
+ * cambia es el reparto. Cuatro zonas a la vez, porque despachar es mirar dos
+ * cosas al mismo tiempo —dónde hay un taxi libre y quién lleva tres minutos
+ * esperando— y en el teléfono eso obliga a cambiar de sección y perder de vista
+ * la otra mitad.
+ *
+ * Todo lo de aquí vive bajo `.consola`, que solo existe cuando la pantalla pasa
+ * de 1100 px y no es el modo agente. El teléfono no ve una sola línea de esto.
+ */
+.consola {
+  display: grid;
+  /* Mapa a la IZQUIERDA y trabajo a la derecha, con una banda que se arrastra
+     entre los dos. Antes el mapa iba arriba a lo ancho y empujaba todo el
+     contenido hacia abajo: una lista de conductores empezaba a media pantalla y
+     se leía por una rendija. En columnas, cada cosa tiene su alto completo, y
+     cuánto vale cada una lo decide quien trabaja —no yo— moviendo la banda. */
+  grid-template-columns: 210px var(--ancho-mapa, 520px) 6px minmax(380px, 1fr);
+  /* El alto del mapa también se arrastra: hay ratos de mirar el plano y ratos
+     de mirar quién espera, y cuál pesa más cambia a lo largo del día. */
+  grid-template-rows: var(--alto-mapa, 460px) 6px minmax(0, 1fr);
+  grid-template-areas:
+    "lado mapa   banda trabajo"
+    "lado bandah banda trabajo"
+    "lado ahora  banda trabajo";
+  gap: 1px;
+  height: 100dvh;
+  /* El hueco de separación deja ver el fondo, que hace de línea entre zonas sin
+     tener que poner cuatro bordes que se doblan entre sí. */
+  background: var(--borde);
+}
+
+/* La banda. Seis píxeles de ancho y el cursor que anuncia lo que hace; se
+   ilumina al tocarla para que se vea que es agarrable y no una línea más. */
+.consola-banda {
+  grid-area: banda;
+  cursor: col-resize;
+  background: var(--borde);
+  touch-action: none;
+}
+
+.consola-banda-alto {
+  grid-area: bandah;
+  cursor: row-resize;
+  background: var(--borde);
+  touch-action: none;
+}
+
+.consola-banda:hover,
+.consola-banda[data-arrastrando='si'],
+.consola-banda-alto:hover,
+.consola-banda-alto[data-arrastrando='si'] {
+  background: var(--ambar);
+}
+
+/* Un registro se lleva la ventana entera: sin mapa y sin la columna de «ahora
+   mismo», que sirven para despachar y no para leer. Una tabla de doscientas
+   filas con cuatro dedos de alto no es una tabla, es una rendija. */
+.consola-registro {
+  grid-template-columns: 210px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "lado trabajo";
+}
+
+/* «Ver los 4» de la tabla de zonas: un botón que se lee como un enlace, porque
+   lo que hace es ir a otro sitio, no cambiar nada. */
+.tabla-enlace {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--ambar-claro);
+  font-family: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.consola-lado {
+  grid-area: lado;
+  background: var(--carbon);
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+}
+
+.consola-lado h1 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: var(--humo);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Las secciones, en vertical. Es la misma pieza que en el teléfono va en
+   pastillas envueltas; aquí hay sitio de sobra para una lista, y una lista se
+   recorre con la vista sin leer palabra por palabra. */
+.consola-lado .selector-idioma {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 1px;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.consola-lado .selector-idioma button {
+  text-align: left;
+  padding: 9px 11px;
+  border-radius: 8px;
+  font-size: 0.92rem;
+}
+
+.consola-mapa {
+  grid-area: mapa;
+  position: relative;
+  background: var(--tinta);
+  overflow: hidden;
+}
+
+/* El mapa llena su zona: mide su contenedor, así que sin esto nace a cero. */
+.consola-mapa > div {
+  width: 100%;
+  height: 100%;
+}
+
+/* Que no haya taxis que pintar se dice con palabras. Un plano vacío se lee
+   como «esto está roto», y es justo cuando hay que saber que no es eso. */
+.consola-mapa-vacio {
+  position: absolute;
+  inset: auto 0 14px;
+  margin: 0;
+  text-align: center;
+  color: var(--humo);
+  font-size: 0.86rem;
+  pointer-events: none;
+}
+
+/* Debajo del mapa, no al lado: lo que dice —quién espera, cuántos libres— se
+   lee mirando el mapa, y las dos cosas juntas son la vista de despachar.
+   Con tope de alto para que una tarde con quince esperando no se coma el plano. */
+.consola-ahora {
+  grid-area: ahora;
+  background: var(--carbon);
+  padding: 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.consola-ahora h3 {
+  margin: 10px 0 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--humo);
+}
+
+/* Los cuatro números de cabecera. Grandes a propósito: son lo que se mira de
+   reojo mientras se hace otra cosa. */
+.consola-cifras {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 10px;
+  font-size: 0.82rem;
+  color: var(--humo);
+}
+
+.consola-cifras b {
+  font-size: 1.3rem;
+  color: var(--hueso);
+  margin-right: 5px;
+}
+
+.consola-urgente,
+.consola-urgente b {
+  color: var(--ambar-claro);
+}
+
+.consola-avisos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--humo);
+}
+
+.consola-fila {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 2px 8px;
+  padding: 7px 0;
+  border-top: 1px solid var(--borde);
+  font-size: 0.84rem;
+}
+
+.consola-fila-urgente .consola-espera {
+  color: var(--ambar-claro);
+  font-weight: 700;
+}
+
+.consola-espera,
+.consola-estado {
+  color: var(--humo);
+  font-size: 0.8rem;
+}
+
+.consola-ruta {
+  color: var(--hueso);
+  /* Sin cortar: el nombre del sitio es lo que el operador va a dictar por
+     teléfono, y «Malabo Cen…» no se puede dictar. */
+  overflow-wrap: anywhere;
+}
+
+.consola-tel,
+.consola-quien {
+  grid-column: 2;
+  color: var(--humo);
+  font-size: 0.8rem;
+}
+
+.consola-tel {
+  color: var(--ambar-claro);
+  text-decoration: none;
+}
+
+.consola-trabajo {
+  grid-area: trabajo;
+  background: var(--carbon);
+  /* Hueco arriba para el conmutador de papeles, que va flotando en esa esquina
+     (position: fixed) y no empuja nada. Es el mismo apaño que `.hoja-completa`
+     hace en el teléfono. */
+  padding: 46px 18px 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Las cifras del resumen, en tarjetas que se reparten el ancho que haya. Antes
+   iban en dos columnas fijas heredadas del teléfono y dejaban medio monitor en
+   blanco mientras obligaban a bajar para ver las últimas. */
+.consola-trabajo .rejilla {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+/* ============================================================ tablas del panel */
+/* Los tres registros del operador (03/10): quién tocó qué, las carreras y las
+ * salidas de un taxista.
+ *
+ * Tabla y no tarjetas apiladas, que es como estaban. La diferencia no es
+ * estética: en una tarjeta hay que leer cada fila entera para saber si te
+ * interesa, y en una tabla la vista baja por UNA columna —la hora, el estado,
+ * el importe— y encuentra lo que busca sin leer el resto. Un registro se
+ * recorre comparando; eso solo lo deja hacer una rejilla.
+ */
+.tabla-marco {
+  /* Scroll propio: cualquiera de las tres puede traer doscientas filas, y sin
+     esto empujan la página entera y se pierde la barra de secciones. */
+  max-height: 60vh;
+  overflow: auto;
+  border: 1px solid var(--borde);
+  border-radius: 11px;
+  background: var(--tarjeta);
+}
+
+.tabla {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.tabla th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  /* Opaco a propósito: con fondo translúcido las filas se leen POR DEBAJO del
+     encabezado al desplazar, y no se sabe qué columna es cuál. */
+  background: #1c1c21;
+  text-align: left;
+  font-size: 0.72rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--humo);
+  font-weight: 600;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--borde);
+  white-space: nowrap;
+}
+
+.tabla td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  color: var(--hueso);
+  vertical-align: top;
+}
+
+.tabla tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.tabla tbody tr:hover td {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* Lo accesorio, apagado: la hora y el valor viejo acompañan, no se buscan. */
+.tabla-tenue,
+.tabla-tenue td {
+  color: var(--humo);
+}
+
+/* La columna por la que se busca. Monoespaciada porque son claves y estados
+   que se comparan letra a letra. */
+.tabla-clave {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+}
+
+/* Números a la derecha: así las unidades quedan alineadas y se ve de un
+   vistazo cuál es mayor sin leer las cifras. */
+.tabla-numero {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tabla-titulo {
+  margin: 4px 0 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--humo);
+}
+
+/* En la consola de despacho hay sitio de sobra en alto: la tabla puede ser
+   más larga antes de empezar a desplazarse por dentro. */
+.consola-trabajo .tabla-marco {
+  max-height: none;
+}
+
+/* --- Tamaños de la consola -------------------------------------------------
+ * En el ordenador, los botones y las cifras heredaban el tamaño del teléfono:
+ * ancho completo, 17 px de relleno y 1,12 rem de letra. Eso en un móvil es que
+ * se acierte con el pulgar sin mirar; en un monitor son cuatro cajas enormes
+ * con el texto partido en cuatro líneas —«Nombrar / agente / de / campo»— que
+ * ocupan media pantalla para decir lo que cabe en un renglón.
+ *
+ * Aquí se apunta con un ratón, que es preciso. El tamaño se ajusta a eso y el
+ * sitio que sobra se lo quedan los datos, que es a lo que se viene.
+ */
+.consola-trabajo button.principal,
+.consola-trabajo button.secundario {
+  width: auto;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 9px 15px;
+  border-radius: 9px;
+  /* Sin partir: un botón de acción con el rótulo en cuatro líneas se lee peor
+     y, sobre todo, deja de parecer un botón. */
+  white-space: nowrap;
+}
+
+.consola-trabajo .fila {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Y que no se estiren a un tercio de la fila cada uno, que es lo que hace la
+   regla del teléfono: aquí cada botón mide lo que mide su texto. */
+.consola-trabajo .fila button {
+  flex: 0 0 auto;
+}
+
+.consola-trabajo .dato {
+  padding: 10px 12px;
+}
+
+.consola-trabajo .dato-valor {
+  font-size: 1.5rem;
+}
