@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   api,
+  type AccesoOperador, type AparatoOperador,
   type BandaOperador, type CambioOperador, type ConductorOperador, type EstadisticasOperador,
   type FichaConductorOperador, type FichaPasajeroOperador, type IncidenciaOperador,
   type ParametroOperador, type PasajeroOperador, type PeriodoRecorrido,
@@ -462,6 +463,126 @@ function FilaIncidencia({
 
 // --- Fichas -------------------------------------------------------------------
 
+// Cambiar el número con el que entra alguien (05/10).
+//
+// Va detrás de una confirmación y con el número escrito dos veces mal contado:
+// una sola errata deja a la persona fuera de su cuenta y con la llave en un
+// número que no es de nadie. Y se dice lo que de verdad pasa —que el nuevo
+// queda sin verificar— antes de pulsar, no después.
+function CambiarTelefono({ actual, alCambiar }: {
+  actual: string | null;
+  alCambiar: (telefono: string) => Promise<unknown>;
+}) {
+  const [abierto, setAbierto] = useState(false);
+  const [nuevo, setNuevo] = useState('');
+  const [error, setError] = useState('');
+  const [hecho, setHecho] = useState('');
+  const [ocupado, setOcupado] = useState(false);
+
+  async function guardar() {
+    setError(''); setOcupado(true);
+    try {
+      const r = await alCambiar(nuevo.trim()) as { telefono: string };
+      setHecho(`Ahora entra con el ${r.telefono}. Tendrá que verificarlo.`);
+      setAbierto(false);
+      setNuevo('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo cambiar el número.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  if (!abierto) {
+    return (
+      <>
+        <button type="button" className="secundario" onClick={() => { setAbierto(true); setHecho(''); }}>
+          Cambiar su número de teléfono
+        </button>
+        {hecho && <p className="nota">{hecho}</p>}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <p className="nota">
+        Con este número entra a su cuenta. Si lo cambias, el viejo deja de
+        servir y el nuevo queda sin verificar: tendrá que confirmarlo con un
+        código —o con el código de entrada que le des tú—. Ahora es
+        {' '}{actual ?? 'ninguno'}.
+      </p>
+      <div className="fila">
+        <input
+          value={nuevo} inputMode="tel" placeholder="Número nuevo"
+          onChange={(e) => setNuevo(e.target.value)}
+        />
+      </div>
+      {error && <p className="aviso">{error}</p>}
+      <div className="fila">
+        <button
+          type="button" className="principal"
+          disabled={ocupado || nuevo.trim().length < 6} onClick={guardar}
+        >
+          Sí, cambiárselo
+        </button>
+        <button
+          type="button" className="secundario"
+          onClick={() => { setAbierto(false); setNuevo(''); setError(''); }}
+        >
+          Dejarlo como está
+        </button>
+      </div>
+    </>
+  );
+}
+
+// El código de entrada para quien no recibe ni el SMS ni la llamada
+// (migración 081). El 05/10, GETESA devolvía los SMS de Twilio como «no
+// entregados» y un taxista verificado no podía entrar en su propia cuenta: esto
+// es la salida de ese callejón.
+//
+// SE ENSEÑA UNA VEZ Y NO SE GUARDA. En la base solo queda su resumen, así que
+// no hay forma de volver a verlo: si se pierde, se da otro, y el anterior deja
+// de valer en ese mismo momento.
+function ValeDeEntrada({ telefono }: { telefono: string | null }) {
+  const [vale, setVale] = useState<{ codigo: string; caducaEn: string } | null>(null);
+  const [error, setError] = useState('');
+  const [ocupado, setOcupado] = useState(false);
+
+  if (!telefono) return null;
+
+  async function pedir() {
+    setError(''); setOcupado(true);
+    try {
+      setVale(await api.valeOperador(telefono as string));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo dar el código.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  return (
+    <>
+      <button type="button" className="secundario" disabled={ocupado} onClick={pedir}>
+        {vale ? 'Dar otro código de entrada' : 'No le llegan los SMS: darle un código de entrada'}
+      </button>
+      {error && <p className="aviso">{error}</p>}
+      {vale && (
+        <>
+          <p className="dato-valor">{vale.codigo}</p>
+          <p className="nota">
+            Díctaselo por teléfono. Lo escribe donde escribiría el código del
+            SMS, y caduca a las {soloHora(vale.caducaEn)}. Vale una sola vez: si
+            se equivoca al teclearlo, dale otro.
+          </p>
+        </>
+      )}
+    </>
+  );
+}
+
 function FichaConductor({
   id, alVolver, alCambiarEstado, ocupado,
 }: {
@@ -576,6 +697,11 @@ function FichaConductor({
             ? 'Recibir solo de su barrio'
             : 'Recibir carreras de toda la isla'}
         </button>
+        <ValeDeEntrada telefono={ficha.telefono} />
+        <CambiarTelefono
+          actual={ficha.telefono}
+          alCambiar={(t) => api.cambiarTelefonoConductor(ficha.id, t).then(cargar)}
+        />
       </div>
       <RecorridoConductor id={ficha.id} />
       <p className="nota">Últimos viajes</p>
@@ -850,6 +976,11 @@ function FichaPasajero({
       >
         {ficha.es_agente ? 'Quitar el papel de agente de campo' : 'Nombrar agente de campo'}
       </button>
+      <ValeDeEntrada telefono={ficha.telefono} />
+      <CambiarTelefono
+        actual={ficha.telefono}
+        alCambiar={(t) => api.cambiarTelefonoPasajero(dispositivoId, t).then(cargar)}
+      />
       <p className="nota">Últimos viajes</p>
       <ListaViajes viajes={ficha.ultimosViajes} />
     </>
@@ -1856,6 +1987,17 @@ function soloHora(iso: string): string {
 
 // El registro de quién tocó los precios y los parámetros (migración 067).
 // Inmutable por diseño: no hay nada que pulsar, solo que leer.
+// Eran dos —parámetros y bandas— y daba igual escribirlo con un condicional.
+// Desde que se pueden cambiar teléfonos son cuatro, y aquel condicional
+// enseñaba «banda» en todo lo que no fuera un parámetro: un registro que miente
+// es peor que no tenerlo.
+const ETIQUETA_AMBITO: Record<string, string> = {
+  parametro: 'parámetro',
+  banda: 'banda',
+  conductor: 'taxista',
+  pasajero: 'pasajero',
+};
+
 function Cambios() {
   const [cambios, setCambios] = useState<CambioOperador[] | null>(null);
   const [error, setError] = useState('');
@@ -1878,7 +2020,7 @@ function Cambios() {
           {cambios.map((c) => (
             <tr key={c.id}>
               <td className="tabla-tenue">{cuando(c.cuando)}</td>
-              <td>{c.ambito === 'parametro' ? 'parámetro' : 'banda'}</td>
+              <td>{ETIQUETA_AMBITO[c.ambito] ?? c.ambito}</td>
               <td className="tabla-clave">{c.clave}</td>
               <td className="tabla-tenue">{c.antes ?? '—'}</td>
               <td>{c.ahora ?? 'borrada'}</td>
@@ -2062,6 +2204,233 @@ function Registros() {
       {tipo === 'carreras' && <Viajes />}
       {tipo === 'flota' && <TaxisPorZona />}
       {tipo === 'cambios' && <Cambios />}
+    </>
+  );
+}
+
+// Quién puede entrar al panel (migración 080). La lista la ve cualquier
+// operador —saber con quién trabajas no es un secreto— y solo la toca la raíz.
+//
+// SE ENSEÑA EL TELÉFONO ENTERO, a propósito. Es el dato con el que se da y se
+// quita el acceso: taparlo a medias dejaría a quien mira sin poder comprobar
+// que el número que va a echar es el que cree.
+function Accesos() {
+  const [lista, setLista] = useState<AccesoOperador[] | null>(null);
+  const [raiz, setRaiz] = useState(false);
+  const [yo, setYo] = useState<string | null>(null);
+  const [telefono, setTelefono] = useState('');
+  const [nombre, setNombre] = useState('');
+  const [error, setError] = useState('');
+  const [aviso, setAviso] = useState('');
+  const [ocupado, setOcupado] = useState(false);
+  // A quién se está a punto de echar. Quitar un acceso no se deshace —la
+  // persona se queda fuera hasta que alguien se lo devuelva— así que va con una
+  // pregunta de por medio y no con un solo toque.
+  const [quitando, setQuitando] = useState<string | null>(null);
+  // De quién se están mirando los aparatos, y cuáles.
+  const [abierto, setAbierto] = useState<string | null>(null);
+  const [aparatos, setAparatos] = useState<AparatoOperador[] | null>(null);
+
+  const cargar = useCallback(() => {
+    api.accesosOperador()
+      .then((r) => {
+        setLista(r.operadores);
+        setRaiz(r.yo?.raiz ?? false);
+        setYo(r.yo?.telefono ?? null);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : 'No se pudo cargar.'));
+  }, []);
+  useEffect(cargar, [cargar]);
+
+  const cargarAparatos = useCallback((tel: string) => {
+    setAparatos(null);
+    api.aparatosOperador(tel)
+      .then((r) => setAparatos(r.aparatos))
+      .catch((e) => setError(e instanceof Error ? e.message : 'No se pudo cargar.'));
+  }, []);
+
+  function verAparatos(tel: string) {
+    if (abierto === tel) { setAbierto(null); return; }
+    setAbierto(tel);
+    cargarAparatos(tel);
+  }
+
+  async function dar() {
+    const tel = telefono.trim();
+    setError(''); setAviso(''); setOcupado(true);
+    try {
+      const r = await api.darAccesoOperador(tel, nombre.trim() || undefined);
+      setAviso(r.yaEstaba
+        ? `El ${tel} ya tenía acceso; no he cambiado nada.`
+        : `Listo. El ${tel} ya puede entrar con su teléfono.`);
+      setTelefono(''); setNombre('');
+      cargar();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo dar el acceso.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  async function quitar(tel: string) {
+    setError(''); setAviso(''); setOcupado(true);
+    try {
+      await api.quitarAccesoOperador(tel);
+      setAviso(`El ${tel} ya no entra, y sus aparatos tampoco.`);
+      setQuitando(null);
+      if (abierto === tel) setAbierto(null);
+      cargar();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo quitar el acceso.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  async function echarAparato(uuid: string) {
+    setError(''); setAviso(''); setOcupado(true);
+    try {
+      await api.quitarAparatoOperador(uuid);
+      setAviso('Ese aparato tendrá que volver a pedir el código para entrar.');
+      if (abierto !== null) cargarAparatos(abierto);
+      cargar();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo echar el aparato.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  return (
+    <>
+      <h3>Quién entra al panel</h3>
+      <p className="nota">
+        Se entra con el teléfono y un código por SMS. Hacen falta las dos cosas:
+        estar en esta lista y tener el móvil en la mano.
+      </p>
+      {error && <p className="aviso">{error}</p>}
+      {aviso && <p className="nota">{aviso}</p>}
+
+      {raiz ? (
+        <>
+          <div className="fila">
+            <input
+              value={telefono} inputMode="tel" placeholder="Teléfono (222410986)"
+              onChange={(e) => setTelefono(e.target.value)}
+            />
+            <input
+              value={nombre} placeholder="Nombre, para reconocerlo"
+              onChange={(e) => setNombre(e.target.value)}
+            />
+          </div>
+          <div className="fila">
+            <button
+              type="button" className="principal"
+              disabled={ocupado || telefono.trim().length < 6} onClick={dar}
+            >
+              Dar acceso de operador
+            </button>
+          </div>
+        </>
+      ) : (
+        <p className="nota">
+          Solo el teléfono principal da y quita accesos. Si hace falta cambiar
+          esta lista, pídeselo a quien lo tenga.
+        </p>
+      )}
+
+      {lista !== null && (
+        <Tabla cabeceras={['Teléfono', 'Nombre', 'Aparatos', 'Desde', 'Quién lo dio', '']}>
+          {lista.map((o) => (
+            <tr key={o.telefono}>
+              <td className="tabla-clave">
+                {o.telefono}
+                {o.telefono === yo && <span className="tabla-tenue"> (tú)</span>}
+                {o.raiz && <span className="tabla-tenue"> · principal</span>}
+              </td>
+              <td>{o.nombre ?? '—'}</td>
+              <td>
+                <button type="button" className="enlace" onClick={() => verAparatos(o.telefono)}>
+                  {o.aparatos}
+                </button>
+              </td>
+              <td className="tabla-tenue">
+                {o.creado_en === null ? 'siempre' : cuando(o.creado_en)}
+              </td>
+              <td className="tabla-tenue">{o.alta_por ?? 'entorno'}</td>
+              <td>
+                {/* A la raíz no se la echa desde aquí: hay que sacarla de la
+                    variable de entorno. Es el seguro contra quedarse todos
+                    fuera, así que el botón no existe en vez de existir y
+                    contestar que no. */}
+                {raiz && !o.raiz && (
+                  quitando === o.telefono ? (
+                    <>
+                      <button
+                        type="button" className="principal" disabled={ocupado}
+                        onClick={() => quitar(o.telefono)}
+                      >
+                        Sí, echarle
+                      </button>
+                      <button
+                        type="button" className="secundario"
+                        onClick={() => setQuitando(null)}
+                      >
+                        No
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button" className="secundario"
+                      onClick={() => setQuitando(o.telefono)}
+                    >
+                      Quitar acceso
+                    </button>
+                  )
+                )}
+              </td>
+            </tr>
+          ))}
+        </Tabla>
+      )}
+
+      {abierto !== null && (
+        <>
+          <h4>Aparatos de {abierto}</h4>
+          <p className="nota">
+            Cada uno es un navegador que demostró con un código ser de ese
+            teléfono. Echa el que se haya perdido: la persona sigue entrando
+            desde los demás.
+          </p>
+          {aparatos === null && <p className="nota">Cargando…</p>}
+          {aparatos?.length === 0 && (
+            <p className="nota">Ninguno todavía: no ha entrado desde ningún sitio.</p>
+          )}
+          {aparatos !== null && aparatos.length > 0 && (
+            <Tabla cabeceras={['Aparato', 'Vinculado', 'Visto', '']}>
+              {aparatos.map((a) => (
+                <tr key={a.uuid}>
+                  {/* Los ocho primeros caracteres bastan para distinguir dos
+                      aparatos, y el uuid entero no dice nada más a quien mira. */}
+                  <td className="tabla-clave">{a.uuid.slice(0, 8)}</td>
+                  <td className="tabla-tenue">{cuando(a.creado_en)}</td>
+                  <td className="tabla-tenue">{a.visto_en === null ? '—' : cuando(a.visto_en)}</td>
+                  <td>
+                    {raiz && (
+                      <button
+                        type="button" className="secundario" disabled={ocupado}
+                        onClick={() => echarAparato(a.uuid)}
+                      >
+                        Echarlo
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </Tabla>
+          )}
+        </>
+      )}
     </>
   );
 }
@@ -2544,6 +2913,9 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
 
         {seccion === 'ajustes' && (
           <>
+            {/* Fuera del modo agente: un agente de campo no administra a sus
+                compañeros, y el servidor le contestaría 403 al pedir la lista. */}
+            {!esAgente && <Accesos />}
             <Ajustes />
             {/* La salud del sistema, que era la pestaña «Resumen». Aquí y no
                 arriba: las alarmas que hay que ver sin falta ya salen en la

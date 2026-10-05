@@ -43,7 +43,10 @@ import {
 } from '../dominio/cuentas.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
 import { normalizarTelefono } from '../dominio/telefono.js';
-import type { ServicioVerificacionTelefono } from '../dominio/verificacion-telefono.js';
+import { gastarVale } from '../dominio/vales.js';
+import type {
+  CanalDeCodigo, ServicioVerificacionTelefono,
+} from '../dominio/verificacion-telefono.js';
 
 const PATRON_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -64,6 +67,15 @@ export function registrarRutasCuenta(
       throw errorHttp(400, 'Falta la cabecera x-dispositivo con un UUID válido.');
     }
     return uuid.toLowerCase();
+  }
+
+  // Por dónde quiere que le llegue el código. SMS salvo que pida lo contrario:
+  // la llamada cuesta más y molesta más, así que se usa cuando el SMS ya ha
+  // fallado, que es cuando la persona pulsa «no me llega».
+  function canalDesde(req: FastifyRequest): CanalDeCodigo {
+    return ((req.body ?? {}) as { canal?: string }).canal === 'llamada'
+      ? 'llamada'
+      : 'sms';
   }
 
   // El número tal como llega, en forma canónica o un 400 que diga qué pasa.
@@ -148,11 +160,12 @@ export function registrarRutasCuenta(
       }
     }
 
-    await servicioVerificacion.enviarCodigo(telefono);
+    const canal = canalDesde(req);
+    await servicioVerificacion.enviarCodigo(telefono, canal);
     // Se apunta DESPUÉS de mandarlo: si Twilio falla, el reloj del cooldown no
     // se pone en marcha y la persona puede volver a intentarlo ya.
     await apuntarIntento(pool, uuid, telefono, 'codigo', true);
-    return { enviado: true };
+    return { enviado: true, canal };
   });
 
   // 3. El código, y con él la cuenta. `rol` lo manda la aplicación porque un
@@ -178,7 +191,13 @@ export function registrarRutasCuenta(
       throw errorHttp(429, 'Demasiados códigos fallados con este número. Prueba dentro de una hora.');
     }
 
-    const correcto = await servicioVerificacion.comprobarCodigo(telefono, codigo);
+    // Dos códigos valen aquí: el de Twilio y el vale que da el operador cuando
+    // a esa línea no llega ni el SMS ni la llamada (migración 081). Se prueba
+    // primero el de Twilio porque es el caso normal, y el vale solo si el otro
+    // no era: así un vale sin gastar sigue sin gastarse mientras la persona
+    // acierte con el del SMS.
+    const correcto = await servicioVerificacion.comprobarCodigo(telefono, codigo)
+      || await gastarVale(pool, telefono, codigo, uuid);
     if (!correcto) {
       await apuntarIntento(pool, uuid, telefono, 'reclamar', false);
       throw errorHttp(400, 'Código incorrecto.');

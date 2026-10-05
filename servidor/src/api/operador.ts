@@ -23,9 +23,11 @@ import {
 } from '../dominio/cuentas.js';
 import type { ServicioVerificacionTelefono } from '../dominio/verificacion-telefono.js';
 import {
-  dispositivoDeOperador, esRaiz, esTelefonoDeOperador, marcarVisto, vincularDispositivo,
+  aparatosDe, autorizar, dispositivoDeOperador, esRaiz, esTelefonoDeOperador,
+  listarOperadores, marcarVisto, revocar, revocarDispositivo, vincularDispositivo,
 } from '../dominio/operadores.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
+import { emitirVale } from '../dominio/vales.js';
 import { senalesDeTarifa } from '../dominio/precios.js';
 import { actividadDe, recorridoDe } from '../dominio/rastro.js';
 import { inicioDelDiaEnMalabo } from '../dominio/tiempo.js';
@@ -147,14 +149,32 @@ export function esOperador(uuid: string): boolean {
   return uuidsOperador().has(uuid.toLowerCase());
 }
 
+// Quién es este aparato dentro del panel: si puede entrar, y si además es de
+// la raíz —la que reparte y retira accesos—. Devuelve null si no puede entrar.
+//
+// EL UUID VIEJO CUENTA COMO RAÍZ. No por comodidad: está en una variable de
+// entorno igual que `TELEFONOS_OPERADOR`, no se puede revocar desde el panel y
+// quien lo tiene ya podía desplegar. Degradarlo a operador normal no quitaría
+// poder a nadie y sí podría dejar la plataforma sin nadie que reparta accesos
+// el día que la raíz por teléfono esté mal escrita, que es precisamente el
+// agujero del que este mecanismo tiene que protegernos.
+export async function rangoDeOperador(
+  cliente: pg.Pool | pg.ClientBase,
+  uuid: string,
+): Promise<{ telefono: string | null; raiz: boolean } | null> {
+  if (esOperador(uuid)) return { telefono: null, raiz: true };
+  const telefono = await dispositivoDeOperador(cliente, uuid);
+  if (telefono === null) return null;
+  return { telefono, raiz: esRaiz(telefono) };
+}
+
 // La pregunta de verdad: ¿este aparato puede entrar al panel? Por el uuid de
 // siempre, o porque demostró con un código por SMS ser de un operador.
 export async function esOperadorAhora(
   cliente: pg.Pool | pg.ClientBase,
   uuid: string,
 ): Promise<boolean> {
-  if (esOperador(uuid)) return true;
-  return await dispositivoDeOperador(cliente, uuid) !== null;
+  return await rangoDeOperador(cliente, uuid) !== null;
 }
 
 export function registrarRutasOperador(
@@ -262,7 +282,8 @@ export function registrarRutasOperador(
   if (servicioVerificacion) {
     app.post('/api/operador/entrar/codigo', async (req) => {
       const uuid = uuidDesde(req);
-      const crudo = ((req.body ?? {}) as { telefono?: string }).telefono?.trim();
+      const cuerpo = (req.body ?? {}) as { telefono?: string; canal?: string };
+      const crudo = cuerpo.telefono?.trim();
       const telefono = normalizarTelefono(crudo);
       if (!telefono) throw errorHttp(400, 'Falta el teléfono, o no se entiende.');
 
@@ -283,7 +304,11 @@ export function registrarRutasOperador(
         const esperado = ultimo !== null
           && (Date.now() - ultimo.getTime()) / 1000 < esperaSeg;
         if (!esperado) {
-          await servicioVerificacion.enviarCodigo(telefono);
+          // El operador también está en Malabo: si a su línea no le llega el
+          // SMS, puede pedir que le llamen (migración 081).
+          await servicioVerificacion.enviarCodigo(
+            telefono, cuerpo.canal === 'llamada' ? 'llamada' : 'sms',
+          );
           await apuntarIntento(pool, uuid, telefono, 'codigo', true);
         }
       }
@@ -315,6 +340,218 @@ export function registrarRutasOperador(
       return { entrado: true, raiz: esRaiz(telefono) };
     });
   }
+
+  // --- Dar y quitar accesos (migración 080) --------------------------------
+  //
+  // SOLO LA RAÍZ. No es una jerarquía por gusto: si cualquier operador pudiera
+  // dar accesos, echar a alguien no serviría de nada —antes de salir se nombra
+  // a sí mismo con otro número— y la lista dejaría de significar nada. Un
+  // operador normal ve la lista (saber con quién trabajas no es un secreto)
+  // pero no la toca.
+  async function exigirRaiz(req: FastifyRequest): Promise<string> {
+    const rango = await rangoDeOperador(pool, uuidDesde(req));
+    if (rango === null) throw errorHttp(403, 'Este dispositivo no tiene acceso de operador.');
+    if (!rango.raiz) {
+      throw errorHttp(
+        403,
+        'Solo quien tiene el teléfono principal puede dar y quitar accesos.',
+      );
+    }
+    // Con quién se firma el alta. El uuid viejo no tiene teléfono: se firma
+    // como «entorno», que es exactamente lo que es y se lee después sin
+    // tener que adivinar quién fue.
+    return rango.telefono ?? 'entorno';
+  }
+
+  app.get('/api/operador/accesos', async (req) => {
+    await exigirOperador(req);
+    const rango = await rangoDeOperador(pool, uuidDesde(req));
+    const operadores = await listarOperadores(pool);
+    return { yo: rango, operadores };
+  });
+
+  // Los aparatos de una persona se piden con POST aunque solo se lea, y las
+  // bajas también: en la URL, el número acabaría escrito en el registro de
+  // peticiones del servidor, y el teléfono de quien manda en la plataforma no
+  // tiene por qué quedar en un fichero de texto que se lee entero cada vez que
+  // se mira un error.
+  app.post('/api/operador/accesos/aparatos', async (req) => {
+    await exigirOperador(req);
+    const { telefono } = (req.body ?? {}) as { telefono?: string };
+    const canonico = normalizarTelefono(telefono?.trim());
+    if (!canonico) throw errorHttp(400, 'Falta el teléfono, o no se entiende.');
+    return { aparatos: await aparatosDe(pool, canonico) };
+  });
+
+  app.post('/api/operador/accesos', async (req) => {
+    const quien = await exigirRaiz(req);
+    const cuerpo = (req.body ?? {}) as { telefono?: string; nombre?: string };
+    const telefono = normalizarTelefono(cuerpo.telefono?.trim());
+    if (!telefono) {
+      throw errorHttp(400, 'Falta el teléfono, o no se entiende. Son nueve cifras.');
+    }
+    // Dar de alta a la raíz sería una fila que no hace nada —ya entra por el
+    // entorno— y que al revocarla daría la falsa sensación de haberla echado.
+    if (esRaiz(telefono)) {
+      throw errorHttp(409, 'Ese número ya es el principal: entra siempre y no se le quita aquí.');
+    }
+    const nombre = cuerpo.nombre?.trim();
+    const alta = await autorizar(pool, telefono, nombre ? nombre : null, quien);
+    return { autorizado: true, yaEstaba: !alta };
+  });
+
+  app.post('/api/operador/accesos/quitar', async (req) => {
+    const quien = await exigirRaiz(req);
+    const { telefono } = (req.body ?? {}) as { telefono?: string };
+    const canonico = normalizarTelefono(telefono?.trim());
+    if (!canonico) throw errorHttp(400, 'Falta el teléfono, o no se entiende.');
+    if (esRaiz(canonico)) {
+      throw errorHttp(
+        409,
+        'Al teléfono principal no se le quita el acceso desde aquí: hay que '
+        + 'sacarlo de TELEFONOS_OPERADOR y reiniciar el servidor.',
+      );
+    }
+    const habia = await enTransaccion(pool, (cliente) => revocar(cliente, canonico, quien));
+    if (!habia) throw errorHttp(404, 'Ese número no tenía acceso.');
+    return { revocado: true };
+  });
+
+  // Echar a UN aparato: el móvil que se perdió. La persona sigue entrando
+  // desde los demás, y desde ése tendrá que volver a pedir el código.
+  app.post('/api/operador/accesos/aparatos/quitar', async (req) => {
+    const quien = await exigirRaiz(req);
+    const { uuid } = (req.body ?? {}) as { uuid?: string };
+    if (!uuid || !PATRON_UUID.test(uuid)) throw errorHttp(400, 'Falta el aparato.');
+    const habia = await revocarDispositivo(pool, uuid, quien);
+    if (!habia) throw errorHttp(404, 'Ese aparato ya no estaba vinculado.');
+    return { revocado: true };
+  });
+
+  // --- El vale de entrada (migración 081) ----------------------------------
+  //
+  // Para cuando a una línea no llega ni el SMS ni la llamada y una persona
+  // verificada se queda fuera de su propia cuenta. El operador dicta seis
+  // cifras y la persona las escribe donde escribiría el código del SMS.
+  //
+  // LO PUEDE DAR CUALQUIER OPERADOR, no solo la raíz. Es trabajo del turno —el
+  // taxista llama porque no puede entrar— y reservarlo a una sola persona
+  // significaría que fuera de su horario nadie entra. Lo que lo sujeta no es
+  // quién puede darlo, sino que dura minutos, se gasta una vez, es para un solo
+  // número y queda escrito quién lo dio.
+  app.post('/api/operador/vale', async (req) => {
+    await exigirOperador(req);
+    const rango = await rangoDeOperador(pool, uuidDesde(req));
+    const crudo = ((req.body ?? {}) as { telefono?: string }).telefono?.trim();
+    const telefono = normalizarTelefono(crudo);
+    if (!telefono) throw errorHttp(400, 'Falta el teléfono, o no se entiende.');
+
+    // Solo para números que existen. Un vale para un número sin cuenta no
+    // abriría nada —`reclamar` no tendría qué entregar— y dejaría al operador
+    // dictando un código que no sirve mientras la persona espera.
+    const quien = await pool.query(
+      `SELECT 1 FROM conductor WHERE telefono = $1
+       UNION ALL
+       SELECT 1 FROM perfil_cliente WHERE telefono = $1`,
+      [telefono],
+    );
+    if ((quien.rowCount ?? 0) === 0) {
+      throw errorHttp(404, 'Ese número no está registrado: no hay ninguna cuenta que devolverle.');
+    }
+
+    const vale = await enTransaccion(pool, (cliente) => (
+      emitirVale(cliente, telefono, rango?.telefono ?? 'entorno')
+    ));
+    return { codigo: vale.codigo, caducaEn: vale.caducaEn };
+  });
+
+  // --- Cambiar el número de alguien (05/10) --------------------------------
+  //
+  // Hasta hoy esto era un UPDATE a mano en producción. Hizo falta el día que
+  // GETESA dejó de entregar los SMS: la salida para un taxista atrapado era
+  // pasarlo a una línea de la otra operadora, y eso no puede depender de que
+  // alguien sepa escribir SQL contra la base de verdad.
+  //
+  // EL TELÉFONO ES LA IDENTIDAD (migración 024), no un dato de contacto. Por
+  // eso esto no va en «editar la ficha» con el nombre y el color del coche:
+  // cambiarlo es cambiar con qué llave entra esa persona a partir de ahora, y
+  // la pantalla tiene que decirlo con esas palabras.
+  //
+  // Y POR ESO EL NÚMERO NUEVO QUEDA SIN VERIFICAR. Lo que estaba demostrado es
+  // que la línea vieja era suya; de la nueva no sabemos nada todavía. Dejarla
+  // heredar la verificación sería que una cuenta verificada apuntara a un
+  // número que nadie ha probado. Si a la nueva línea tampoco le llegan los
+  // SMS, el operador tiene el vale (migración 081), que sirve también para
+  // verificar.
+  async function cambiarTelefono(
+    req: FastifyRequest,
+    tabla: 'conductor' | 'perfil_cliente',
+    id: number,
+    crudo: string | undefined,
+  ): Promise<{ telefono: string; antes: string | null }> {
+    const nuevo = normalizarTelefono(crudo?.trim());
+    if (!nuevo) {
+      throw errorHttp(400, 'Falta el número nuevo, o no se entiende. Son nueve cifras.');
+    }
+    const antes = await pool.query(
+      `SELECT telefono FROM ${tabla} WHERE id = $1`,
+      [id],
+    );
+    if (antes.rowCount === 0) throw errorHttp(404, 'No existe esa ficha.');
+    const anterior: string | null = antes.rows[0].telefono;
+    if (anterior === nuevo) {
+      throw errorHttp(409, 'Ese ya es su número: no hay nada que cambiar.');
+    }
+
+    // Se mira antes de escribir para poder decir de quién es. El índice único
+    // lo impediría igual, pero con un error de la base que no dice nada.
+    const ocupado = tabla === 'conductor'
+      ? await pool.query('SELECT nombre FROM conductor WHERE telefono = $1', [nuevo])
+      : await pool.query(
+        `SELECT nombre FROM perfil_cliente
+         WHERE telefono = $1 AND telefono_vigente`,
+        [nuevo],
+      );
+    if ((ocupado.rowCount ?? 0) > 0) {
+      const nombre: string | null = ocupado.rows[0].nombre;
+      throw errorHttp(
+        409,
+        `Ese número ya es de ${nombre ?? 'otra cuenta'}. Dos cuentas no pueden `
+        + 'compartir número: es con lo que se entra.',
+      );
+    }
+
+    await pool.query(
+      `UPDATE ${tabla} SET telefono = $2, telefono_verificado_en = NULL WHERE id = $1`,
+      [id, nuevo],
+    );
+    await apuntarCambio(req, tabla === 'conductor' ? 'conductor' : 'pasajero',
+      `${id}.telefono`, anterior, nuevo);
+    return { telefono: nuevo, antes: anterior };
+  }
+
+  app.post('/api/operador/conductores/:id/telefono', async (req) => {
+    await exigirOperador(req);
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
+    const crudo = ((req.body ?? {}) as { telefono?: string }).telefono;
+    return cambiarTelefono(req, 'conductor', id, crudo);
+  });
+
+  // Del pasajero se recibe el id del DISPOSITIVO, que es con lo que trabaja su
+  // ficha; la fila del perfil cuelga de él.
+  app.post('/api/operador/pasajeros/:id/telefono', async (req) => {
+    await exigirOperador(req);
+    const dispositivoId = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(dispositivoId)) throw errorHttp(400, 'Id de dispositivo no válido.');
+    const perfil = await pool.query(
+      'SELECT id FROM perfil_cliente WHERE dispositivo_id = $1',
+      [dispositivoId],
+    );
+    if (perfil.rowCount === 0) throw errorHttp(404, 'Ese dispositivo no tiene perfil de pasajero.');
+    const crudo = ((req.body ?? {}) as { telefono?: string }).telefono;
+    return cambiarTelefono(req, 'perfil_cliente', Number(perfil.rows[0].id), crudo);
+  });
 
   app.get('/api/operador/conductores', async (req) => {
     await exigirOperador(req);

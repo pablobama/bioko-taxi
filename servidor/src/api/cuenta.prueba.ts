@@ -14,9 +14,10 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
-import { crearPool } from '../bd/conexion.js';
+import { crearPool, enTransaccion } from '../bd/conexion.js';
 import { EmisorRegistro } from '../dominio/eventos.js';
 import { ServicioVerificacionRegistro } from '../dominio/verificacion-telefono.js';
+import { emitirVale } from '../dominio/vales.js';
 import { ConexionesSse } from '../eventos/adaptador-sse.js';
 import { crearServidor } from './servidor.js';
 
@@ -88,6 +89,111 @@ async function recuperar(
     telefono, rol, codigo: servicioVerificacion.ultimoCodigoPara(telefono),
   });
 }
+
+// --- Cuando el SMS no llega (migración 081) ---------------------------------
+//
+// El 05/10 esto dejó de ser hipotético: Twilio mandaba los códigos y GETESA
+// (Orange) los devolvía como «undelivered 30008», así que un taxista verificado
+// no podía entrar en su propia cuenta. Las dos salidas se prueban aquí.
+
+test('pedir el código por llamada lo manda por voz, no por SMS', async () => {
+  const telefono = telefonoUnico();
+  await darDeAltaPasajero(telefono);
+
+  const res = await llamar('POST', '/api/cuenta/codigo', randomUUID(), {
+    telefono, canal: 'llamada',
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.cuerpo));
+  assert.equal(res.cuerpo.canal, 'llamada');
+  const ultimo = servicioVerificacion.canales.at(-1);
+  assert.deepEqual(ultimo, { telefono, canal: 'llamada' });
+});
+
+test('sin pedir nada, el código sigue yendo por SMS', async () => {
+  const telefono = telefonoUnico();
+  await darDeAltaPasajero(telefono);
+  const res = await llamar('POST', '/api/cuenta/codigo', randomUUID(), { telefono });
+  assert.equal(res.cuerpo.canal, 'sms');
+  assert.deepEqual(servicioVerificacion.canales.at(-1), { telefono, canal: 'sms' });
+});
+
+// El vale vale EN LUGAR del código, en la misma pantalla y sin que la persona
+// tenga que ir a ningún sitio nuevo. Y se gasta: lo que abre una vez no puede
+// seguir abriendo, porque un código dictado por teléfono lo oye quien esté
+// delante.
+test('un vale del operador entra en lugar del código, y solo una vez', async () => {
+  const telefono = telefonoUnico();
+  await darDeAltaPasajero(telefono);
+  const vale = await enTransaccion(pool, (c) => emitirVale(c, telefono, '+240222410986'));
+
+  const uuid = randomUUID();
+  const entrada = await llamar('POST', '/api/cuenta/reclamar', uuid, {
+    telefono, rol: 'cliente', codigo: vale.codigo,
+  });
+  assert.equal(entrada.status, 200, JSON.stringify(entrada.cuerpo));
+  assert.equal(entrada.cuerpo.rol, 'cliente');
+
+  // Queda escrito qué aparato lo gastó: es lo que separa una excepción de un
+  // agujero.
+  const fila = await pool.query(
+    'SELECT usado_por, emitido_por FROM vale_de_acceso WHERE telefono = $1',
+    [telefono],
+  );
+  assert.equal(fila.rows[0].usado_por, uuid);
+  assert.equal(fila.rows[0].emitido_por, '+240222410986');
+
+  const otraVez = await llamar('POST', '/api/cuenta/reclamar', randomUUID(), {
+    telefono, rol: 'cliente', codigo: vale.codigo,
+  });
+  assert.equal(otraVez.status, 400, 'un vale gastado no vuelve a abrir');
+});
+
+test('un vale caducado no entra', async () => {
+  const telefono = telefonoUnico();
+  await darDeAltaPasajero(telefono);
+  const vale = await enTransaccion(pool, (c) => emitirVale(c, telefono, 'entorno'));
+  await pool.query(
+    `UPDATE vale_de_acceso SET caduca_en = now() - interval '1 minute' WHERE telefono = $1`,
+    [telefono],
+  );
+  const res = await llamar('POST', '/api/cuenta/reclamar', randomUUID(), {
+    telefono, rol: 'cliente', codigo: vale.codigo,
+  });
+  assert.equal(res.status, 400);
+});
+
+// Dar un vale nuevo tiene que dejar MUERTO al anterior. Si no, cada llamada del
+// taxista al operador dejaría otra llave suelta por ahí.
+test('el vale nuevo anula el anterior', async () => {
+  const telefono = telefonoUnico();
+  await darDeAltaPasajero(telefono);
+  const viejo = await enTransaccion(pool, (c) => emitirVale(c, telefono, 'entorno'));
+  const nuevo = await enTransaccion(pool, (c) => emitirVale(c, telefono, 'entorno'));
+
+  const conElViejo = await llamar('POST', '/api/cuenta/reclamar', randomUUID(), {
+    telefono, rol: 'cliente', codigo: viejo.codigo,
+  });
+  assert.equal(conElViejo.status, 400);
+  const conElNuevo = await llamar('POST', '/api/cuenta/reclamar', randomUUID(), {
+    telefono, rol: 'cliente', codigo: nuevo.codigo,
+  });
+  assert.equal(conElNuevo.status, 200, JSON.stringify(conElNuevo.cuerpo));
+});
+
+// El vale es para UN número. Que abra la cuenta de otro sería peor que no
+// tenerlo.
+test('el vale de un número no abre la cuenta de otro', async () => {
+  const suyo = telefonoUnico();
+  const ajeno = telefonoUnico();
+  await darDeAltaPasajero(suyo);
+  await darDeAltaPasajero(ajeno);
+  const vale = await enTransaccion(pool, (c) => emitirVale(c, suyo, 'entorno'));
+
+  const res = await llamar('POST', '/api/cuenta/reclamar', randomUUID(), {
+    telefono: ajeno, rol: 'cliente', codigo: vale.codigo,
+  });
+  assert.equal(res.status, 400);
+});
 
 test('un número desconocido no está registrado, y la respuesta trae la forma canónica', async () => {
   const res = await llamar('POST', '/api/cuenta/buscar', randomUUID(), { telefono: '666112233' });

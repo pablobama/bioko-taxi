@@ -34,8 +34,6 @@ function telefonoUnico(): string {
 }
 
 const UUID_OPERADOR = randomUUID();
-// El número de la raíz, el que da y quita acceso a los demás.
-const TELEFONO_RAIZ = '+240666000111';
 
 let pool: pg.Pool;
 let app: FastifyInstance;
@@ -47,7 +45,7 @@ before(async () => {
   process.env.UUIDS_OPERADOR = `${UUID_OPERADOR}, otro-texto-que-se-ignora`;
   // La raíz por teléfono (migración 080). Como los uuids: llega por entorno y
   // se inyecta antes de crear el servidor, igual que hará Render.
-  process.env.TELEFONOS_OPERADOR = `${TELEFONO_RAIZ}, 222410986`;
+  process.env.TELEFONOS_OPERADOR = '222410986';
   pool = crearPool();
   servicioVerificacion = new ServicioVerificacionRegistro();
   app = crearServidor(pool, new EmisorRegistro(), new ConexionesSse(), servicioVerificacion);
@@ -119,6 +117,7 @@ async function crearIncidencia(): Promise<{
 // puerta no sirve para averiguar quién manda en la plataforma.
 
 test('entrar como operador: el teléfono de la raíz, con su código, abre el panel', async () => {
+  const telefonoRaiz = raizNueva();
   const nuevo = randomUUID();
 
   // Antes de nada, no es nadie.
@@ -129,15 +128,15 @@ test('entrar como operador: el teléfono de la raíz, con su código, abre el pa
 
   const pedido = await app.inject({
     method: 'POST', url: '/api/operador/entrar/codigo', headers: cabeceras(nuevo),
-    payload: { telefono: TELEFONO_RAIZ },
+    payload: { telefono: telefonoRaiz },
   });
   assert.equal(pedido.statusCode, 200, pedido.body);
-  assert.ok(servicioVerificacion.enviados.includes(TELEFONO_RAIZ));
+  assert.ok(servicioVerificacion.enviados.includes(telefonoRaiz));
 
-  const codigo = servicioVerificacion.ultimoCodigoPara(TELEFONO_RAIZ);
+  const codigo = servicioVerificacion.ultimoCodigoPara(telefonoRaiz);
   const entrada = await app.inject({
     method: 'POST', url: '/api/operador/entrar', headers: cabeceras(nuevo),
-    payload: { telefono: TELEFONO_RAIZ, codigo },
+    payload: { telefono: telefonoRaiz, codigo },
   });
   assert.equal(entrada.statusCode, 200, entrada.body);
   assert.equal(entrada.json().raiz, true);
@@ -154,14 +153,15 @@ test('entrar como operador: el teléfono de la raíz, con su código, abre el pa
 });
 
 test('entrar como operador: con el código mal no se entra', async () => {
+  const telefonoRaiz = raizNueva();
   const nuevo = randomUUID();
   await app.inject({
     method: 'POST', url: '/api/operador/entrar/codigo', headers: cabeceras(nuevo),
-    payload: { telefono: TELEFONO_RAIZ },
+    payload: { telefono: telefonoRaiz },
   });
   const entrada = await app.inject({
     method: 'POST', url: '/api/operador/entrar', headers: cabeceras(nuevo),
-    payload: { telefono: TELEFONO_RAIZ, codigo: '000000' },
+    payload: { telefono: telefonoRaiz, codigo: '000000' },
   });
   assert.equal(entrada.statusCode, 400);
   const sesion = await app.inject({
@@ -192,6 +192,331 @@ test('entrar como operador: un número de fuera recibe la misma respuesta y ning
     payload: { telefono: ajeno, codigo: '123456' },
   });
   assert.equal(entrada.statusCode, 400);
+});
+
+// Una raíz recién estrenada, y hace falta que sea recién estrenada: el cooldown
+// de un minuto entre códigos vive en la BASE de desarrollo, que no se vacía
+// entre ejecuciones. Repetir la batería dentro del mismo minuto dejaba al
+// teléfono de siempre sin código —no se le manda, por diseño— y la prueba
+// fallaba por algo que no tenía nada que ver con lo que comprobaba.
+//
+// `TELEFONOS_OPERADOR` se lee en cada llamada a propósito (migración 080), así
+// que añadir un número aquí basta y no hace falta rehacer el servidor.
+function raizNueva(): string {
+  const telefono = telefonoUnico();
+  process.env.TELEFONOS_OPERADOR = `${process.env.TELEFONOS_OPERADOR ?? ''},${telefono}`;
+  return telefono;
+}
+
+// Entra como operador desde un aparato nuevo y devuelve su uuid. El código no
+// se consume en el doble de pruebas, así que volver a entrar con el mismo
+// teléfono funciona aunque el cooldown de un minuto impida mandar otro SMS.
+async function entrarComoOperador(telefono: string): Promise<string> {
+  const uuid = randomUUID();
+  await app.inject({
+    method: 'POST', url: '/api/operador/entrar/codigo', headers: cabeceras(uuid),
+    payload: { telefono },
+  });
+  const codigo = servicioVerificacion.ultimoCodigoPara(telefono);
+  const entrada = await app.inject({
+    method: 'POST', url: '/api/operador/entrar', headers: cabeceras(uuid),
+    payload: { telefono, codigo },
+  });
+  assert.equal(entrada.statusCode, 200, entrada.body);
+  return uuid;
+}
+
+// Dar y quitar accesos (migración 080). Lo que de verdad se comprueba aquí no
+// es que la lista crezca —eso es un INSERT— sino las DOS cosas que hacen que
+// este mecanismo signifique algo:
+//
+//   · que un operador normal no pueda repartir accesos. Si pudiera, echarle no
+//     serviría de nada: antes de salir se nombraría a sí mismo con otro número.
+//   · que al echar a alguien se le caigan los aparatos EN EL ACTO. Dejarlos
+//     vivos un rato más es dejarle entrar después de haberle echado, que es
+//     justo lo que no puede pasar cuando se revoca a alguien con prisa.
+test('accesos: la raíz da y quita, un operador normal solo mira', async () => {
+  const telefonoRaiz = raizNueva();
+  const raiz = await entrarComoOperador(telefonoRaiz);
+  const suyo = telefonoUnico();
+
+  const alta = await app.inject({
+    method: 'POST', url: '/api/operador/accesos', headers: cabeceras(raiz),
+    payload: { telefono: suyo, nombre: 'Marta del turno de noche' },
+  });
+  assert.equal(alta.statusCode, 200, alta.body);
+  assert.equal(alta.json().yaEstaba, false);
+
+  // Repetir el alta no es un error, pero se dice que ya estaba: quien pulsa
+  // tiene que saber si hizo algo o se equivocó de número.
+  const otraVez = await app.inject({
+    method: 'POST', url: '/api/operador/accesos', headers: cabeceras(raiz),
+    payload: { telefono: suyo },
+  });
+  assert.equal(otraVez.json().yaEstaba, true);
+
+  // Y ya puede entrar con su teléfono.
+  const ella = await entrarComoOperador(suyo);
+  const panel = await app.inject({
+    method: 'GET', url: '/api/operador/estadisticas', headers: cabeceras(ella),
+  });
+  assert.equal(panel.statusCode, 200);
+
+  // Ve la lista, con la raíz marcada y ella misma dentro...
+  const lista = await app.inject({
+    method: 'GET', url: '/api/operador/accesos', headers: cabeceras(ella),
+  });
+  assert.equal(lista.statusCode, 200, lista.body);
+  assert.deepEqual(lista.json().yo, { telefono: suyo, raiz: false });
+  const filas = lista.json().operadores as Array<{ telefono: string; raiz: boolean; nombre: string | null }>;
+  assert.ok(filas.some((f) => f.telefono === telefonoRaiz && f.raiz === true));
+  const mia = filas.find((f) => f.telefono === suyo);
+  assert.equal(mia?.nombre, 'Marta del turno de noche');
+  assert.equal(mia?.raiz, false);
+
+  // ...pero no la toca.
+  const intento = await app.inject({
+    method: 'POST', url: '/api/operador/accesos', headers: cabeceras(ella),
+    payload: { telefono: telefonoUnico() },
+  });
+  assert.equal(intento.statusCode, 403, 'un operador normal no reparte accesos');
+  const intentoQuitar = await app.inject({
+    method: 'POST', url: '/api/operador/accesos/quitar', headers: cabeceras(ella),
+    payload: { telefono: telefonoRaiz },
+  });
+  assert.equal(intentoQuitar.statusCode, 403);
+
+  // La raíz la echa, y su aparato deja de valer en la misma respuesta.
+  const baja = await app.inject({
+    method: 'POST', url: '/api/operador/accesos/quitar', headers: cabeceras(raiz),
+    payload: { telefono: suyo },
+  });
+  assert.equal(baja.statusCode, 200, baja.body);
+  const despues = await app.inject({
+    method: 'GET', url: '/api/operador/estadisticas', headers: cabeceras(ella),
+  });
+  assert.equal(despues.statusCode, 403, 'echar a alguien le echa también los aparatos');
+
+  // Y volver a entrar con su teléfono tampoco vale: el código es correcto, pero
+  // ya no está en la lista.
+  const reintento = await app.inject({
+    method: 'POST', url: '/api/operador/entrar', headers: cabeceras(randomUUID()),
+    payload: { telefono: suyo, codigo: servicioVerificacion.ultimoCodigoPara(suyo) },
+  });
+  assert.equal(reintento.statusCode, 400);
+
+  // Quitarla dos veces es un 404 y no un «hecho» en falso.
+  const otraBaja = await app.inject({
+    method: 'POST', url: '/api/operador/accesos/quitar', headers: cabeceras(raiz),
+    payload: { telefono: suyo },
+  });
+  assert.equal(otraBaja.statusCode, 404);
+});
+
+// A la raíz no se la echa desde el panel. Es el seguro contra quedarse todos
+// fuera: si el permiso de todos viviera en la base, una revocación con prisa
+// podría dejar la plataforma sin ningún operador y sin forma de volver a
+// entrar. Y darla de alta tampoco: sería una fila que no hace nada y que al
+// revocarla daría la falsa sensación de haberla echado.
+test('accesos: a la raíz no se la echa ni se la da de alta desde el panel', async () => {
+  const telefonoRaiz = raizNueva();
+  const raiz = await entrarComoOperador(telefonoRaiz);
+
+  const baja = await app.inject({
+    method: 'POST', url: '/api/operador/accesos/quitar', headers: cabeceras(raiz),
+    payload: { telefono: telefonoRaiz },
+  });
+  assert.equal(baja.statusCode, 409, baja.body);
+
+  const alta = await app.inject({
+    method: 'POST', url: '/api/operador/accesos', headers: cabeceras(raiz),
+    payload: { telefono: telefonoRaiz },
+  });
+  assert.equal(alta.statusCode, 409, alta.body);
+
+  // Sigue entrando, por supuesto.
+  const panel = await app.inject({
+    method: 'GET', url: '/api/operador/estadisticas', headers: cabeceras(raiz),
+  });
+  assert.equal(panel.statusCode, 200);
+});
+
+// El móvil que se perdió. Se echa el APARATO y la persona sigue siendo
+// operadora: entra desde los demás, y desde ése tendrá que volver a pedir el
+// código.
+test('accesos: echar un aparato deja a la persona dentro y al aparato fuera', async () => {
+  const raiz = await entrarComoOperador(raizNueva());
+  const suyo = telefonoUnico();
+  await app.inject({
+    method: 'POST', url: '/api/operador/accesos', headers: cabeceras(raiz),
+    payload: { telefono: suyo },
+  });
+  const perdido = await entrarComoOperador(suyo);
+
+  const aparatos = await app.inject({
+    method: 'POST', url: '/api/operador/accesos/aparatos', headers: cabeceras(raiz),
+    payload: { telefono: suyo },
+  });
+  assert.equal(aparatos.statusCode, 200, aparatos.body);
+  const uuids = (aparatos.json().aparatos as Array<{ uuid: string }>).map((a) => a.uuid);
+  assert.deepEqual(uuids, [perdido]);
+
+  const echar = await app.inject({
+    method: 'POST', url: '/api/operador/accesos/aparatos/quitar', headers: cabeceras(raiz),
+    payload: { uuid: perdido },
+  });
+  assert.equal(echar.statusCode, 200, echar.body);
+
+  const desdeElPerdido = await app.inject({
+    method: 'GET', url: '/api/operador/estadisticas', headers: cabeceras(perdido),
+  });
+  assert.equal(desdeElPerdido.statusCode, 403);
+
+  // La persona no ha perdido el acceso: desde otro aparato entra igual.
+  const otro = await entrarComoOperador(suyo);
+  const panel = await app.inject({
+    method: 'GET', url: '/api/operador/estadisticas', headers: cabeceras(otro),
+  });
+  assert.equal(panel.statusCode, 200);
+});
+
+// El vale lo da CUALQUIER operador, no solo la raíz: el taxista llama porque no
+// puede entrar, y eso pasa a cualquier hora del turno. Lo que lo sujeta es que
+// dura minutos, se gasta una vez, es de un solo número y queda firmado.
+test('vale: lo da cualquier operador, firmado, y no para un número sin cuenta', async () => {
+  const raiz = await entrarComoOperador(raizNueva());
+  const telefono = telefonoUnico();
+
+  // Para un número que no existe no se da nada: dictar un código que no abre
+  // nada es dejar a la persona esperando al otro lado del teléfono.
+  const enElAire = await app.inject({
+    method: 'POST', url: '/api/operador/vale', headers: cabeceras(raiz),
+    payload: { telefono },
+  });
+  assert.equal(enElAire.statusCode, 404, enElAire.body);
+
+  // Con un taxista de verdad sí.
+  const alta = await app.inject({
+    method: 'POST', url: '/api/conductor/alta', headers: cabeceras(randomUUID()),
+    payload: {
+      nombre: 'Taxista sin SMS', telefono, matricula: `M-${randomUUID().slice(0, 6)}`,
+      marca: 'Toyota', carroceria: 'turismo',
+    },
+  });
+  assert.equal(alta.statusCode, 200, alta.body);
+
+  const vale = await app.inject({
+    method: 'POST', url: '/api/operador/vale', headers: cabeceras(raiz),
+    payload: { telefono },
+  });
+  assert.equal(vale.statusCode, 200, vale.body);
+  assert.match(vale.json().codigo, /^\d{6}$/);
+
+  const fila = await pool.query(
+    'SELECT emitido_por FROM vale_de_acceso WHERE telefono = $1 AND usado_en IS NULL',
+    [telefono],
+  );
+  assert.equal(fila.rowCount, 1, 'el vale queda guardado y firmado');
+
+  // Y un aparato que no es de operador no reparte vales.
+  const intruso = await app.inject({
+    method: 'POST', url: '/api/operador/vale', headers: cabeceras(randomUUID()),
+    payload: { telefono },
+  });
+  assert.equal(intruso.statusCode, 403);
+});
+
+// Cambiar el número de alguien (05/10). El teléfono es la IDENTIDAD, no un dato
+// de contacto: lo que se comprueba aquí es que después se entra con el nuevo,
+// que el viejo deja de servir, que no se le puede dar el de otro, y que el
+// nuevo queda SIN verificar —de esa línea no ha demostrado nada nadie todavía—.
+test('el operador cambia el número de un taxista: entra con el nuevo y no con el viejo', async () => {
+  const raiz = await entrarComoOperador(raizNueva());
+  const viejo = telefonoUnico();
+  const nuevo = telefonoUnico();
+  const alta = await app.inject({
+    method: 'POST', url: '/api/conductor/alta', headers: cabeceras(randomUUID()),
+    payload: {
+      nombre: 'Taxista que cambia de línea', telefono: viejo,
+      matricula: `M-${randomUUID().slice(0, 6)}`, marca: 'Toyota', carroceria: 'turismo',
+    },
+  });
+  assert.equal(alta.statusCode, 200, alta.body);
+  const conductorId = Number(alta.json().conductorId);
+  await pool.query(
+    `UPDATE conductor SET estado_verificacion = 'verificado',
+     telefono_verificado_en = now() WHERE id = $1`,
+    [conductorId],
+  );
+
+  const cambio = await app.inject({
+    method: 'POST', url: `/api/operador/conductores/${conductorId}/telefono`,
+    headers: cabeceras(raiz), payload: { telefono: nuevo },
+  });
+  assert.equal(cambio.statusCode, 200, cambio.body);
+  assert.equal(cambio.json().telefono, nuevo);
+  assert.equal(cambio.json().antes, viejo);
+
+  const fila = await pool.query(
+    'SELECT telefono, telefono_verificado_en FROM conductor WHERE id = $1',
+    [conductorId],
+  );
+  assert.equal(fila.rows[0].telefono, nuevo);
+  assert.equal(
+    fila.rows[0].telefono_verificado_en, null,
+    'de la línea nueva no ha demostrado nada nadie: no hereda la verificación',
+  );
+
+  // Con el nuevo entra en la app de taxi; con el viejo ya no existe.
+  const conElNuevo = await app.inject({
+    method: 'POST', url: '/api/conductor/registro', headers: cabeceras(randomUUID()),
+    payload: { telefono: nuevo },
+  });
+  assert.equal(conElNuevo.statusCode, 200, conElNuevo.body);
+  const conElViejo = await app.inject({
+    method: 'POST', url: '/api/conductor/registro', headers: cabeceras(randomUUID()),
+    payload: { telefono: viejo },
+  });
+  assert.equal(conElViejo.statusCode, 404);
+
+  // Y queda escrito quién lo hizo (migración 067).
+  const registro = await pool.query(
+    `SELECT valor_anterior, valor_nuevo, es_operador FROM cambio_ajuste
+     WHERE ambito = 'conductor' AND clave = $1`,
+    [`${conductorId}.telefono`],
+  );
+  assert.equal(registro.rowCount, 1);
+  assert.equal(registro.rows[0].valor_anterior, viejo);
+  assert.equal(registro.rows[0].valor_nuevo, nuevo);
+});
+
+test('no se le puede dar a alguien el número de otro', async () => {
+  const raiz = await entrarComoOperador(raizNueva());
+  const unos = telefonoUnico();
+  const otros = telefonoUnico();
+  const altas = [];
+  for (const telefono of [unos, otros]) {
+    const res = await app.inject({
+      method: 'POST', url: '/api/conductor/alta', headers: cabeceras(randomUUID()),
+      payload: {
+        nombre: `Taxista ${telefono}`, telefono,
+        matricula: `M-${randomUUID().slice(0, 6)}`, marca: 'Toyota', carroceria: 'turismo',
+      },
+    });
+    assert.equal(res.statusCode, 200, res.body);
+    altas.push(Number(res.json().conductorId));
+  }
+
+  const choque = await app.inject({
+    method: 'POST', url: `/api/operador/conductores/${altas[0]}/telefono`,
+    headers: cabeceras(raiz), payload: { telefono: otros },
+  });
+  assert.equal(choque.statusCode, 409, choque.body);
+  assert.match(choque.json().error, /ya es de/);
+
+  // Y el primero sigue con el suyo: un cambio rechazado no deja nada a medias.
+  const fila = await pool.query('SELECT telefono FROM conductor WHERE id = $1', [altas[0]]);
+  assert.equal(fila.rows[0].telefono, unos);
 });
 
 test('operador: sin el uuid en la lista, 403 en todas las rutas', async () => {

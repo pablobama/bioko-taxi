@@ -138,31 +138,51 @@ export async function listarOperadores(cliente: Lector): Promise<OperadorListado
   }));
   // La raíz va primero y marcada: quien mire la lista tiene que ver de un
   // vistazo a quién no puede echar desde ahí.
-  const raices: OperadorListado[] = [...telefonosRaiz()].map((telefono) => ({
+  //
+  // Sus aparatos se cuentan aparte porque no tiene fila en `operador_autorizado`
+  // —vive en el entorno— pero sí los tiene vinculados como todos. Enseñar un
+  // cero ahí sería mentir sobre el único acceso que nadie puede revocar.
+  const raices0 = [...telefonosRaiz()];
+  const cuentas = new Map<string, number>();
+  if (raices0.length > 0) {
+    const res2 = await cliente.query(
+      `SELECT telefono, count(*)::int AS aparatos FROM operador_dispositivo
+       WHERE telefono = ANY($1::text[]) AND revocado_en IS NULL
+       GROUP BY telefono`,
+      [raices0],
+    );
+    for (const f of res2.rows) cuentas.set(f.telefono, f.aparatos);
+  }
+  const raices: OperadorListado[] = raices0.map((telefono) => ({
     telefono,
     nombre: null,
     raiz: true,
     alta_por: null,
     creado_en: null,
-    aparatos: 0,
+    aparatos: cuentas.get(telefono) ?? 0,
   }));
   return [...raices, ...dados];
 }
 
+// Devuelve si ha dado de alta a alguien nuevo. Dar de alta a quien ya estaba no
+// es un error —la lista queda como se quería— pero el panel tiene que poder
+// decir «ya estaba» en vez de «hecho»: si no, quien pulsa se queda sin saber si
+// hizo algo o se equivocó de número.
 export async function autorizar(
   cliente: Lector,
   telefono: string,
   nombre: string | null,
   altaPor: string,
-): Promise<void> {
+): Promise<boolean> {
   const canonico = normalizarTelefono(telefono);
   if (canonico === null) throw new Error(`Teléfono no válido: ${telefono}`);
-  await cliente.query(
+  const res = await cliente.query(
     `INSERT INTO operador_autorizado (telefono, nombre, alta_por)
      VALUES ($1, $2, $3)
      ON CONFLICT (telefono) WHERE revocado_en IS NULL DO NOTHING`,
     [canonico, nombre, altaPor],
   );
+  return (res.rowCount ?? 0) > 0;
 }
 
 // Echar a alguien. Se le quita el permiso Y se le caen los aparatos en la misma

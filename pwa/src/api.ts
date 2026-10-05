@@ -399,6 +399,23 @@ export interface Sesion {
   conductor?: DatosConductor;
 }
 
+// Quién puede entrar al panel. Los de la raíz vienen marcados y sin fecha: no
+// son una fila de la base, están en la variable de entorno.
+export interface AccesoOperador {
+  telefono: string;
+  nombre: string | null;
+  raiz: boolean;
+  alta_por: string | null;
+  creado_en: string | null;
+  aparatos: number;
+}
+
+export interface AparatoOperador {
+  uuid: string;
+  creado_en: string;
+  visto_en: string | null;
+}
+
 export interface ConductorOperador {
   id: number;
   nombre: string;
@@ -862,10 +879,12 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ telefono }) },
     ),
 
-  pedirCodigoCuenta: (telefono: string) =>
-    pedirJson<{ enviado: boolean }>('/api/cuenta/codigo', {
+  // `canal`: por dónde llega el código. Por SMS salvo que se pida la llamada,
+  // que es lo que salva a las líneas a las que el SMS no llega (migración 081).
+  pedirCodigoCuenta: (telefono: string, canal: 'sms' | 'llamada' = 'sms') =>
+    pedirJson<{ enviado: boolean; canal: 'sms' | 'llamada' }>('/api/cuenta/codigo', {
       method: 'POST',
-      body: JSON.stringify({ telefono }),
+      body: JSON.stringify({ telefono, canal }),
     }),
 
   reclamarCuenta: (telefono: string, codigo: string, rol: 'conductor' | 'cliente') =>
@@ -1182,8 +1201,31 @@ export const api = {
 
   // Entrar al panel con el teléfono (migración 080), en vez de con un uuid de
   // 36 caracteres metido en la URL.
-  pedirCodigoOperador: (telefono: string) =>
+  pedirCodigoOperador: (telefono: string, canal: 'sms' | 'llamada' = 'sms') =>
     pedirJson<{ enviado: boolean }>('/api/operador/entrar/codigo', {
+      method: 'POST',
+      body: JSON.stringify({ telefono, canal }),
+    }),
+
+  // Cambiar el número con el que entra alguien (05/10). No es editar un dato
+  // de contacto: es cambiarle la llave, y el número nuevo queda sin verificar.
+  cambiarTelefonoConductor: (conductorId: number, telefono: string) =>
+    pedirJson<{ telefono: string; antes: string | null }>(
+      `/api/operador/conductores/${conductorId}/telefono`,
+      { method: 'POST', body: JSON.stringify({ telefono }) },
+    ),
+
+  cambiarTelefonoPasajero: (dispositivoId: number, telefono: string) =>
+    pedirJson<{ telefono: string; antes: string | null }>(
+      `/api/operador/pasajeros/${dispositivoId}/telefono`,
+      { method: 'POST', body: JSON.stringify({ telefono }) },
+    ),
+
+  // El vale de entrada para quien no recibe ni el SMS ni la llamada
+  // (migración 081). Devuelve el código UNA vez: no se guarda en claro, así
+  // que si se pierde hay que dar otro.
+  valeOperador: (telefono: string) =>
+    pedirJson<{ codigo: string; caducaEn: string }>('/api/operador/vale', {
       method: 'POST',
       body: JSON.stringify({ telefono }),
     }),
@@ -1192,6 +1234,38 @@ export const api = {
     pedirJson<{ entrado: boolean; raiz: boolean }>('/api/operador/entrar', {
       method: 'POST',
       body: JSON.stringify({ telefono, codigo }),
+    }),
+
+  // Dar y quitar accesos (migración 080). El teléfono viaja en el cuerpo
+  // incluso cuando solo se lee: en la URL acabaría en el registro de peticiones
+  // del servidor.
+  accesosOperador: () =>
+    pedirJson<{ yo: { telefono: string | null; raiz: boolean } | null; operadores: AccesoOperador[] }>(
+      '/api/operador/accesos',
+    ),
+
+  aparatosOperador: (telefono: string) =>
+    pedirJson<{ aparatos: AparatoOperador[] }>('/api/operador/accesos/aparatos', {
+      method: 'POST',
+      body: JSON.stringify({ telefono }),
+    }),
+
+  darAccesoOperador: (telefono: string, nombre?: string) =>
+    pedirJson<{ autorizado: boolean; yaEstaba: boolean }>('/api/operador/accesos', {
+      method: 'POST',
+      body: JSON.stringify({ telefono, nombre }),
+    }),
+
+  quitarAccesoOperador: (telefono: string) =>
+    pedirJson<{ revocado: boolean }>('/api/operador/accesos/quitar', {
+      method: 'POST',
+      body: JSON.stringify({ telefono }),
+    }),
+
+  quitarAparatoOperador: (uuid: string) =>
+    pedirJson<{ revocado: boolean }>('/api/operador/accesos/aparatos/quitar', {
+      method: 'POST',
+      body: JSON.stringify({ uuid }),
     }),
 
   vivoOperador: () =>

@@ -4,6 +4,7 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
+import { gastarVale } from '../dominio/vales.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
 import type { ServicioVerificacionTelefono } from '../dominio/verificacion-telefono.js';
 
@@ -79,12 +80,17 @@ export function registrarRutasVerificacion(
         throw errorHttp(429, `Espera ${Math.ceil(cooldownSeg - segundosDesde)} segundos antes de pedir otro código.`);
       }
     }
-    await servicioVerificacion.enviarCodigo(fila.telefono);
+    // Por SMS salvo que pida la llamada (migración 081): en Malabo hay líneas a
+    // las que el SMS no llega, y sin esto el alta se queda ahí parada.
+    const canal = ((req.body ?? {}) as { canal?: string }).canal === 'llamada'
+      ? 'llamada' as const
+      : 'sms' as const;
+    await servicioVerificacion.enviarCodigo(fila.telefono, canal);
     await pool.query(
       `UPDATE ${fila.tabla} SET verificacion_enviada_en = now() WHERE id = $1`,
       [fila.id],
     );
-    return { enviado: true };
+    return { enviado: true, canal };
   });
 
   app.post('/api/verificacion/comprobar', async (req) => {
@@ -98,7 +104,13 @@ export function registrarRutasVerificacion(
     if (!fila || !fila.telefono) {
       return { verificado: true, motivo: 'sin_telefono' };
     }
-    const correcto = await servicioVerificacion.comprobarCodigo(fila.telefono, codigo);
+    // El vale del operador vale aquí también (migración 081), y tiene que
+    // valer: cuando el operador le cambia el número a alguien, el nuevo queda
+    // sin verificar, y si a esa línea tampoco llega el SMS la persona se queda
+    // sin poder trabajar. El vale es el operador diciendo «de esta línea
+    // respondo yo», que es justo lo que verifica un teléfono aquí.
+    const correcto = await servicioVerificacion.comprobarCodigo(fila.telefono, codigo)
+      || await gastarVale(pool, fila.telefono, codigo, uuid);
     if (!correcto) {
       throw errorHttp(400, 'Código incorrecto.');
     }

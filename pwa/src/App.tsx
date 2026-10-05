@@ -788,6 +788,10 @@ function VolverConTelefono({
   const [codigo, setCodigo] = useState('');
   const [ocupado, setOcupado] = useState(false);
   const [segundosParaReenviar, setSegundosParaReenviar] = useState(0);
+  // Si el último código se pidió por llamada, lo que la pantalla dice cambia:
+  // «te hemos enviado un SMS» mientras suena el teléfono es decirle a la
+  // persona que mire donde no es.
+  const [porLlamada, setPorLlamada] = useState(false);
 
   useEffect(() => {
     if (segundosParaReenviar <= 0) return;
@@ -795,9 +799,10 @@ function VolverConTelefono({
     return () => clearTimeout(reloj);
   }, [segundosParaReenviar]);
 
-  async function enviarCodigo(numero: string) {
+  async function enviarCodigo(numero: string, canal: 'sms' | 'llamada' = 'sms') {
     try {
-      await api.pedirCodigoCuenta(numero);
+      await api.pedirCodigoCuenta(numero, canal);
+      setPorLlamada(canal === 'llamada');
       setSegundosParaReenviar(COOLDOWN_REENVIO_S);
     } catch (error) {
       // El SMS puede no salir —cooldown, o Twilio caído— y aun así hay que
@@ -849,7 +854,9 @@ function VolverConTelefono({
       <>
         <h1>{t('verificacion.titulo')}</h1>
         <p className="nota">{t('volver.yaEstas')}</p>
-        <p className="nota">{t('verificacion.nota', { telefono: canonico })}</p>
+        <p className="nota">
+          {t(porLlamada ? 'verificacion.notaLlamada' : 'verificacion.nota', { telefono: canonico })}
+        </p>
         <input
           type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
           value={codigo} placeholder={t('verificacion.placeholder')}
@@ -871,6 +878,19 @@ function VolverConTelefono({
             ? t('verificacion.reenviarEn', { seg: segundosParaReenviar })
             : t('verificacion.reenviar')}
         </button>
+        {/* La salida para las líneas a las que el SMS no llega: en Malabo,
+            GETESA descarta los mensajes de remitente internacional y la
+            persona se queda fuera de su cuenta sin nada que hacer. La llamada
+            entra por otro sitio de la red. Va de segundona y no de principal
+            porque cuesta más y porque el SMS funciona para la mayoría. */}
+        <button
+          type="button" className="secundario"
+          disabled={ocupado || segundosParaReenviar > 0}
+          onClick={() => void enviarCodigo(canonico, 'llamada')}
+        >
+          {t('verificacion.llamadme')}
+        </button>
+        <p className="nota-pequena">{t('verificacion.siNoLlegaNada')}</p>
         <button
           type="button" className="tenue"
           onClick={() => { alFallar(''); setCodigo(''); setFase('telefono'); }}

@@ -2993,6 +2993,12 @@ button.importe.elegido-importe {
    más larga antes de empezar a desplazarse por dentro. */
 .consola-trabajo .tabla-marco {
   max-height: none;
+  /* Y que NO se encoja. La columna de trabajo es un flex vertical, y un hijo
+     con scroll propio es lo primero que el navegador aplasta cuando falta
+     sitio: la tabla de accesos quedaba en un hilo de un píxel —presente en el
+     DOM, con sus filas, y absolutamente invisible—. El que tiene que
+     desplazarse cuando no cabe todo es la columna, no la tabla. */
+  flex: none;
 }
 
 /* --- Tamaños de la consola -------------------------------------------------

@@ -6,8 +6,15 @@
 // eventos (src/eventos/) — es un servicio que se inyecta directo en
 // crearServidor, igual que el emisor o las conexiones SSE.
 
+// Por dónde llega el código. El SMS es lo normal; la LLAMADA existe porque en
+// Malabo el SMS a veces no llega: GETESA (Orange) descarta mensajes de remitente
+// alfanumérico internacional —Twilio los devuelve como «undelivered 30008»— y
+// quien se queda fuera se queda fuera del todo. Una llamada entra por otra
+// puerta de la red y no depende de ese filtro.
+export type CanalDeCodigo = 'sms' | 'llamada';
+
 export interface ServicioVerificacionTelefono {
-  enviarCodigo(telefono: string): Promise<void>;
+  enviarCodigo(telefono: string, canal?: CanalDeCodigo): Promise<void>;
   // true si el código es el que se envió a ese teléfono.
   comprobarCodigo(telefono: string, codigo: string): Promise<boolean>;
 }
@@ -52,8 +59,15 @@ export class ServicioVerificacionTwilio implements ServicioVerificacionTelefono 
     return datos;
   }
 
-  async enviarCodigo(telefono: string): Promise<void> {
-    await this.llamar('Verifications', { To: telefono, Channel: 'sms' });
+  async enviarCodigo(telefono: string, canal: CanalDeCodigo = 'sms'): Promise<void> {
+    await this.llamar('Verifications', {
+      To: telefono,
+      Channel: canal === 'llamada' ? 'call' : 'sms',
+      // En español, que es la lengua de Malabo. Iba en inglés —el que Twilio
+      // pone por defecto— y en una llamada eso importa mucho más que en un
+      // SMS: el código lo dice una voz, y hay que entenderla a la primera.
+      Locale: 'es',
+    });
   }
 
   async comprobarCodigo(telefono: string, codigo: string): Promise<boolean> {
@@ -68,10 +82,10 @@ export class ServicioVerificacionTwilio implements ServicioVerificacionTelefono 
 export class ServicioVerificacionConsola implements ServicioVerificacionTelefono {
   private readonly codigos = new Map<string, string>();
 
-  async enviarCodigo(telefono: string): Promise<void> {
+  async enviarCodigo(telefono: string, canal: CanalDeCodigo = 'sms'): Promise<void> {
     const codigo = String(Math.floor(100000 + Math.random() * 900000));
     this.codigos.set(telefono, codigo);
-    console.log(`[verificación de teléfono] código para ${telefono}: ${codigo}`);
+    console.log(`[verificación de teléfono] código para ${telefono} por ${canal}: ${codigo}`);
   }
 
   async comprobarCodigo(telefono: string, codigo: string): Promise<boolean> {
@@ -85,11 +99,15 @@ export class ServicioVerificacionConsola implements ServicioVerificacionTelefono
 export class ServicioVerificacionRegistro implements ServicioVerificacionTelefono {
   private readonly codigos = new Map<string, string>();
   enviados: string[] = [];
+  // Por dónde se mandó cada uno. Separado de `enviados` para no tocar las
+  // pruebas que ya miraban esa lista.
+  canales: Array<{ telefono: string; canal: CanalDeCodigo }> = [];
 
-  async enviarCodigo(telefono: string): Promise<void> {
+  async enviarCodigo(telefono: string, canal: CanalDeCodigo = 'sms'): Promise<void> {
     const codigo = String(Math.floor(100000 + Math.random() * 900000));
     this.codigos.set(telefono, codigo);
     this.enviados.push(telefono);
+    this.canales.push({ telefono, canal });
   }
 
   async comprobarCodigo(telefono: string, codigo: string): Promise<boolean> {
