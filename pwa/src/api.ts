@@ -66,6 +66,43 @@ function guardarSecreto(secreto: string): void {
 // es la que trae las carreras — se vio probándolo en el navegador.
 let emision: Promise<void> | null = null;
 
+// SALIR DEL CALLEJÓN SIN SALIDA DEL SECRETO (migración 069).
+//
+// Si este navegador lleva un uuid cuyo secreto emitió OTRO —o cuyo secreto
+// perdió—, el servidor contesta 401 a TODA petición y la aplicación queda
+// muerta. El mensaje decía «vuelve a abrir la aplicación», y volver a abrirla
+// no arreglaba nada: el uuid sigue ahí y el secreto sigue sin estar. Era un
+// ladrillo con instrucciones falsas.
+//
+// Se llega ahí sobre todo por el enlace viejo del operador, que metía el uuid
+// de otro aparato en este navegador: si aquel uuid ya tenía secreto, éste no
+// podía conseguirlo nunca.
+//
+// La salida es empezar con un uuid nuevo. NO ABRE NINGUNA PUERTA: el uuid
+// siempre lo ha puesto el cliente, y borrar los datos del navegador hace
+// exactamente esto mismo. Las sanciones no viajan con el uuid sino con el
+// teléfono verificado (migraciones 024 y 078), así que esto no sirve para
+// quitarse un bloqueo.
+//
+// Una sola vez por pestaña: si el servidor siguiera contestando 401 después de
+// estrenar identidad, el problema es otro y recargar en bucle lo escondería.
+const CLAVE_RESCATE = 'secreto:rescatado';
+
+function empezarDeCero(): void {
+  try {
+    if (sessionStorage.getItem(CLAVE_RESCATE) !== null) return;
+    sessionStorage.setItem(CLAVE_RESCATE, '1');
+    localStorage.removeItem(`secreto:${uuidDispositivo()}`);
+    localStorage.removeItem('dispositivo');
+    localStorage.removeItem('ultimaSesion');
+    localStorage.removeItem('solicitudActiva');
+  } catch {
+    // Sin almacenamiento no hay nada que limpiar ni dónde apuntarlo.
+    return;
+  }
+  window.location.replace(window.location.pathname);
+}
+
 export function asegurarSecreto(): Promise<void> {
   if (secretoDispositivo() !== null) return Promise.resolve();
   if (emision === null) emision = pedirSecreto();
@@ -126,6 +163,9 @@ async function pedirJsonUnaVez<T>(ruta: string, opciones: RequestInit): Promise<
   }
   marcarConexionViva();
   const cuerpo = await respuesta.json().catch(() => ({}));
+  if (respuesta.status === 401 && (cuerpo as { codigo?: string }).codigo === 'secreto_invalido') {
+    empezarDeCero();
+  }
   if (!respuesta.ok) {
     throw new ErrorDelServidor(
       respuesta.status,
