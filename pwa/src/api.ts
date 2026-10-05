@@ -1135,6 +1135,20 @@ export const api = {
     );
   },
 
+  // Entrar al panel con el teléfono (migración 080), en vez de con un uuid de
+  // 36 caracteres metido en la URL.
+  pedirCodigoOperador: (telefono: string) =>
+    pedirJson<{ enviado: boolean }>('/api/operador/entrar/codigo', {
+      method: 'POST',
+      body: JSON.stringify({ telefono }),
+    }),
+
+  entrarOperador: (telefono: string, codigo: string) =>
+    pedirJson<{ entrado: boolean; raiz: boolean }>('/api/operador/entrar', {
+      method: 'POST',
+      body: JSON.stringify({ telefono, codigo }),
+    }),
+
   vivoOperador: () =>
     pedirJson<{ taxis: TaxiVivo[]; viajes: ViajeVivo[]; momento: string }>(
       '/api/operador/vivo',

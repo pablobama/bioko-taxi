@@ -17,7 +17,7 @@ import { actividadDe } from '../dominio/rastro.js';
 import { reputacionDe } from '../dominio/reputacion.js';
 import { inicioDelDiaEnMalabo } from '../dominio/tiempo.js';
 import { normalizarTelefono } from '../dominio/telefono.js';
-import { esOperador } from './operador.js';
+import { esOperadorAhora } from './operador.js';
 
 const PATRON_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CARROCERIAS = ['turismo', '4x4'];
@@ -43,7 +43,7 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
     const uuid = uuidDesde(req);
     // El operador no tiene fila en `dispositivo`: es una lista aparte
     // (UUIDS_OPERADOR), así que se resuelve antes de mirar esa tabla.
-    if (esOperador(uuid)) {
+    if (await esOperadorAhora(pool, uuid)) {
       return { rol: 'operador' };
     }
     const dispositivo = await pool.query(

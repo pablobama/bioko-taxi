@@ -125,7 +125,7 @@ export function crearServidor(
   registrarRutasSesion(app, pool);
   registrarRutasConductor(app, pool, emisor, conexionesSse);
   registrarRutasLlamadas(app, pool, conexionesSse);
-  registrarRutasOperador(app, pool, emisor);
+  registrarRutasOperador(app, pool, emisor, servicioVerificacion);
   registrarRutasRadio(app, pool, emisor, conexionesSse);
   registrarRutasVerificacion(app, pool, servicioVerificacion);
   registrarRutasCuenta(app, pool, servicioVerificacion);

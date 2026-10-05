@@ -10,6 +10,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { crearPool, enTransaccion } from '../bd/conexion.js';
 import { EmisorRegistro } from '../dominio/eventos.js';
+import { ServicioVerificacionRegistro } from '../dominio/verificacion-telefono.js';
 import { crearZona, guardarReferencia } from '../dominio/gazetteer.js';
 import { procesarClienteAusente } from '../dominio/monedero.js';
 import { ConexionesSse } from '../eventos/adaptador-sse.js';
@@ -33,20 +34,28 @@ function telefonoUnico(): string {
 }
 
 const UUID_OPERADOR = randomUUID();
+// El número de la raíz, el que da y quita acceso a los demás.
+const TELEFONO_RAIZ = '+240666000111';
 
 let pool: pg.Pool;
 let app: FastifyInstance;
+let servicioVerificacion: ServicioVerificacionRegistro;
 
 before(async () => {
   // La lista de operadores llega por entorno; para las pruebas se inyecta
   // antes de crear el servidor, igual que hará Render en producción.
   process.env.UUIDS_OPERADOR = `${UUID_OPERADOR}, otro-texto-que-se-ignora`;
+  // La raíz por teléfono (migración 080). Como los uuids: llega por entorno y
+  // se inyecta antes de crear el servidor, igual que hará Render.
+  process.env.TELEFONOS_OPERADOR = `${TELEFONO_RAIZ}, 222410986`;
   pool = crearPool();
-  app = crearServidor(pool, new EmisorRegistro(), new ConexionesSse());
+  servicioVerificacion = new ServicioVerificacionRegistro();
+  app = crearServidor(pool, new EmisorRegistro(), new ConexionesSse(), servicioVerificacion);
 });
 
 after(async () => {
   delete process.env.UUIDS_OPERADOR;
+  delete process.env.TELEFONOS_OPERADOR;
   await app.close();
   await pool.end();
 });
@@ -101,6 +110,89 @@ async function crearIncidencia(): Promise<{
     return { incidenciaId: incidencia.rows[0].id, dispositivoId, viajeId };
   });
 }
+
+// --- Entrar con el teléfono (migración 080) ---------------------------------
+//
+// Lo que se comprueba no es que el camino feliz funcione, sino las tres cosas
+// que lo convertirían en una puerta abierta: que sin código no se entra, que un
+// número que NO está en la lista no entra ni aunque acierte un código, y que la
+// puerta no sirve para averiguar quién manda en la plataforma.
+
+test('entrar como operador: el teléfono de la raíz, con su código, abre el panel', async () => {
+  const nuevo = randomUUID();
+
+  // Antes de nada, no es nadie.
+  const antes = await app.inject({
+    method: 'GET', url: '/api/operador/estadisticas', headers: cabeceras(nuevo),
+  });
+  assert.equal(antes.statusCode, 403);
+
+  const pedido = await app.inject({
+    method: 'POST', url: '/api/operador/entrar/codigo', headers: cabeceras(nuevo),
+    payload: { telefono: TELEFONO_RAIZ },
+  });
+  assert.equal(pedido.statusCode, 200, pedido.body);
+  assert.ok(servicioVerificacion.enviados.includes(TELEFONO_RAIZ));
+
+  const codigo = servicioVerificacion.ultimoCodigoPara(TELEFONO_RAIZ);
+  const entrada = await app.inject({
+    method: 'POST', url: '/api/operador/entrar', headers: cabeceras(nuevo),
+    payload: { telefono: TELEFONO_RAIZ, codigo },
+  });
+  assert.equal(entrada.statusCode, 200, entrada.body);
+  assert.equal(entrada.json().raiz, true);
+
+  // Y ahora sí: la sesión lo dice y las rutas del panel le dejan pasar.
+  const sesion = await app.inject({
+    method: 'GET', url: '/api/sesion', headers: { 'x-dispositivo': nuevo },
+  });
+  assert.equal(sesion.json().rol, 'operador');
+  const despues = await app.inject({
+    method: 'GET', url: '/api/operador/estadisticas', headers: cabeceras(nuevo),
+  });
+  assert.equal(despues.statusCode, 200);
+});
+
+test('entrar como operador: con el código mal no se entra', async () => {
+  const nuevo = randomUUID();
+  await app.inject({
+    method: 'POST', url: '/api/operador/entrar/codigo', headers: cabeceras(nuevo),
+    payload: { telefono: TELEFONO_RAIZ },
+  });
+  const entrada = await app.inject({
+    method: 'POST', url: '/api/operador/entrar', headers: cabeceras(nuevo),
+    payload: { telefono: TELEFONO_RAIZ, codigo: '000000' },
+  });
+  assert.equal(entrada.statusCode, 400);
+  const sesion = await app.inject({
+    method: 'GET', url: '/api/sesion', headers: { 'x-dispositivo': nuevo },
+  });
+  assert.notEqual(sesion.json().rol, 'operador');
+});
+
+// La puerta NO puede servir para averiguar quién manda. Se contesta lo mismo a
+// un número de la casa y a uno de la calle; lo único que cambia es que al de la
+// calle no le llega ningún SMS. Si esto se rompiera, cualquiera podría ir
+// probando números hasta dar con el del operador — y ya sabría a quién
+// buscarle el teléfono.
+test('entrar como operador: un número de fuera recibe la misma respuesta y ningún SMS', async () => {
+  const nuevo = randomUUID();
+  const ajeno = telefonoUnico();
+  const pedido = await app.inject({
+    method: 'POST', url: '/api/operador/entrar/codigo', headers: cabeceras(nuevo),
+    payload: { telefono: ajeno },
+  });
+  assert.equal(pedido.statusCode, 200, 'la respuesta no puede delatar quién es operador');
+  assert.deepEqual(pedido.json(), { enviado: true });
+  assert.ok(!servicioVerificacion.enviados.includes(ajeno), 'no se le manda nada');
+
+  // Y aunque acertara un código —que no lo tiene— tampoco entraría.
+  const entrada = await app.inject({
+    method: 'POST', url: '/api/operador/entrar', headers: cabeceras(nuevo),
+    payload: { telefono: ajeno, codigo: '123456' },
+  });
+  assert.equal(entrada.statusCode, 400);
+});
 
 test('operador: sin el uuid en la lista, 403 en todas las rutas', async () => {
   const intruso = randomUUID();

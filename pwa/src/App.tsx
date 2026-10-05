@@ -57,6 +57,7 @@ function SelectorIdioma({ idioma, alCambiar }: { idioma: Idioma; alCambiar: (i: 
 
 type Pantalla =
   | 'cargando' | 'elegir_rol' | 'volver' | 'alta_cliente' | 'alta_conductor'
+  | 'entrar_operador'
   | 'cliente' | 'conductor' | 'ajustes_conductor' | 'estadisticas_conductor'
   | 'operador' | 'campo' | 'verificar_telefono';
 
@@ -161,6 +162,30 @@ function sesionGuardada(): Sesion | null {
 //
 // El uuid se borra de la barra de direcciones al activarse, para que no se
 // quede en el historial de navegación a la vista de cualquiera.
+// `?operador` SIN valor: la puerta del panel. Un enlace fijo, igual siempre y
+// que se puede escribir de memoria, en vez de uno con 36 caracteres al azar que
+// hay que ir a buscar a Render y copiar sin equivocarse.
+//
+// No enseñar la puerta no protegía nada —el enlace con el uuid era la llave
+// entera— y además volvía esto impracticable desde un móvil. Lo que protege
+// ahora es el código que llega al teléfono, y por eso la puerta puede estar a
+// la vista.
+function vieneAEntrarDeOperador(): boolean {
+  const parametros = new URLSearchParams(window.location.search);
+  if (!parametros.has('operador')) return false;
+  // Con valor es el enlace de siempre, que sigue funcionando.
+  return (parametros.get('operador') ?? '').trim() === '';
+}
+
+// Se mira UNA vez, al cargar el módulo, y no dentro del efecto.
+//
+// En desarrollo React monta cada componente dos veces a propósito. La primera
+// pasada limpiaba `?operador` de la barra de direcciones —que es lo que hay que
+// hacer— y la segunda ya no encontraba nada que mirar, así que caía a la
+// pantalla de «¿cómo vas a usar la aplicación?». El dato se guarda antes de que
+// nadie pueda borrarlo.
+const VIENE_DE_OPERADOR = typeof window !== 'undefined' && vieneAEntrarDeOperador();
+
 async function activarOperadorPorUrl(): Promise<boolean> {
   const candidato = new URLSearchParams(window.location.search).get('operador');
   if (!candidato || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(candidato)) {
@@ -183,7 +208,9 @@ async function activarOperadorPorUrl(): Promise<boolean> {
 }
 
 export default function App() {
-  const [pantalla, setPantalla] = useState<Pantalla>('cargando');
+  const [pantalla, setPantalla] = useState<Pantalla>(
+    VIENE_DE_OPERADOR ? 'entrar_operador' : 'cargando',
+  );
   // Qué papel se eligió en la pantalla anterior, y el número que ya se
   // comprobó (migración 078). El número viaja hasta el formulario de alta para
   // no pedirlo dos veces; en null significa «sin teléfono, solo correo», que es
@@ -259,6 +286,13 @@ export default function App() {
     api.mapa().then((m) => setPuntos(m.referencias)).catch(() => undefined);
     // El enlace de activación tiene que resolverse ANTES de preguntar quién
     // soy: si no, la primera sesión se pediría con la identidad vieja.
+    if (VIENE_DE_OPERADOR) {
+      // Fuera de la barra de direcciones: no es un secreto —la puerta puede
+      // estar a la vista— pero tampoco tiene por qué quedarse en el historial.
+      window.history.replaceState(null, '', window.location.pathname);
+      setPantalla('entrar_operador');
+      return;
+    }
     void activarOperadorPorUrl().then(() => cargarSesion());
   }, []);
 
@@ -433,6 +467,13 @@ export default function App() {
           </>
         )}
 
+        {pantalla === 'entrar_operador' && (
+          <EntrarOperador
+            alEntrar={() => { setAviso(''); void cargarSesion(); }}
+            alVolver={() => { setAviso(''); void cargarSesion(); }}
+          />
+        )}
+
         {pantalla === 'volver' && (
           <VolverConTelefono
             rol={rolDeAlta}
@@ -599,6 +640,110 @@ function VerificarTelefono({
           : segundosParaReenviar > 0
             ? t('verificacion.reenviarEn', { seg: segundosParaReenviar })
             : t('verificacion.reenviar')}
+      </button>
+    </>
+  );
+}
+
+// --- La puerta del panel de operador (migración 080) -----------------------
+//
+// Se llega por `?operador` a secas. Teléfono y código, como todo lo demás de
+// esta aplicación: lo que sustituye es un enlace con un uuid de 36 caracteres
+// que había que sacar de Render y pegar sin equivocarse, y que desde un móvil
+// era directamente impracticable.
+//
+// Y es MÁS seguro, no menos: aquel enlace era la llave entera: quien lo viera
+// por encima del hombro entraba. Aquí hacen falta dos cosas, estar en la lista
+// y tener el móvil en la mano.
+//
+// Solo en español, como el resto del panel: es herramienta interna.
+function EntrarOperador({ alEntrar, alVolver }: { alEntrar: () => void; alVolver: () => void }) {
+  const [telefono, setTelefono] = useState('');
+  const [codigo, setCodigo] = useState('');
+  const [fase, setFase] = useState<'telefono' | 'codigo'>('telefono');
+  const [ocupado, setOcupado] = useState(false);
+  const [aviso, setAviso] = useState('');
+
+  async function pedirCodigo() {
+    setOcupado(true);
+    setAviso('');
+    try {
+      await api.pedirCodigoOperador(telefono.trim());
+      setFase('codigo');
+    } catch (error) {
+      setAviso(mensajeDeError(error, 'No se pudo pedir el código.'));
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  async function entrar() {
+    setOcupado(true);
+    setAviso('');
+    try {
+      await api.entrarOperador(telefono.trim(), codigo);
+      alEntrar();
+    } catch (error) {
+      setAviso(mensajeDeError(error, 'Código incorrecto.'));
+      setCodigo('');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  return (
+    <>
+      <h1>Panel de operador</h1>
+      {aviso && <p className="aviso">{aviso}</p>}
+      {fase === 'telefono' ? (
+        <>
+          <p className="nota">
+            Escribe tu número. Si está autorizado, te llega un código por SMS.
+          </p>
+          <input
+            type="tel" value={telefono} placeholder="Teléfono (+240…)"
+            onChange={(e) => setTelefono(e.target.value)}
+          />
+          <button
+            type="button" className="principal"
+            disabled={telefono.trim().length === 0 || ocupado}
+            onClick={pedirCodigo}
+          >
+            {ocupado ? 'Mandando…' : 'Mandarme el código'}
+          </button>
+        </>
+      ) : (
+        <>
+          {/* Se dice «si está autorizado» y no «te hemos mandado un código»:
+              el servidor contesta lo mismo a un número de la casa y a uno de
+              la calle, y la pantalla no puede delatar lo que el servidor
+              calla. Si no, esta puerta sería la forma de averiguar quién
+              manda en la plataforma. */}
+          <p className="nota">
+            Si ese número está autorizado, le acaba de llegar un código. Escríbelo.
+          </p>
+          <input
+            type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
+            value={codigo} placeholder="Código de 6 cifras"
+            onChange={(e) => setCodigo(e.target.value.replace(/\D/g, '').slice(0, 6))}
+          />
+          <button
+            type="button" className="principal"
+            disabled={codigo.length !== 6 || ocupado}
+            onClick={entrar}
+          >
+            {ocupado ? 'Entrando…' : 'Entrar'}
+          </button>
+          <button
+            type="button" className="secundario"
+            onClick={() => { setFase('telefono'); setCodigo(''); setAviso(''); }}
+          >
+            Cambiar el número
+          </button>
+        </>
+      )}
+      <button type="button" className="tenue" onClick={alVolver}>
+        No soy operador
       </button>
     </>
   );

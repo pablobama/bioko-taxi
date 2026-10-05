@@ -18,6 +18,13 @@ import type { EmisorEventos } from '../dominio/eventos.js';
 import {
   anadirAlias, editarReferencia, guardarReferencia, quitarAlias,
 } from '../dominio/gazetteer.js';
+import {
+  apuntarIntento, codigosFallados, codigosPedidos, ultimoCodigoEnviado,
+} from '../dominio/cuentas.js';
+import type { ServicioVerificacionTelefono } from '../dominio/verificacion-telefono.js';
+import {
+  dispositivoDeOperador, esRaiz, esTelefonoDeOperador, marcarVisto, vincularDispositivo,
+} from '../dominio/operadores.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
 import { senalesDeTarifa } from '../dominio/precios.js';
 import { actividadDe, recorridoDe } from '../dominio/rastro.js';
@@ -133,14 +140,28 @@ function uuidsOperador(): Set<string> {
   );
 }
 
+// La lista vieja de uuids. SIGUE VALIENDO a propósito (migración 080): es el
+// camino por el que se entra hoy, y quitarlo el mismo día que se estrena el
+// nuevo sería dejar fuera a quien tenga que arreglarlo si el nuevo falla.
 export function esOperador(uuid: string): boolean {
   return uuidsOperador().has(uuid.toLowerCase());
+}
+
+// La pregunta de verdad: ¿este aparato puede entrar al panel? Por el uuid de
+// siempre, o porque demostró con un código por SMS ser de un operador.
+export async function esOperadorAhora(
+  cliente: pg.Pool | pg.ClientBase,
+  uuid: string,
+): Promise<boolean> {
+  if (esOperador(uuid)) return true;
+  return await dispositivoDeOperador(cliente, uuid) !== null;
 }
 
 export function registrarRutasOperador(
   app: FastifyInstance,
   pool: pg.Pool,
   emisor: EmisorEventos,
+  servicioVerificacion?: ServicioVerificacionTelefono,
 ): void {
   function uuidDesde(req: FastifyRequest): string {
     const uuid = req.headers['x-dispositivo'] as string | undefined;
@@ -150,8 +171,11 @@ export function registrarRutasOperador(
     return uuid.toLowerCase();
   }
 
-  function exigirOperador(req: FastifyRequest): void {
-    if (!esOperador(uuidDesde(req))) {
+  // Asíncrona desde la migración 080: ahora un aparato puede ser de operador
+  // porque lo demostró con un código, y eso hay que mirarlo en la base. Las
+  // veintisiete rutas que la usan llevan su `await`.
+  async function exigirOperador(req: FastifyRequest): Promise<void> {
+    if (!await esOperadorAhora(pool, uuidDesde(req))) {
       throw errorHttp(403, 'Este dispositivo no tiene acceso de operador.');
     }
   }
@@ -224,8 +248,76 @@ export function registrarRutasOperador(
   // Lista de conductores: filtrada por estado, o buscada por nombre,
   // teléfono o matrícula (q). El caso principal sigue siendo «pendiente»:
   // los que esperan revisión.
+  // --- Entrar al panel con el teléfono (migración 080) ---------------------
+  //
+  // Dos pasos y ningún uuid: se pide el código y se comprueba. Lo que hace
+  // falta para entrar son DOS cosas —estar en la lista y tener el móvil en la
+  // mano—, y es justo lo que no pasaba con el enlace de antes, que era la llave
+  // entera metida en una URL.
+  //
+  // NO ESTÁN PROTEGIDAS por `exigirOperador`, obviamente: son la puerta. Lo que
+  // las protege es que el código llega a un teléfono que tiene que estar ya en
+  // la lista.
+
+  if (servicioVerificacion) {
+    app.post('/api/operador/entrar/codigo', async (req) => {
+      const uuid = uuidDesde(req);
+      const crudo = ((req.body ?? {}) as { telefono?: string }).telefono?.trim();
+      const telefono = normalizarTelefono(crudo);
+      if (!telefono) throw errorHttp(400, 'Falta el teléfono, o no se entiende.');
+
+      // El tope del aparato, prestado de la migración 078: sin él, esta ruta es
+      // una forma de mandar SMS a desconocidos a costa de la plataforma.
+      if (await codigosPedidos(pool, uuid)
+        >= await leerParametroEntero(pool, 'recuperacion_consultas_hora')) {
+        throw errorHttp(429, 'Has pedido demasiados códigos. Prueba dentro de un rato.');
+      }
+
+      // SE CONTESTA LO MISMO SEA O NO OPERADOR, y solo se manda el SMS si lo
+      // es. Contestar «ese número no es de operador» convertiría esta puerta en
+      // una forma de averiguar quién manda en la plataforma, que es
+      // exactamente a quién hay que ir a buscar para entrar.
+      if (await esTelefonoDeOperador(pool, telefono)) {
+        const ultimo = await ultimoCodigoEnviado(pool, telefono);
+        const esperaSeg = await leerParametroEntero(pool, 'recuperacion_cooldown_seg');
+        const esperado = ultimo !== null
+          && (Date.now() - ultimo.getTime()) / 1000 < esperaSeg;
+        if (!esperado) {
+          await servicioVerificacion.enviarCodigo(telefono);
+          await apuntarIntento(pool, uuid, telefono, 'codigo', true);
+        }
+      }
+      return { enviado: true };
+    });
+
+    app.post('/api/operador/entrar', async (req) => {
+      const uuid = uuidDesde(req);
+      const cuerpo = (req.body ?? {}) as { telefono?: string; codigo?: string };
+      const telefono = normalizarTelefono(cuerpo.telefono?.trim());
+      const codigo = cuerpo.codigo?.trim();
+      if (!telefono || !codigo) throw errorHttp(400, 'Faltan el teléfono y el código.');
+
+      if (await codigosFallados(pool, telefono)
+        >= await leerParametroEntero(pool, 'recuperacion_intentos_codigo')) {
+        throw errorHttp(429, 'Demasiados códigos fallados. Prueba dentro de una hora.');
+      }
+      // Se comprueba el código ANTES de mirar si el número es de operador, y da
+      // igual el orden para el que acierta: lo que importa es que quien falla
+      // reciba siempre la misma respuesta, sea su número de la casa o no.
+      const correcto = await servicioVerificacion.comprobarCodigo(telefono, codigo);
+      const autorizado = await esTelefonoDeOperador(pool, telefono);
+      if (!correcto || !autorizado) {
+        await apuntarIntento(pool, uuid, telefono, 'reclamar', false);
+        throw errorHttp(400, 'Código incorrecto.');
+      }
+      await enTransaccion(pool, (cliente) => vincularDispositivo(cliente, uuid, telefono));
+      await apuntarIntento(pool, uuid, telefono, 'reclamar', true);
+      return { entrado: true, raiz: esRaiz(telefono) };
+    });
+  }
+
   app.get('/api/operador/conductores', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const { estado, q } = (req.query ?? {}) as { estado?: string; q?: string };
     if (estado && !ESTADOS_VALIDOS.includes(estado)) {
       throw errorHttp(400, `Estado no válido. Opciones: ${ESTADOS_VALIDOS.join(', ')}.`);
@@ -254,7 +346,7 @@ export function registrarRutasOperador(
   // decidir con conocimiento — vehículo, dinero, reputación e historial — en
   // una sola pantalla, sin ir a mirar la base de datos.
   app.get('/api/operador/conductores/:id', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const id = Number((req.params as { id: string }).id);
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
 
@@ -316,7 +408,7 @@ export function registrarRutasOperador(
   // Cambia el estado de verificación de un conductor: verificar, pero
   // también suspender o bloquear si hace falta echar a alguien atrás.
   app.post('/api/operador/conductores/:id/estado', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const id = Number((req.params as { id: string }).id);
     const { estado } = (req.body ?? {}) as { estado?: string };
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
@@ -337,7 +429,7 @@ export function registrarRutasOperador(
   // agente que se pasa se corta quitándoselo, y lo que tocó queda apuntado
   // desde la migración 067.
   app.post('/api/operador/pasajeros/:id/agente', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const id = Number((req.params as { id: string }).id);
     const { agente } = (req.body ?? {}) as { agente?: boolean };
     if (typeof agente !== 'boolean') throw errorHttp(400, 'Falta agente (true/false).');
@@ -373,7 +465,7 @@ export function registrarRutasOperador(
   // Nombrar agente de campo a un conductor, o retirarle el papel. Solo el
   // operador: es quien conoce a la gente y quien responde de lo que toquen.
   app.post('/api/operador/conductores/:id/agente', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const id = Number((req.params as { id: string }).id);
     const { agente } = (req.body ?? {}) as { agente?: boolean };
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
@@ -390,7 +482,7 @@ export function registrarRutasOperador(
   // conductor en su alta, pero el operador puede corregirlo si ve mal el
   // dato (o si el conductor nunca lo llegó a marcar).
   app.post('/api/operador/conductores/:id/vehiculo', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const id = Number((req.params as { id: string }).id);
     const { aireAcondicionado, seguro } = (req.body ?? {}) as {
       aireAcondicionado?: boolean; seguro?: boolean;
@@ -414,7 +506,7 @@ export function registrarRutasOperador(
   // mudarse al barrio de cada solicitud. Va en la última oleada, así que no le
   // quita trabajo a nadie que esté cerca del pasajero.
   app.post('/api/operador/conductores/:id/cualquier-zona', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const id = Number((req.params as { id: string }).id);
     const { activo } = (req.body ?? {}) as { activo?: boolean };
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
@@ -439,7 +531,7 @@ export function registrarRutasOperador(
   //
   // Es idempotente: llamarlo dos veces no crea dos taxis ni resetea el saldo.
   app.post('/api/operador/mi-taxi', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const { uuid, nombre, telefono, matricula } = (req.body ?? {}) as {
       uuid?: string; nombre?: string; telefono?: string; matricula?: string;
     };
@@ -533,7 +625,7 @@ export function registrarRutasOperador(
   // `exigirCampo`: un agente de campo sitúa barrios, no vigila a sus
   // compañeros.
   app.get('/api/operador/conductores/:id/recorrido', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const id = Number((req.params as { id: string }).id);
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
     const { periodo } = (req.query ?? {}) as { periodo?: string };
@@ -584,7 +676,7 @@ export function registrarRutasOperador(
   // Números gruesos del sistema entero: para ver de un vistazo si algo va
   // mal (por ejemplo, muchas solicitudes SIN_OFERTA seguidas).
   app.get('/api/operador/estadisticas', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const conductores = await pool.query(
       `SELECT count(*)::int AS total,
               count(*) FILTER (WHERE estado_verificacion = 'pendiente')::int AS pendientes,
@@ -633,7 +725,7 @@ export function registrarRutasOperador(
   // rechazar— a mano antes de que el saldo suba.
 
   app.get('/api/operador/recargas', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const { estado } = (req.query ?? {}) as { estado?: string };
     if (estado && !ESTADOS_RECARGA_VALIDOS.includes(estado)) {
       throw errorHttp(400, `Estado no válido. Opciones: ${ESTADOS_RECARGA_VALIDOS.join(', ')}.`);
@@ -654,7 +746,7 @@ export function registrarRutasOperador(
 
   app.post('/api/operador/recargas/:referencia/confirmar', async (req) => {
     const uuid = uuidDesde(req);
-    exigirOperador(req);
+    await exigirOperador(req);
     const { referencia } = req.params as { referencia: string };
     const { comprobante } = (req.body ?? {}) as { comprobante?: string };
     try {
@@ -672,7 +764,7 @@ export function registrarRutasOperador(
 
   app.post('/api/operador/recargas/:referencia/rechazar', async (req) => {
     const uuid = uuidDesde(req);
-    exigirOperador(req);
+    await exigirOperador(req);
     const { referencia } = req.params as { referencia: string };
     const { motivo } = (req.body ?? {}) as { motivo?: string };
     if (!motivo?.trim()) throw errorHttp(400, 'Hace falta un motivo para rechazar la recarga.');
@@ -690,7 +782,7 @@ export function registrarRutasOperador(
   // forma de buscar a la persona que llama quejándose de un bloqueo.
 
   app.get('/api/operador/pasajeros', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const { q } = (req.query ?? {}) as { q?: string };
     const filas = await pool.query(
       `SELECT d.id AS dispositivo_id, d.strikes, d.bloqueado_en, d.creado_en,
@@ -711,7 +803,7 @@ export function registrarRutasOperador(
   });
 
   app.get('/api/operador/pasajeros/:dispositivoId', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const id = Number((req.params as { dispositivoId: string }).dispositivoId);
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de dispositivo no válido.');
     const ficha = await pool.query(
@@ -749,7 +841,7 @@ export function registrarRutasOperador(
   // del sistema de strikes automático — sin ella, un bloqueo injusto (o tres
   // ausencias con excusa razonable) no tenía más salida que el SQL a mano.
   app.post('/api/operador/pasajeros/:dispositivoId/desbloquear', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const id = Number((req.params as { dispositivoId: string }).dispositivoId);
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de dispositivo no válido.');
     const res = await pool.query(
@@ -768,7 +860,7 @@ export function registrarRutasOperador(
   // estaba mirando la pantalla); cualquier incidencia futura cae aquí igual.
 
   app.get('/api/operador/incidencias', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const { estado } = (req.query ?? {}) as { estado?: string };
     const soloPendientes = estado !== 'resueltas';
     const filas = await pool.query(
@@ -796,7 +888,7 @@ export function registrarRutasOperador(
   // El historial del viaje de una incidencia: el log de transiciones dice
   // quién hizo qué y cuándo, que es justo lo que hace falta para juzgar.
   app.get('/api/operador/incidencias/:id/historial', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const id = Number((req.params as { id: string }).id);
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de incidencia no válido.');
     // Dos preguntas distintas: si la incidencia existe (si no, 404) y qué
@@ -819,7 +911,7 @@ export function registrarRutasOperador(
 
   app.post('/api/operador/incidencias/:id/resolver', async (req) => {
     const uuid = uuidDesde(req);
-    exigirOperador(req);
+    await exigirOperador(req);
     const id = Number((req.params as { id: string }).id);
     const { accion } = (req.body ?? {}) as { accion?: string };
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de incidencia no válido.');
@@ -876,7 +968,7 @@ export function registrarRutasOperador(
   // la tabla parametro desde el paso 1 sin que nadie los consumiera.
 
   app.get('/api/operador/salud', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
 
     const umbralesRes = await pool.query(
       `SELECT clave, valor FROM parametro WHERE clave LIKE 'alarma%'`,
@@ -1034,7 +1126,7 @@ export function registrarRutasOperador(
   // sintético, así conserva historial y strikes como cualquier usuario.
 
   app.post('/api/operador/solicitudes', async (req, reply) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const cuerpo = (req.body ?? {}) as { telefono?: string; origenId?: number; destinoId?: number };
     // Canónico también aquí: si no, quien llama dos veces con el número escrito
     // de dos formas tendría dos identidades y dos historiales (migración 024).
@@ -1117,7 +1209,7 @@ export function registrarRutasOperador(
   // es lo contrario: es saber dónde hay un taxi libre cerca de quien acaba de
   // llamar, y eso no se puede hacer con una lista ordenada por fecha.
   app.get('/api/operador/vivo', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
 
     // Dónde está cada taxi. La última miga de `rastro` por conductor (migración
     // 042), con LATERAL para que el índice (conductor_id, creado_en) haga el
@@ -1197,7 +1289,7 @@ export function registrarRutasOperador(
   // nada más: un buscador por sitio sonaría bien y sería otra consulta lenta
   // sobre una tabla que crece todos los días.
   app.get('/api/operador/viajes', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const { estado, q } = (req.query ?? {}) as { estado?: string; q?: string };
     const buscado = q?.trim() || null;
     const filas = await pool.query(
@@ -1228,7 +1320,7 @@ export function registrarRutasOperador(
   // Las últimas solicitudes de la central, con lo que el operador tiene que
   // dictar por teléfono: estado, y matrícula cuando hay taxi asignado.
   app.get('/api/operador/solicitudes', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const filas = await pool.query(
       `SELECT s.id, s.estado, s.creada_en, s.telefono_cliente,
               ro.nombre AS origen, rd.nombre AS destino,
@@ -1430,7 +1522,7 @@ export function registrarRutasOperador(
   // Lo que se ha tocado últimamente (P25-01). Solo el operador: un agente
   // puede fijar precios, pero quién vigila a los agentes no es un agente.
   app.get('/api/operador/cambios', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const filas = await pool.query(
       `SELECT ca.id, ca.ambito, ca.clave, ca.valor_anterior, ca.valor_nuevo,
               ca.es_operador, ca.creado_en, c.nombre AS conductor
@@ -1530,7 +1622,7 @@ export function registrarRutasOperador(
   // alarma… Cambian el comportamiento SIN desplegar, que es exactamente su
   // razón de existir — y también la razón de tratarlos con respeto.
   app.get('/api/operador/parametros', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const filas = await pool.query(
       'SELECT clave, valor, descripcion FROM parametro ORDER BY clave',
     );
@@ -1538,7 +1630,7 @@ export function registrarRutasOperador(
   });
 
   app.post('/api/operador/parametros/:clave', async (req) => {
-    exigirOperador(req);
+    await exigirOperador(req);
     const { clave } = req.params as { clave: string };
     const { valor } = (req.body ?? {}) as { valor?: string };
     if (typeof valor !== 'string' || !valor.trim()) {
