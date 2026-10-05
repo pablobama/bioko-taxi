@@ -748,6 +748,50 @@ test('el listado de cambios es solo del operador: quién vigila a los agentes no
   assert.equal(res.statusCode, 403);
 });
 
+// Crear un sitio con un nombre que ya existe en esa zona NO creaba otro: el
+// alta hace un upsert por (zona, nombre), así que le cambiaba las coordenadas
+// al que ya estaba y lo reactivaba, en silencio. Quien creía estar añadiendo un
+// sitio nuevo estaba moviendo uno viejo, y el único rastro era que los taxis
+// empezaban a ir a otra parte.
+test('gazetteer: un nombre repetido en la misma zona avisa en vez de pisar', async () => {
+  const { zonaId } = await crearZonaConReferencias();
+  const nombre = `Bar Repetido ${Date.now()}`;
+
+  const primera = await app.inject({
+    method: 'POST', url: '/api/operador/referencias', headers: cabeceras(UUID_OPERADOR),
+    payload: { zonaId, nombre, lat: 3.752, lng: 8.782, categoria: 'restaurante' },
+  });
+  assert.equal(primera.statusCode, 200, primera.body);
+  assert.equal(primera.json().creada, true);
+
+  // El mismo nombre, en la misma zona, con otras coordenadas.
+  const choque = await app.inject({
+    method: 'POST', url: '/api/operador/referencias', headers: cabeceras(UUID_OPERADOR),
+    payload: { zonaId, nombre, lat: 3.760, lng: 8.770, categoria: 'restaurante' },
+  });
+  assert.equal(choque.statusCode, 409, 'tiene que preguntar, no pisar');
+  // Y dice CUÁL es, para que la pantalla pueda ofrecer abrirlo o sustituirlo
+  // sin mandar a nadie a buscarlo.
+  assert.equal(choque.json().existente.nombre, nombre);
+  assert.ok(choque.json().existente.id);
+
+  // Las coordenadas del que ya estaba siguen intactas.
+  const sinTocar = await app.inject({
+    method: 'GET', url: `/api/operador/referencias?q=${encodeURIComponent(nombre)}`,
+    headers: cabeceras(UUID_OPERADOR),
+  });
+  const suyo = sinTocar.json().referencias.find((r: { nombre: string }) => r.nombre === nombre);
+  assert.ok(Math.abs(Number(suyo.lat) - 3.752) < 0.0001, 'no se le han tocado las coordenadas');
+
+  // Con el consentimiento explícito sí se mueve, y se dice que NO se creó nada.
+  const sustituido = await app.inject({
+    method: 'POST', url: '/api/operador/referencias', headers: cabeceras(UUID_OPERADOR),
+    payload: { zonaId, nombre, lat: 3.760, lng: 8.770, categoria: 'restaurante', sustituir: true },
+  });
+  assert.equal(sustituido.statusCode, 200, sustituido.body);
+  assert.equal(sustituido.json().creada, false, 'sustituir mueve, no crea');
+});
+
 test('gazetteer: crear, desactivar (visible para el operador), alias y su quitado ruidoso', async () => {
   const { zonaId } = await crearZonaConReferencias();
   const nombre = `Bar Nuevo ${Date.now()}`;

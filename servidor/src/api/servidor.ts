@@ -163,7 +163,14 @@ export function crearServidor(
     if (codigo >= 500) {
       console.error('Error de la API:', error);
     }
-    void reply.status(codigo).send({ error: mensaje });
+    // `existente` viaja al cliente cuando lo hay: es lo que permite que un 409
+    // diga QUÉ hay ya ahí en vez de solo «eso ya existe», y que la pantalla
+    // ofrezca abrirlo o sustituirlo sin tener que ir a buscarlo. Nada más se
+    // reenvía: un error sigue siendo un mensaje, no un volcado.
+    const existente = (error as { existente?: unknown }).existente;
+    void reply.status(codigo).send(
+      existente === undefined ? { error: mensaje } : { error: mensaje, existente },
+    );
   });
 
   // Señal de vida para el hosting (healthCheckPath en render.yaml). Dice si el
