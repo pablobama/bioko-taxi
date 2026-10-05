@@ -638,11 +638,26 @@ export interface Actividad {
   // de espera, y ocho con seis es un día de trabajo. Con una sola no se
   // distinguen, y era justo lo que faltaba para leer el turno.
   segundosEnMovimiento: number;
-  // Kilómetros por hora de TURNO, no de conducción: incluye el rato parado en
-  // la parada esperando. Es lo que interesa —dice cuánto cunde una hora de
-  // trabajo, no lo rápido que conduce— y por eso la etiqueta dice «de media en
-  // servicio» y no «velocidad». null sin turno que medir.
+  // Kilómetros por hora de TURNO: incluye el rato parado en la parada
+  // esperando. NO es lo rápido que conduce — dice cuánto cunde una hora de
+  // trabajo— y por eso la etiqueta dice «de media en servicio». null sin turno
+  // que medir.
   velocidadMediaKmh: number | null;
+  // Kilómetros por hora DE CONDUCCIÓN: los mismos metros, pero divididos solo
+  // entre el tiempo en que el coche se estaba moviendo.
+  //
+  // POR QUÉ HACEN FALTA LAS DOS. La de turno contesta «¿cunde el día?» y se
+  // hunde con cada minuto de espera, que para un taxista es media jornada: un
+  // día entero en la parada del mercado la deja en 6 km/h sin que eso diga nada
+  // de cómo conduce ni de cómo está el tráfico. Ésta contesta «¿a qué velocidad
+  // se mueve de verdad por Malabo?», que es la que sirve para calcular cuánto
+  // tarda un taxi en llegar y para ver si una calle se ha atascado.
+  //
+  // El numerador y el denominador salen de la MISMA pasada (`andarPorCalles`):
+  // cada trozo que cuenta como distancia cuenta también su duración, y el rato
+  // parado no cuenta ni lo uno ni lo otro. Mezclar metros de una fuente con
+  // segundos de otra es como salen las medias imposibles.
+  velocidadAlVolanteKmh: number | null;
 }
 
 // El tiempo EN SERVICIO no se saca del rastro sino del registro de estados del
@@ -702,5 +717,11 @@ export async function actividadDe(
     velocidadMediaKmh: segundosEnServicio < 60
       ? null
       : Math.round((metros / 1000) / (segundosEnServicio / 3600) * 10) / 10,
+    // El mismo tope, por el mismo motivo. Y aquí muerde más: el tiempo al
+    // volante de un turno flojo son cuatro minutos, y con menos de uno
+    // cualquier tirón sale disparado.
+    velocidadAlVolanteKmh: segundosEnMovimiento < 60
+      ? null
+      : Math.round((metros / 1000) / (segundosEnMovimiento / 3600) * 10) / 10,
   };
 }

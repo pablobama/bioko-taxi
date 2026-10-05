@@ -596,3 +596,46 @@ test('fuera de servicio no se apunta señal', async () => {
   const r = await pool.query('SELECT 1 FROM senal WHERE conductor_id = $1', [id]);
   assert.equal(r.rowCount, 0);
 });
+
+// --- Las dos medias (05/10) -------------------------------------------------
+//
+// El problema que esto arregla, dicho con números: un taxista que recorre diez
+// kilómetros en veinte minutos de conducción y pasa otras tres horas esperando
+// en la parada tiene una media de turno de 3 km/h. Eso no dice nada de cómo
+// conduce ni de cómo está el tráfico — dice que esperó mucho, que es otra cosa
+// y ya se ve en «en servicio» y «al volante».
+//
+// Se comprueba que las dos cifras salen distintas y cada una de lo suyo: si
+// alguien volviera a dividir por el turno entero, la de conducción caería al
+// mismo valor que la otra y esto se entera.
+test('actividad: las esperas hunden la media del turno pero no la de conducción', async () => {
+  const id = await crearConductor();
+  // Turno de una hora. Se mueve solo durante el primer minuto y se queda
+  // parado el resto, que es un día normal en la parada del mercado.
+  await transicion(id, 'DESCONECTADO', 'DISPONIBLE', enSegundo(0));
+  await transicion(id, 'DISPONIBLE', 'DESCONECTADO', enSegundo(3600));
+  await guardar(id, 0, 0);
+  await guardar(id, 500, 60);
+
+  const a = await actividadDe(pool, id, enSegundo(-100), enSegundo(4000));
+  assert.equal(a.segundosEnServicio, 3600, 'la hora entera de turno');
+  assert.ok(
+    a.segundosEnMovimiento > 0 && a.segundosEnMovimiento < 300,
+    `al volante tenía que ser el minuto que se movió, y fueron ${a.segundosEnMovimiento} s`,
+  );
+
+  // 500 m en una hora de turno: medio kilómetro por hora.
+  assert.ok(
+    a.velocidadMediaKmh !== null && a.velocidadMediaKmh < 2,
+    `la del turno se hunde con la espera, y salió ${a.velocidadMediaKmh}`,
+  );
+  // Los mismos 500 m en el minuto que anduvo: unos 30 km/h.
+  assert.ok(
+    a.velocidadAlVolanteKmh !== null && a.velocidadAlVolanteKmh > 10,
+    `la de conducción no puede hundirse con la espera, y salió ${a.velocidadAlVolanteKmh}`,
+  );
+  assert.ok(
+    a.velocidadAlVolanteKmh! > a.velocidadMediaKmh! * 5,
+    'con tres cuartos de hora parado, las dos no pueden parecerse',
+  );
+});

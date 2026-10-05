@@ -17,6 +17,7 @@ import {
   type ViajeOperador, type ViajeResumenOperador, type ZonaOperador,
 } from './api';
 import { ESTILO_CATEGORIA } from './categorias';
+import { ErrorDelServidor } from './conexion';
 import Mapa, { colorDeCalor } from './Mapa';
 
 // Las categorías que la base acepta (CHECK de la migración 021). Se sacan de
@@ -673,11 +674,23 @@ function RecorridoConductor({ id }: { id: number }) {
             ocho con seis es un día de trabajo. Con una sola cifra no se
             distinguen. */}
         <Dato valor={cargando ? '—' : alVolante} etiqueta="Al volante" />
+        {/* Las dos medias, y en este orden. La de conducción primero porque es
+            la que contesta a «¿a qué velocidad se circula?»: la otra se hunde
+            con cada minuto de espera —que para un taxista es media jornada— y
+            leída como velocidad engaña. Juntas dicen algo que ninguna dice
+            sola: 28 al volante y 7 en servicio es un día de esperar; 28 y 24
+            es un día sin parar. */}
+        <Dato
+          valor={cargando || recorrido?.velocidadAlVolanteKmh == null
+            ? '—'
+            : `${recorrido.velocidadAlVolanteKmh.toFixed(1)} km/h`}
+          etiqueta="De media al volante"
+        />
         <Dato
           valor={cargando || recorrido?.velocidadMediaKmh == null
             ? '—'
             : `${recorrido.velocidadMediaKmh.toFixed(1)} km/h`}
-          etiqueta="De media en servicio"
+          etiqueta="Contando las esperas"
         />
       </div>
 
@@ -1054,6 +1067,27 @@ function Lugares() {
   const [precisionNueva, setPrecisionNueva] = useState<number | null>(null);
   const [avisoGps, setAvisoGps] = useState('');
   const [error, setError] = useState('');
+  // Sitios que YA se llaman así. Se buscan mientras se escribe, antes de
+  // pulsar nada: enterarse de que el sitio ya existía DESPUÉS de crearlo es
+  // enterarse tarde, y además el nombre repetido en la misma zona no creaba
+  // nada — le cambiaba las coordenadas al que ya estaba.
+  const [parecidos, setParecidos] = useState<ReferenciaOperador[]>([]);
+  // El que va a quedar pisado si se sigue adelante, tal como lo devuelve el
+  // servidor al contestar 409.
+  const [choque, setChoque] = useState<{ id: number; nombre: string; zona: string } | null>(null);
+
+  useEffect(() => {
+    const nombre = nueva.nombre.trim();
+    if (nombre.length < 3) { setParecidos([]); return; }
+    // Con freno: se escribe letra a letra y cada letra sería una consulta
+    // contra una tabla de dieciséis mil sitios.
+    const reloj = setTimeout(() => {
+      api.referenciasOperador(nombre)
+        .then((r) => setParecidos(r.referencias.slice(0, 5)))
+        .catch(() => setParecidos([]));
+    }, 350);
+    return () => clearTimeout(reloj);
+  }, [nueva.nombre]);
 
   useEffect(() => {
     api.zonasOperador().then((r) => {
@@ -1069,7 +1103,7 @@ function Lugares() {
   }
   useEffect(cargar, [busqueda]);
 
-  async function crear() {
+  async function crear(sustituir = false) {
     setError('');
     try {
       await api.crearReferenciaOperador({
@@ -1079,12 +1113,21 @@ function Lugares() {
         lng: Number(nueva.lng),
         categoria: nueva.categoria.trim() || undefined,
         precision: precisionNueva ?? undefined,
+        ...(sustituir ? { sustituir: true } : {}),
       });
       setCreando(false);
+      setChoque(null);
       setNueva((n) => ({ ...n, nombre: '', categoria: '', lat: '', lng: '' }));
       setPrecisionNueva(null);
       cargar();
     } catch (e) {
+      // 409 con cuerpo: el servidor dice CUÁL es el sitio que ya hay, y
+      // entonces esto no es un error sino una pregunta.
+      if (e instanceof ErrorDelServidor && e.estado === 409) {
+        const existente = (e.datos as { existente?: { id: number; nombre: string; zona: string } })
+          ?.existente;
+        if (existente) { setChoque(existente); return; }
+      }
       setError(e instanceof Error ? e.message : 'No se pudo crear.');
     }
   }
@@ -1154,9 +1197,65 @@ function Lugares() {
               {precisionNueva > PRECISION_OBJETIVO_M && ' — conviene repetirlo a cielo abierto'}
             </p>
           )}
-          <button type="button" className="principal" disabled={!nuevaLista} onClick={crear}>
-            Crear el sitio
-          </button>
+          {/* Lo que ya se llama así, mientras se escribe. Antes de pulsar nada:
+              enterarse después de crearlo es enterarse tarde. */}
+          {parecidos.length > 0 && choque === null && (
+            <>
+              <p className="nota">
+                Ya hay {parecidos.length === 1 ? 'un sitio' : `${parecidos.length} sitios`} con
+                ese nombre. Mira si es alguno de éstos antes de crear otro:
+              </p>
+              {parecidos.map((p) => (
+                <button
+                  key={p.id} type="button" className="oferta oferta-boton"
+                  onClick={() => { setCreando(false); setBusqueda(p.nombre); }}
+                >
+                  <span className="oferta-ruta">{p.nombre}{!p.activa && ' · DESACTIVADO'}</span>
+                  <span className="nota">
+                    {p.zona} · {p.categoria} · {p.usos} uso{p.usos === 1 ? '' : 's'}
+                    {p.zona_id === nueva.zonaId && ' · EN LA MISMA ZONA que vas a crear'}
+                  </span>
+                </button>
+              ))}
+            </>
+          )}
+
+          {/* El choque de verdad: mismo nombre y misma zona. Aquí no se avisa,
+              se pregunta — y se dice exactamente qué pasa si dice que sí,
+              porque «sustituir» suena a reemplazar la ficha y lo que hace es
+              mover el sitio que ya existe. */}
+          {choque !== null && (
+            <>
+              <p className="aviso">
+                «{choque.nombre}» ya existe en {choque.zona}. Si sigues, NO se crea
+                otro: se le cambian las coordenadas al que ya está, y todos los
+                taxis empezarán a ir al sitio nuevo.
+              </p>
+              <div className="fila">
+                <button type="button" className="principal" onClick={() => void crear(true)}>
+                  Sí, moverlo ahí
+                </button>
+                <button
+                  type="button" className="secundario"
+                  onClick={() => { setChoque(null); setCreando(false); setBusqueda(choque.nombre); }}
+                >
+                  Mejor abrirlo
+                </button>
+                <button type="button" className="secundario" onClick={() => setChoque(null)}>
+                  Cambiar el nombre
+                </button>
+              </div>
+            </>
+          )}
+
+          {choque === null && (
+            <button
+              type="button" className="principal" disabled={!nuevaLista}
+              onClick={() => void crear()}
+            >
+              Crear el sitio
+            </button>
+          )}
         </>
       )}
 

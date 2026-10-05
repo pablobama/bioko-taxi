@@ -650,6 +650,9 @@ export function registrarRutasOperador(
       // juntas son las que dicen si el turno fue de trabajo o de espera.
       segundosEnMovimiento: actividad.segundosEnMovimiento,
       velocidadMediaKmh: actividad.velocidadMediaKmh,
+      // La de conducción: los mismos metros entre el tiempo que el coche se
+      // movió de verdad. Es la que no se hunde con las esperas.
+      velocidadAlVolanteKmh: actividad.velocidadAlVolanteKmh,
       // Sin las horas: al operador le importa el dibujo y cuánto anduvo, y
       // mandar la marca de tiempo de cada punto dobla el tamaño de la
       // respuesta para nada.
@@ -1448,7 +1451,7 @@ export function registrarRutasOperador(
     await exigirCampo(req);
     const cuerpo = (req.body ?? {}) as {
       zonaId?: number; nombre?: string; lat?: number; lng?: number;
-      categoria?: string; precision?: number;
+      categoria?: string; precision?: number; sustituir?: boolean;
     };
     if (!cuerpo.zonaId || !cuerpo.nombre?.trim()
       || typeof cuerpo.lat !== 'number' || typeof cuerpo.lng !== 'number') {
@@ -1458,6 +1461,32 @@ export function registrarRutasOperador(
       throw errorHttp(400, 'Esas coordenadas caen fuera de Bioko. ¿Se cogió el GPS de verdad?');
     }
     const categoria = exigirCategoria(cuerpo.categoria);
+
+    // AVISAR ANTES DE MACHACAR (05/10). `guardarReferencia` hace un upsert por
+    // (zona, nombre): crear un sitio con un nombre que ya existía en esa zona
+    // le cambiaba las coordenadas EN SILENCIO y lo reactivaba. Quien creía
+    // estar añadiendo un sitio nuevo estaba moviendo uno viejo, y el único
+    // rastro era que el taxi empezaba a ir a otro sitio.
+    //
+    // Ahora se contesta 409 con lo que ya hay, y sustituir es un acto aparte y
+    // declarado. El upsert se queda —es lo correcto cuando la intención SÍ es
+    // actualizar, y es de lo que vive el importador del gazetteer.
+    const yaHay = await pool.query(
+      `SELECT r.id, r.nombre, r.lat, r.lng, r.activa, z.nombre AS zona
+       FROM referencia r JOIN zona z ON z.id = r.zona_id
+       WHERE r.zona_id = $1 AND lower(r.nombre) = lower($2)`,
+      [cuerpo.zonaId, cuerpo.nombre.trim()],
+    );
+    if ((yaHay.rowCount ?? 0) > 0 && cuerpo.sustituir !== true) {
+      const existente = yaHay.rows[0];
+      const error = errorHttp(
+        409,
+        `Ya hay un sitio llamado «${existente.nombre}» en ${existente.zona}.`,
+      ) as Error & { statusCode: number; existente?: unknown };
+      error.existente = existente;
+      throw error;
+    }
+
     const precisionM = await precisionDeSitio(pool, cuerpo.precision);
     const resultado = await enTransaccion(pool, async (cliente) => {
       const r = await guardarReferencia(cliente, {

@@ -607,6 +607,11 @@ export interface RecorridoOperador {
   // Kilómetros por hora de TURNO, no de conducción: incluye el rato parado
   // esperando. null si el turno es demasiado corto para que la media diga algo.
   velocidadMediaKmh: number | null;
+  // Kilómetros por hora de CONDUCCIÓN: los mismos metros entre el tiempo que
+  // el coche estuvo moviéndose. Las dos contestan preguntas distintas —si
+  // cunde el día, y a qué velocidad se circula por Malabo— y la primera se
+  // hunde con cada minuto de espera, que para un taxista es media jornada.
+  velocidadAlVolanteKmh: number | null;
   // Tramos, no puntos sueltos: entre dos tramos hay un hueco de verdad.
   // `n` es cuántas veces pasó el taxi por ahí en el periodo: es lo que
   // colorea el mapa de calor, de azul (una vez) a rojo (lo que más repite).
@@ -1337,6 +1342,10 @@ export const api = {
   crearReferenciaOperador: (datos: {
     zonaId: number; nombre: string; lat: number; lng: number;
     categoria?: string; precision?: number;
+    // Con `sustituir` se acepta pisar las coordenadas de un sitio que ya tenía
+    // ese nombre en esa zona. Sin él, el servidor contesta 409 y dice cuál es
+    // —antes lo machacaba en silencio.
+    sustituir?: boolean;
   }) =>
     pedirJson<{ referenciaId: number; creada: boolean }>(
       '/api/operador/referencias',
