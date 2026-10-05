@@ -3041,6 +3041,11 @@ button.importe.elegido-importe {
    Alto fijo porque el mapa mide su contenedor: sin esto nace a cero. */
 .mapa-colocar {
   position: relative;
+  /* Ancho explícito aunque el padre ya lo estire: el plano se DIBUJA midiendo
+     su contenedor, así que una caja sin ancho lo deja en «Cargando el plano…»
+     para siempre y sin ningún error en la consola. Es barato asegurarlo. */
+  width: 100%;
+  align-self: stretch;
   height: 320px;
   border-radius: 14px;
   overflow: hidden;
