@@ -30,6 +30,10 @@ const RADIO_M = 6_371_000;
 
 export interface Proyeccion {
   aMundo: (lat: number, lng: number) => Punto2D;
+  // El camino de vuelta. Hace falta para señalar un sitio CON EL DEDO: lo que
+  // se sabe entonces es dónde quedó el plano, en unidades del mundo, y lo que
+  // hay que guardar es una latitud y una longitud.
+  aLatLng: (x: number, y: number) => { lat: number; lng: number };
   unidadesPorMetro: number;
 }
 
@@ -41,6 +45,13 @@ export function crearProyeccion(recuadro: Plano['recuadro']): Proyeccion {
   const unidadesPorMetro = UNIDADES_POR_GRADO / (2 * Math.PI * RADIO_M / 360);
   return {
     aMundo: (lat, lng) => [(lng - recuadro.oeste) * escalaX, (recuadro.norte - lat) * UNIDADES_POR_GRADO],
+    // Despejar lo de arriba, sin más. Es exacta: la proyección es lineal en
+    // este recuadro —Bioko mide setenta kilómetros— y no hay nada que
+    // aproximar al volver.
+    aLatLng: (x, y) => ({
+      lat: recuadro.norte - y / UNIDADES_POR_GRADO,
+      lng: recuadro.oeste + x / escalaX,
+    }),
     unidadesPorMetro,
   };
 }

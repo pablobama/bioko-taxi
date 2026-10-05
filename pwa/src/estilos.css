@@ -3036,3 +3036,29 @@ button.importe.elegido-importe {
 .consola-trabajo .dato-valor {
   font-size: 1.5rem;
 }
+
+/* Colocar un sitio con el dedo (03/10). El plano se mueve debajo; la cruz no.
+   Alto fijo porque el mapa mide su contenedor: sin esto nace a cero. */
+.mapa-colocar {
+  position: relative;
+  height: 320px;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--borde);
+}
+
+.mapa-colocar > div {
+  width: 100%;
+  height: 100%;
+}
+
+/* Clavada en el centro y sin interceptar el dedo: lo que se arrastra es el
+   plano. `translate(-50%, -50%)` la centra sobre su propio punto. */
+.mapa-mira {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 5;
+}

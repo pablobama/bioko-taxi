@@ -296,3 +296,28 @@ test('el transform del plano y la proyección de los pines dicen lo mismo', () =
     );
   }
 });
+
+// La vuelta de la proyección (03/10). Hace falta para poder señalar un sitio
+// con el dedo: lo que se sabe es dónde quedó el plano, y lo que hay que
+// guardar es una latitud y una longitud.
+//
+// Se comprueba la IDA Y VUELTA y no un valor fijo: un valor fijo solo dice que
+// la cuenta no ha cambiado, y lo que importa es que las dos direcciones digan
+// lo mismo. Si alguien toca una, esto cae.
+test('aLatLng deshace aMundo en los tres sitios de siempre', () => {
+  for (const sitio of [MERCADO_CENTRAL, CATEDRAL, SEMU]) {
+    const [x, y] = proy.aMundo(sitio.lat, sitio.lng);
+    const vuelta = proy.aLatLng(x, y);
+    // Una diezmilésima de grado son unos once metros; aquí se exige mil veces
+    // mejor que eso, porque la proyección es lineal y no tiene por qué perder
+    // nada en el camino.
+    assert.ok(
+      Math.abs(vuelta.lat - sitio.lat) < 1e-9,
+      `latitud: ${vuelta.lat} debería ser ${sitio.lat}`,
+    );
+    assert.ok(
+      Math.abs(vuelta.lng - sitio.lng) < 1e-9,
+      `longitud: ${vuelta.lng} debería ser ${sitio.lng}`,
+    );
+  }
+});

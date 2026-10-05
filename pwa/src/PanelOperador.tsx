@@ -5,7 +5,7 @@
 // Solo en español a propósito: es herramienta interna, no cara al pasajero
 // ni al taxista, así que no pasa por i18n.ts.
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   api,
   type BandaOperador, type CambioOperador, type ConductorOperador, type EstadisticasOperador,
@@ -860,6 +860,15 @@ function EditorReferencia({
   const [aliasNuevo, setAliasNuevo] = useState('');
   const [error, setError] = useState('');
   const [ocupado, setOcupado] = useState(false);
+  // Colocarlo con el dedo: se mueve el plano bajo una cruz quieta y se pulsa
+  // «ponerlo aquí». Lo de debajo de la cruz se guarda en una REFERENCIA y no en
+  // el estado: si no, cada píxel de arrastre repintaría el plano entero y el
+  // gesto iría a tirones en un teléfono de gama baja.
+  const [conElDedo, setConElDedo] = useState(false);
+  const bajoLaCruz = useRef<{ lat: number; lng: number } | null>(null);
+  const alMoverCentro = useCallback((la: number, ln: number) => {
+    bajoLaCruz.current = { lat: la, lng: ln };
+  }, []);
 
   async function accion(f: () => Promise<unknown>) {
     setOcupado(true);
@@ -905,6 +914,51 @@ function EditorReferencia({
       {/* Corregir un sitio estando delante: es la mitad del trabajo de campo
           —el catálogo se cargó con coordenadas plausibles, no verificadas
           (P1-03)— y hasta ahora obligaba a teclear la coordenada a mano. */}
+      {/* Colocar un sitio sin estar delante. Hasta ahora había dos caminos: ir
+          allí y coger el GPS, o teclear la latitud y la longitud a mano —que es
+          pedirle a alguien que sepa que 3,7531 está al norte de 3,7520—. Esto
+          es el tercero y el que se usa en la calle: mover el plano bajo la cruz
+          y pulsar. */}
+      <button
+        type="button"
+        className={conElDedo ? 'principal' : 'secundario'}
+        disabled={ocupado}
+        onClick={() => setConElDedo((abierto) => !abierto)}
+      >
+        {conElDedo ? 'Dejar de colocarlo' : 'Colocarlo con el dedo'}
+      </button>
+      {conElDedo && (
+        <>
+          <div className="mapa-colocar">
+            <Mapa
+              puntos={[]}
+              origen={{ lat: Number(lat), lng: Number(lng), nombre: referencia.nombre }}
+              encuadre="persona"
+              mira
+              alMoverCentro={alMoverCentro}
+            />
+          </div>
+          <p className="nota">
+            Mueve el plano hasta que la cruz quede encima del sitio. El punto
+            ámbar es dónde está puesto ahora.
+          </p>
+          <button
+            type="button" className="principal" disabled={ocupado}
+            onClick={() => {
+              const donde = bajoLaCruz.current;
+              if (!donde) return;
+              // Solo rellena las casillas; guardar sigue siendo un acto
+              // aparte. Mover un sitio del catálogo cambia a dónde van los
+              // taxis, y no puede pasar por rozar el plano sin querer.
+              setLat(donde.lat.toFixed(6));
+              setLng(donde.lng.toFixed(6));
+              setConElDedo(false);
+            }}
+          >
+            Ponerlo aquí
+          </button>
+        </>
+      )}
       <button
         type="button" className="secundario" disabled={ocupado || avisoGps !== ''}
         onClick={() => capturarGps(

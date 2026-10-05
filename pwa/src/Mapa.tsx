@@ -58,6 +58,15 @@ export interface PropiedadesMapa {
   // minutos, o el taxista no sabe a cuál de los dos hacer caso.
   origenEnVivo?: boolean;
   taxi?: { lat: number; lng: number } | null;
+  // Señalar un sitio CON EL DEDO. Con `mira`, el plano dibuja una cruz clavada
+  // en su centro y avisa por `alMoverCentro` de qué coordenadas hay debajo.
+  //
+  // Se mueve el PLANO bajo una cruz quieta, y no una chincheta bajo el dedo.
+  // En un móvil es la diferencia entre poder y no poder: arrastrando la
+  // chincheta, el dedo tapa justo el sitio que se intenta acertar, y además
+  // pelea con el gesto de mover el mapa. Así se usa con un pulgar, mirando.
+  mira?: boolean;
+  alMoverCentro?: (lat: number, lng: number) => void;
   // La flota, para la consola del operador. Es distinto de `taxi`: aquél es EL
   // coche de este viaje, dibujado grande y orientado; éstos son muchos, y lo
   // único que se les pide es decir dónde están y si están libres.
@@ -137,7 +146,8 @@ const PRIORIDAD: Record<string, number> = {
 };
 
 export default function Mapa({
-  puntos, origen, destino, taxi, taxis, buscando, encuadre = 'persona', paradas, recorrido,
+  puntos, origen, destino, taxi, taxis, mira = false, alMoverCentro,
+  buscando, encuadre = 'persona', paradas, recorrido,
   origenEnVivo = false,
   maxPasadas = 1, rumbo = null, rumboCoche = null, yo = null, alCalcularRuta,
 }: PropiedadesMapa) {
@@ -334,6 +344,16 @@ export default function Mapa({
     paradas, recorrido, rumboMapa]);
 
   const camara = camaraManual ?? camaraAuto;
+
+  // Qué hay debajo de la cruz. Se avisa por efecto y no durante el dibujado
+  // para no cambiar el estado de otro componente mientras React pinta éste.
+  // Quien escucha guarda el dato donde no provoque un redibujado: si lo metiera
+  // en su estado, cada píxel de arrastre repintaría el plano entero.
+  useEffect(() => {
+    if (!mira || !alMoverCentro || !listo || !camara) return;
+    const { lat, lng } = listo.proy.aLatLng(camara.cx, camara.cy);
+    alMoverCentro(lat, lng);
+  }, [mira, alMoverCentro, listo, camara?.cx, camara?.cy]);
 
   // --- Mover y acercar el plano con el dedo -------------------------------
   //
@@ -796,6 +816,21 @@ export default function Mapa({
       ) : (
         <p className="mapa-cargando">Cargando el plano de Malabo…</p>
       )}
+      {/* La cruz, clavada en el centro y sin interceptar el dedo: lo que se
+          arrastra es el plano que hay debajo. */}
+      {mira && (
+        <div className="mapa-mira" aria-hidden="true">
+          <svg viewBox="-20 -20 40 40" width={40} height={40}>
+            <circle r={13} fill="none" stroke="#ffb020" strokeWidth={2} />
+            <line x1={-19} y1={0} x2={-6} y2={0} stroke="#ffb020" strokeWidth={2} />
+            <line x1={6} y1={0} x2={19} y2={0} stroke="#ffb020" strokeWidth={2} />
+            <line x1={0} y1={-19} x2={0} y2={-6} stroke="#ffb020" strokeWidth={2} />
+            <line x1={0} y1={6} x2={0} y2={19} stroke="#ffb020" strokeWidth={2} />
+            <circle r={2} fill="#ffb020" />
+          </svg>
+        </div>
+      )}
+
       {/* Solo cuando hay algo que deshacer: un botón permanente para «centrar»
           en un mapa que ya está centrado es ruido. */}
       {camaraManual !== null && (
