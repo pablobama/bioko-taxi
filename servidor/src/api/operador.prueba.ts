@@ -847,7 +847,7 @@ async function taxistaListo(zonaId: number): Promise<number> {
 // secuencia numera CADA alta —la del panel y la del propio taxista—, a mano
 // solo se da un número por detrás del último generado y libre, y el que ya
 // es de alguien no se toca, porque es para siempre.
-test('número de taxi: la secuencia numera cada alta, y a mano solo por detrás', async () => {
+test('número de taxi: apagado no reparte; encendido numera, y a mano solo por detrás', async () => {
   function altaDelPanel(extra: Record<string, unknown> = {}) {
     const telefono = telefonoUnico();
     return app.inject({
@@ -860,6 +860,21 @@ test('número de taxi: la secuencia numera cada alta, y a mano solo por detrás'
     });
   }
 
+  // APAGADO (que es como nace, migración 085): nadie recibe número, y
+  // dictarlo a mano avisa de dónde está el interruptor.
+  const apagada = await altaDelPanel();
+  assert.equal(apagada.statusCode, 200, apagada.body);
+  assert.equal(apagada.json().numeroTaxi, null);
+  const manualApagada = await altaDelPanel({ numeroTaxi: 'A000' });
+  assert.equal(manualApagada.statusCode, 400);
+  assert.match(manualApagada.json().error, /apagada/);
+
+  // Encendido, el resto del contrato. Se devuelve a 0 al final: apagado es
+  // el estado real de la plataforma mientras el operador no diga otra cosa.
+  await pool.query(
+    `UPDATE parametro SET valor = '1' WHERE clave = 'numero_taxi_activado'`,
+  );
+  try {
   const primera = await altaDelPanel();
   assert.equal(primera.statusCode, 200, primera.body);
   const numero1: string = primera.json().numeroTaxi;
@@ -912,6 +927,11 @@ test('número de taxi: la secuencia numera cada alta, y a mano solo por detrás'
   const pintado = await altaDelPanel({ numeroTaxi: numero1.toLowerCase() });
   assert.equal(pintado.statusCode, 200, pintado.body);
   assert.equal(pintado.json().numeroTaxi, numero1, 'en forma canónica, aunque se teclee en minúsculas');
+  } finally {
+    await pool.query(
+      `UPDATE parametro SET valor = '0' WHERE clave = 'numero_taxi_activado'`,
+    );
+  }
 });
 
 test('alta por el operador: verificado, número por confirmar y sin robarle el aparato', async () => {

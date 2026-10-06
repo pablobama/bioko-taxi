@@ -652,7 +652,7 @@ export function registrarRutasOperador(
     // Quién lo dio de alta, en el registro de siempre (067).
     await apuntarCambio(
       req, 'conductor', `${resultado.conductorId}.alta`, null,
-      `${resultado.numero} · ${nombre} · ${telefono} · ${matricula}`,
+      [resultado.numero, nombre, telefono, matricula].filter(Boolean).join(' · '),
     );
     return { conductorId: resultado.conductorId, numeroTaxi: resultado.numero };
   });

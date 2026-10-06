@@ -11,8 +11,13 @@
 // El puntero vive en `parametro` ('numero_taxi_siguiente') y se lee con
 // FOR UPDATE dentro de la transacción del alta: dos altas a la vez no pueden
 // llevarse el mismo número, y un alta que falla no quema ninguno.
+//
+// Y TODO ELLO DETRÁS DE UN INTERRUPTOR ('numero_taxi_activado', migración
+// 085), apagado de serie: el operador decide cuándo la numeración empieza a
+// existir, desde el panel y sin desplegar. Apagado, nadie recibe número.
 
 import type pg from 'pg';
+import { leerParametroEntero } from './parametros.js';
 
 const LETRAS = 26;
 const POR_BLOQUE = 1000;
@@ -71,7 +76,14 @@ async function punteroBloqueado(cliente: pg.ClientBase): Promise<number> {
 export async function asignarNumeroSiguiente(
   cliente: pg.ClientBase,
   conductorId: number,
-): Promise<string> {
+): Promise<string | null> {
+  // Con el interruptor apagado no se asigna NI SE AVANZA el puntero: null y
+  // fuera. El que nazca hoy recibirá número el día que... no: no lo recibirá
+  // — la numeración empieza para todos cuando se encienda, y ese reparto es
+  // una decisión del operador, no un gotero silencioso.
+  if (await leerParametroEntero(cliente, 'numero_taxi_activado') !== 1) {
+    return null;
+  }
   const indice = await punteroBloqueado(cliente);
   const numero = numeroDeIndice(indice);
   await cliente.query(
@@ -92,6 +104,13 @@ export async function asignarNumeroManual(
   conductorId: number,
   crudo: string,
 ): Promise<string> {
+  if (await leerParametroEntero(cliente, 'numero_taxi_activado') !== 1) {
+    throw new NumeroNoAsignable(
+      400,
+      'La numeración de taxis está apagada: enciéndela en Ajustes → '
+      + 'parámetros (numero_taxi_activado a 1) y vuelve a intentarlo.',
+    );
+  }
   const indice = indiceDeNumero(crudo);
   if (indice === null) {
     throw new NumeroNoAsignable(

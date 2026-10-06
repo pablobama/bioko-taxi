@@ -1245,7 +1245,7 @@ export const api = {
     // El número que el coche ya lleva pintado; vacío, el siguiente (084).
     numeroTaxi?: string;
   }) =>
-    pedirJson<{ conductorId: number; numeroTaxi: string }>('/api/operador/conductores', {
+    pedirJson<{ conductorId: number; numeroTaxi: string | null }>('/api/operador/conductores', {
       method: 'POST',
       body: JSON.stringify(datos),
     }),
