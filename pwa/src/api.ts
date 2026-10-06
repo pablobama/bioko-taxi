@@ -252,6 +252,7 @@ export interface TaxiVivo {
   nombre: string;
   // Para que la tarjeta del mapa pueda llamarle sin ir a buscar la ficha.
   telefono: string;
+  numero_taxi: string | null;
   matricula: string | null;
   estado: string;
   zona: string | null;
@@ -437,6 +438,8 @@ export interface ConductorOperador {
   telefono: string;
   correo: string | null;
   estado_verificacion: string;
+  // El número de flota (migración 084): A013. Para siempre.
+  numero_taxi: string | null;
   // Para ordenar la bandeja por antigüedad: la edad de un alta es su fecha.
   fecha_alta: string;
   matricula: string | null;
@@ -475,6 +478,7 @@ export interface FichaConductorOperador {
   telefono: string;
   correo: string | null;
   estado_verificacion: string;
+  numero_taxi: string | null;
   suscrito_hasta: string | null;
   suscripcionVigente: boolean;
   matricula: string | null;
@@ -1238,8 +1242,10 @@ export const api = {
   darDeAltaTaxista: (datos: {
     nombre: string; telefono: string; matricula: string; marca: string;
     carroceria: string; color?: string; aireAcondicionado?: boolean; seguro?: boolean;
+    // El número que el coche ya lleva pintado; vacío, el siguiente (084).
+    numeroTaxi?: string;
   }) =>
-    pedirJson<{ conductorId: number }>('/api/operador/conductores', {
+    pedirJson<{ conductorId: number; numeroTaxi: string }>('/api/operador/conductores', {
       method: 'POST',
       body: JSON.stringify(datos),
     }),

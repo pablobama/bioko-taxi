@@ -12,6 +12,7 @@ import { crearPool, enTransaccion } from '../bd/conexion.js';
 import { EmisorRegistro } from '../dominio/eventos.js';
 import { ServicioVerificacionRegistro } from '../dominio/verificacion-telefono.js';
 import { crearZona, guardarReferencia } from '../dominio/gazetteer.js';
+import { indiceDeNumero, numeroDeIndice } from '../dominio/numeros-taxi.js';
 import { procesarClienteAusente } from '../dominio/monedero.js';
 import { ConexionesSse } from '../eventos/adaptador-sse.js';
 import { sinAvisoALaCiudad, sinTaxisDeTodaLaIsla } from '../dominio/ayuda-pruebas.js';
@@ -842,6 +843,77 @@ async function taxistaListo(zonaId: number): Promise<number> {
 // no ha demostrado nada nadie), y el aparato del operador NO queda vinculado
 // como si fuera el taxi — que es lo que haría el alta normal, pensada para
 // que la mande el propio taxista desde su móvil.
+// El número de taxi (084). Lo que se comprueba es el contrato entero: la
+// secuencia numera CADA alta —la del panel y la del propio taxista—, a mano
+// solo se da un número por detrás del último generado y libre, y el que ya
+// es de alguien no se toca, porque es para siempre.
+test('número de taxi: la secuencia numera cada alta, y a mano solo por detrás', async () => {
+  function altaDelPanel(extra: Record<string, unknown> = {}) {
+    const telefono = telefonoUnico();
+    return app.inject({
+      method: 'POST', url: '/api/operador/conductores', headers: cabeceras(UUID_OPERADOR),
+      payload: {
+        nombre: `Numerado ${telefono.slice(-4)}`, telefono,
+        matricula: `MB-${telefono.slice(-5)}N`, marca: 'Toyota', carroceria: 'turismo',
+        ...extra,
+      },
+    });
+  }
+
+  const primera = await altaDelPanel();
+  assert.equal(primera.statusCode, 200, primera.body);
+  const numero1: string = primera.json().numeroTaxi;
+  assert.match(numero1, /^[A-Z]{1,2}\d{3}$/);
+
+  const segunda = await altaDelPanel();
+  assert.equal(segunda.statusCode, 200, segunda.body);
+  const numero2: string = segunda.json().numeroTaxi;
+  assert.equal(
+    indiceDeNumero(numero2), indiceDeNumero(numero1)! + 1,
+    `${numero1} y ${numero2} tendrían que ser consecutivos`,
+  );
+
+  // Y el alta del PROPIO taxista también numera: nadie se queda sin número.
+  const propia = await app.inject({
+    method: 'POST', url: '/api/conductor/alta', headers: cabeceras(randomUUID()),
+    payload: {
+      nombre: 'Numerado por sí mismo', telefono: telefonoUnico(),
+      matricula: `MB-${Date.now() % 100000}S`, marca: 'Kia', carroceria: 'turismo',
+    },
+  });
+  assert.equal(propia.statusCode, 200, propia.body);
+  assert.equal(indiceDeNumero(propia.json().numeroTaxi), indiceDeNumero(numero2)! + 1);
+
+  // Lo que no es un número, se rechaza con la forma delante.
+  const malaForma = await altaDelPanel({ numeroTaxi: 'TAXI-7' });
+  assert.equal(malaForma.statusCode, 400);
+  assert.match(malaForma.json().error, /A013/);
+
+  // Por DELANTE de la secuencia, jamás: sería saltar la cola.
+  const porDelante = await altaDelPanel({
+    numeroTaxi: numeroDeIndice(indiceDeNumero(numero2)! + 500),
+  });
+  assert.equal(porDelante.statusCode, 400);
+  assert.match(porDelante.json().error, /ya emitidos/);
+
+  // El de otro, jamás: es para siempre.
+  const ocupado = await altaDelPanel({ numeroTaxi: numero1 });
+  assert.equal(ocupado.statusCode, 409);
+  assert.match(ocupado.json().error, /para siempre/);
+
+  // Y el caso para el que existe lo manual: un número por detrás y LIBRE —el
+  // que un coche lleva pintado—. En la vida real los huecos vienen de flotas
+  // numeradas antes de la plataforma; aquí se fabrica uno vaciando el de la
+  // primera alta, que es condición de laboratorio y se queda en esta prueba.
+  await pool.query(
+    'UPDATE conductor SET numero_taxi = NULL WHERE numero_taxi = $1',
+    [numero1],
+  );
+  const pintado = await altaDelPanel({ numeroTaxi: numero1.toLowerCase() });
+  assert.equal(pintado.statusCode, 200, pintado.body);
+  assert.equal(pintado.json().numeroTaxi, numero1, 'en forma canónica, aunque se teclee en minúsculas');
+});
+
 test('alta por el operador: verificado, número por confirmar y sin robarle el aparato', async () => {
   const telefono = telefonoUnico();
   const res = await app.inject({

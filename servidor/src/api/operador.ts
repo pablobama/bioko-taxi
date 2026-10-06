@@ -26,6 +26,7 @@ import {
   aparatosDe, autorizar, dispositivoDeOperador, esRaiz, esTelefonoDeOperador,
   listarOperadores, marcarVisto, revocar, revocarDispositivo, vincularDispositivo,
 } from '../dominio/operadores.js';
+import { asignarNumeroManual, asignarNumeroSiguiente } from '../dominio/numeros-taxi.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
 import { emitirVale } from '../dominio/vales.js';
 import { senalesDeTarifa } from '../dominio/precios.js';
@@ -581,6 +582,9 @@ export function registrarRutasOperador(
       nombre?: string; telefono?: string; matricula?: string;
       marca?: string; carroceria?: string; color?: string;
       aireAcondicionado?: boolean; seguro?: boolean;
+      // El número que el coche ya lleva pintado, si lo lleva. Vacío: el
+      // siguiente de la secuencia (migración 084).
+      numeroTaxi?: string;
     };
     const nombre = cuerpo.nombre?.trim();
     const telefono = normalizarTelefono(cuerpo.telefono?.trim());
@@ -620,6 +624,12 @@ export function registrarRutasOperador(
         [telefono, nombre],
       );
       const conductorId: number = Number(creado.rows[0].id);
+      // El número de flota (084): el de la secuencia, o el que el coche ya
+      // lleva pintado si el operador lo dicta — ese, solo por detrás del
+      // último generado y solo si está libre.
+      const numero = cuerpo.numeroTaxi?.trim()
+        ? await asignarNumeroManual(cliente, conductorId, cuerpo.numeroTaxi)
+        : await asignarNumeroSiguiente(cliente, conductorId);
       await cliente.query(
         `INSERT INTO vehiculo (conductor_id, matricula, marca, carroceria, color, aire_acondicionado, seguro)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -637,11 +647,14 @@ export function registrarRutasOperador(
          ON CONFLICT (conductor_id) DO NOTHING`,
         [conductorId],
       );
-      return conductorId;
+      return { conductorId, numero };
     });
     // Quién lo dio de alta, en el registro de siempre (067).
-    await apuntarCambio(req, 'conductor', `${resultado}.alta`, null, `${nombre} · ${telefono} · ${matricula}`);
-    return { conductorId: resultado };
+    await apuntarCambio(
+      req, 'conductor', `${resultado.conductorId}.alta`, null,
+      `${resultado.numero} · ${nombre} · ${telefono} · ${matricula}`,
+    );
+    return { conductorId: resultado.conductorId, numeroTaxi: resultado.numero };
   });
 
   app.get('/api/operador/conductores', async (req) => {
@@ -654,6 +667,7 @@ export function registrarRutasOperador(
     // es solo para no reventar la pantalla si algún día deja de serlo.
     const filas = await pool.query(
       `SELECT c.id, c.nombre, c.telefono, c.correo, c.estado_verificacion,
+              c.numero_taxi,
               -- Para la bandeja (06/10): lo pendiente se ordena por
               -- antigüedad, y la edad de un alta es su fecha.
               c.fecha_alta,
@@ -683,7 +697,7 @@ export function registrarRutasOperador(
 
     const ficha = await pool.query(
       `SELECT c.id, c.nombre, c.telefono, c.correo, c.estado_verificacion,
-              c.suscrito_hasta, c.es_agente, c.recibe_en_cualquier_zona,
+              c.numero_taxi, c.suscrito_hasta, c.es_agente, c.recibe_en_cualquier_zona,
               v.matricula, v.marca, v.color, v.carroceria, v.plazas,
               v.aire_acondicionado, v.seguro,
               p.estado AS presencia,
@@ -919,6 +933,8 @@ export function registrarRutasOperador(
           [telefonoTaxi, nombre?.trim() || 'Taxi del operador'],
         );
         conductorId = Number(creado.rows[0].id);
+        // También el taxi del operador lleva su número (migración 084).
+        await asignarNumeroSiguiente(cliente, conductorId);
       }
 
       // Sin vehículo el reparto ni lo mira: la matrícula es lo que identifica
@@ -1554,8 +1570,8 @@ export function registrarRutasOperador(
     // ni una posición: un taxi en servicio del que no sabemos dónde está es
     // justo el que hay que mirar, y esconderlo del mapa lo haría invisible.
     const taxis = await pool.query(
-      `SELECT c.id::int AS conductor_id, c.nombre, c.telefono, v.matricula,
-              p.estado, z.nombre AS zona,
+      `SELECT c.id::int AS conductor_id, c.nombre, c.telefono, c.numero_taxi,
+              v.matricula, p.estado, z.nombre AS zona,
               r.lat, r.lng,
               EXTRACT(EPOCH FROM (now() - r.creado_en))::int AS visto_hace_seg,
               EXTRACT(EPOCH FROM (now() - p.ultimo_heartbeat))::int AS latido_hace_seg,

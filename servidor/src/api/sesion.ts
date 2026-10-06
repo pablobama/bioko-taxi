@@ -17,6 +17,7 @@ import { actividadDe } from '../dominio/rastro.js';
 import { reputacionDe } from '../dominio/reputacion.js';
 import { inicioDelDiaEnMalabo } from '../dominio/tiempo.js';
 import { normalizarTelefono } from '../dominio/telefono.js';
+import { asignarNumeroSiguiente } from '../dominio/numeros-taxi.js';
 import { esOperadorAhora } from './operador.js';
 
 const PATRON_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -220,6 +221,8 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
           [telefono, nombre, correo],
         );
         conductorId = creado.rows[0].id;
+        // Su número de flota (migración 084), al nacer y para siempre.
+        await asignarNumeroSiguiente(cliente, Number(conductorId));
       }
 
       const matriculaAjena = await cliente.query(
@@ -267,11 +270,12 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
       );
 
       const estado = await cliente.query(
-        'SELECT estado_verificacion FROM conductor WHERE id = $1',
+        'SELECT estado_verificacion, numero_taxi FROM conductor WHERE id = $1',
         [conductorId],
       );
       return {
         conductorId,
+        numeroTaxi: estado.rows[0].numero_taxi,
         estadoVerificacion: estado.rows[0].estado_verificacion,
         // La app lo dice con estas palabras: es la diferencia entre «ya
         // trabajas» y «espera a que te verifiquen».

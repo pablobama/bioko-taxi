@@ -902,6 +902,17 @@ export default function Mapa({
         </div>
       )}
 
+      {/* Acercar y alejar con dos botones (pedido el 06/10). El gesto del
+          pellizco ya existía, pero con ratón no hay pellizco, y en un móvil
+          con una mano tampoco: dos botones no le sobran a nadie. Llaman a la
+          misma `acercar` de siempre, con sus topes. */}
+      {listo !== null && (
+        <div className="mapa-zum">
+          <button type="button" aria-label="Acercar" onClick={() => acercar(1.5)}>+</button>
+          <button type="button" aria-label="Alejar" onClick={() => acercar(1 / 1.5)}>−</button>
+        </div>
+      )}
+
       {/* Solo cuando hay algo que deshacer: un botón permanente para «centrar»
           en un mapa que ya está centrado es ruido. */}
       {camaraManual !== null && (

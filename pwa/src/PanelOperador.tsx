@@ -480,6 +480,7 @@ function AltaDeTaxista({ alCreada }: { alCreada: (conductorId: number) => void }
   const [telefono, setTelefono] = useState('');
   const [matricula, setMatricula] = useState('');
   const [marca, setMarca] = useState('');
+  const [numeroTaxi, setNumeroTaxi] = useState('');
   const [carroceria, setCarroceria] = useState<'turismo' | '4x4'>('turismo');
   const [aire, setAire] = useState(false);
   const [seguro, setSeguro] = useState(false);
@@ -509,6 +510,7 @@ function AltaDeTaxista({ alCreada }: { alCreada: (conductorId: number) => void }
         carroceria,
         aireAcondicionado: aire,
         seguro,
+        numeroTaxi: numeroTaxi.trim() || undefined,
       });
       setAbierta(false);
       alCreada(r.conductorId);
@@ -540,6 +542,13 @@ function AltaDeTaxista({ alCreada }: { alCreada: (conductorId: number) => void }
           onChange={(e) => setMatricula(e.target.value)}
         />
         <input value={marca} placeholder="Marca" onChange={(e) => setMarca(e.target.value)} />
+        {/* El número de flota (084). Vacío, le toca el siguiente; se rellena
+            solo cuando el coche YA lleva uno pintado, y el servidor no deja
+            dar ninguno por delante de la secuencia. */}
+        <input
+          value={numeroTaxi} placeholder="Nº de taxi (vacío: el siguiente)"
+          onChange={(e) => setNumeroTaxi(e.target.value)}
+        />
         <select
           value={carroceria}
           onChange={(e) => setCarroceria(e.target.value as 'turismo' | '4x4')}
@@ -739,7 +748,12 @@ function FichaConductor({
   return (
     <>
       <div className="cabecera">
-        <h1>{ficha.nombre}</h1>
+        <h1>
+          {ficha.numero_taxi !== null && (
+            <span className="numero-taxi">{ficha.numero_taxi}</span>
+          )}
+          {ficha.nombre}
+        </h1>
         <button type="button" className="secundario" onClick={alVolver}>Volver</button>
       </div>
       <p className="nota">
@@ -2689,7 +2703,10 @@ function TarjetaDelMapa({
       ? <p className="nota">Ese taxi ya no está en servicio.</p>
       : (
         <>
-          <h3>{t.matricula ?? t.nombre}</h3>
+          <h3>
+            {t.numero_taxi !== null && `${t.numero_taxi} · `}
+            {t.matricula ?? t.nombre}
+          </h3>
           <p className="nota">
             {t.nombre} · {t.estado === 'DISPONIBLE' ? 'libre' : 'con pasajero'}
             {t.zona !== null && ` · ${t.zona}`}
@@ -3340,12 +3357,13 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                     entera. En el teléfono siguen las tarjetas, que con el
                     pulgar son más fáciles de acertar. */}
                 {enConsola && conductores !== null && conductores.length > 0 && (
-                  <Tabla cabeceras={['Taxi', 'Nombre', 'Teléfono', 'Estado', 'Alta']}>
+                  <Tabla cabeceras={['Nº', 'Taxi', 'Nombre', 'Teléfono', 'Estado', 'Alta']}>
                     {conductores.map((c) => (
                       <tr
                         key={c.id} className="tabla-desplegable"
                         onClick={() => setFichaConductor(c.id)}
                       >
+                        <td className="tabla-clave">{c.numero_taxi ?? '—'}</td>
                         <td className="tabla-clave">{c.matricula ?? '—'}</td>
                         <td>{c.nombre}</td>
                         <td className="tabla-tenue">{c.telefono}</td>
