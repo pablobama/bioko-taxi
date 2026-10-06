@@ -2648,70 +2648,284 @@ button.importe.elegido-importe {
   cursor: pointer;
 }
 
-/* ======================================================= consola de despacho */
-/* El panel de operador en un ordenador (03/10).
+/* ========================================================= mesa de despacho */
+/* El panel de operador en un ordenador (03/10; rehecho el 06/10).
  *
- * El mismo componente y las mismas secciones que en el teléfono: lo único que
- * cambia es el reparto. Cuatro zonas a la vez, porque despachar es mirar dos
- * cosas al mismo tiempo —dónde hay un taxi libre y quién lleva tres minutos
- * esperando— y en el teléfono eso obliga a cambiar de sección y perder de vista
- * la otra mitad.
+ * EL MAPA ES LA PANTALLA. La primera consola repartía el monitor en cuatro
+ * zonas fijas con fronteras arrastrables, y las mismas cosas acababan dichas
+ * en dos sitios. Ahora hay una sola base —el plano— y tres cosas que flotan
+ * encima: las cifras-botón, el dique de lo vivo a la derecha, y la hoja con
+ * lo que se consulta, que se cierra con Esc.
  *
- * Todo lo de aquí vive bajo `.consola`, que solo existe cuando la pantalla pasa
+ * Todo lo de aquí vive bajo `.mesa`, que solo existe cuando la pantalla pasa
  * de 1100 px y no es el modo agente. El teléfono no ve una sola línea de esto.
  */
-.consola {
+.mesa {
   display: grid;
-  /* Mapa a la IZQUIERDA y trabajo a la derecha, con una banda que se arrastra
-     entre los dos. Antes el mapa iba arriba a lo ancho y empujaba todo el
-     contenido hacia abajo: una lista de conductores empezaba a media pantalla y
-     se leía por una rendija. En columnas, cada cosa tiene su alto completo, y
-     cuánto vale cada una lo decide quien trabaja —no yo— moviendo la banda. */
-  grid-template-columns: 210px var(--ancho-mapa, 520px) 6px minmax(380px, 1fr);
-  /* El alto del mapa también se arrastra: hay ratos de mirar el plano y ratos
-     de mirar quién espera, y cuál pesa más cambia a lo largo del día. */
-  grid-template-rows: var(--alto-mapa, 460px) 6px minmax(0, 1fr);
-  grid-template-areas:
-    "lado mapa   banda trabajo"
-    "lado bandah banda trabajo"
-    "lado ahora  banda trabajo";
-  gap: 1px;
+  grid-template-columns: 76px minmax(0, 1fr);
   height: 100dvh;
-  /* El hueco de separación deja ver el fondo, que hace de línea entre zonas sin
-     tener que poner cuatro bordes que se doblan entre sí. */
-  background: var(--borde);
+  background: var(--carbon);
 }
 
-/* La banda. Seis píxeles de ancho y el cursor que anuncia lo que hace; se
-   ilumina al tocarla para que se vea que es agarrable y no una línea más. */
-.consola-banda {
-  grid-area: banda;
-  cursor: col-resize;
-  background: var(--borde);
-  touch-action: none;
+/* El raíl: seis sitios a los que ir, en vertical y con dibujo. Fino porque no
+   compite con nada: todo lo demás es mapa. */
+.mesa-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 7px;
+  border-right: 1px solid var(--borde);
+  overflow-y: auto;
 }
 
-.consola-banda-alto {
-  grid-area: bandah;
-  cursor: row-resize;
-  background: var(--borde);
-  touch-action: none;
+.mesa-rail button {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 2px 8px;
+  border: none;
+  border-radius: 11px;
+  background: none;
+  color: var(--humo);
+  font-family: inherit;
+  font-size: 0.6rem;
+  letter-spacing: 0.02em;
+  cursor: pointer;
 }
 
-.consola-banda:hover,
-.consola-banda[data-arrastrando='si'],
-.consola-banda-alto:hover,
-.consola-banda-alto[data-arrastrando='si'] {
+.mesa-rail button i {
+  font-style: normal;
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.mesa-rail-activo {
+  background: var(--tinta) !important;
+  color: var(--ambar-claro) !important;
+}
+
+/* El contador de «Por hacer», pegado al icono. Es EL número del panel: si hay
+   algo aquí, hay alguien esperando una decisión. */
+.mesa-globo {
+  position: absolute;
+  top: 2px;
+  right: 8px;
   background: var(--ambar);
+  color: #1c1c21;
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 99px;
 }
 
-/* Un registro se lleva la ventana entera: sin mapa y sin la columna de «ahora
-   mismo», que sirven para despachar y no para leer. Una tabla de doscientas
-   filas con cuatro dedos de alto no es una tabla, es una rendija. */
-.consola-registro {
-  grid-template-columns: 210px minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
-  grid-template-areas: "lado trabajo";
+.mesa-escena {
+  position: relative;
+  overflow: hidden;
+}
+
+.mesa-mapa {
+  position: absolute;
+  inset: 0;
+  background: var(--tinta);
+}
+
+/* El mapa llena su zona: mide su contenedor, así que sin esto nace a cero. */
+.mesa-mapa > div {
+  width: 100%;
+  height: 100%;
+}
+
+/* Que no haya taxis que pintar se dice con palabras. Un plano vacío se lee
+   como «esto está roto», y es justo cuando hay que saber que no es eso. */
+.mesa-mapa-vacio {
+  position: absolute;
+  inset: auto 360px 14px 0;
+  margin: 0;
+  text-align: center;
+  color: var(--humo);
+  font-size: 0.86rem;
+  pointer-events: none;
+}
+
+/* Las cifras-botón, flotando sobre el plano. Paran antes del dique para no
+   pisarlo; con el dique plegado se estiran. */
+.mesa-chips {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  right: 364px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  z-index: 12;
+}
+
+.mesa-chips-anchas {
+  right: 64px;
+}
+
+.mesa-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 7px 13px;
+  border: 1px solid var(--borde);
+  border-radius: 11px;
+  /* Traslúcido sobre el plano: se lee la cifra y se sigue viendo la calle. */
+  background: rgba(28, 28, 33, 0.88);
+  color: var(--humo);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.mesa-chip b {
+  font-size: 1.18rem;
+  color: var(--hueso);
+}
+
+.mesa-chip small {
+  font-size: 0.74rem;
+}
+
+.mesa-chip-urgente,
+.mesa-chip-urgente b {
+  color: var(--ambar-claro);
+}
+
+.mesa-chip-urgente {
+  border-color: var(--ambar);
+}
+
+.mesa-chip-aviso b {
+  color: var(--ambar-claro);
+}
+
+/* El dique: lo VIVO, siempre a la vista. Hueco arriba para el conmutador de
+   papeles, que va flotando en esa esquina (position: fixed). */
+.mesa-dock {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 352px;
+  padding: 54px 14px 14px;
+  background: rgba(28, 28, 33, 0.94);
+  border-left: 1px solid var(--borde);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 11;
+}
+
+.mesa-llamada {
+  flex: none;
+}
+
+/* La pestaña que pliega el dique, colgada de su borde. */
+.mesa-plegar {
+  position: absolute;
+  top: 50%;
+  right: 352px;
+  transform: translateY(-50%);
+  z-index: 12;
+  padding: 16px 5px;
+  border: 1px solid var(--borde);
+  border-right: none;
+  border-radius: 10px 0 0 10px;
+  background: var(--carbon);
+  color: var(--humo);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.mesa-plegar-suelto {
+  right: 0;
+}
+
+/* La hoja: lo que se consulta, encima del mapa y sin taparlo del todo — el
+   borde que asoma recuerda que el despacho sigue debajo, y la cruz (o Esc)
+   te devuelve a él. Deja ver el dique: se consulta una ficha SIN perder de
+   vista quién está esperando taxi. */
+.mesa-hoja {
+  position: absolute;
+  inset: 16px 368px 16px 16px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--carbon);
+  border: 1px solid var(--borde);
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+
+.mesa-hoja-ancha {
+  right: 64px;
+}
+
+.mesa-hoja-cabecera {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 11px 18px;
+  border-bottom: 1px solid var(--borde);
+}
+
+.mesa-hoja-cabecera h2 {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: 0.03em;
+}
+
+.mesa-cerrar {
+  border: 1px solid var(--borde);
+  border-radius: 9px;
+  background: none;
+  color: var(--humo);
+  font-family: inherit;
+  font-size: 0.82rem;
+  padding: 5px 11px;
+  cursor: pointer;
+}
+
+.mesa-cerrar small {
+  color: var(--humo);
+  opacity: 0.7;
+}
+
+/* --- La bandeja ------------------------------------------------------------
+ * Cada pendiente lleva encima su clase y su edad. La edad es la columna que
+ * manda: la lista viene con lo más viejo arriba.
+ */
+.pendiente-cabecera {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 10px 0 4px;
+}
+
+.pendiente-clase {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ambar-claro);
+}
+
+.pendiente-hace {
+  font-size: 0.78rem;
+  color: var(--humo);
+}
+
+.bandeja-titulo {
+  margin: 14px 0 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--humo);
 }
 
 /* «Ver los 4» de la tabla de zonas: un botón que se lee como un enlace, porque
@@ -2727,76 +2941,9 @@ button.importe.elegido-importe {
   text-decoration: underline;
 }
 
-.consola-lado {
-  grid-area: lado;
-  background: var(--carbon);
-  padding: 16px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  overflow-y: auto;
-}
-
-.consola-lado h1 {
-  margin: 0;
-  font-size: 1.05rem;
-  color: var(--humo);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-/* Las secciones, en vertical. Es la misma pieza que en el teléfono va en
-   pastillas envueltas; aquí hay sitio de sobra para una lista, y una lista se
-   recorre con la vista sin leer palabra por palabra. */
-.consola-lado .selector-idioma {
-  flex-direction: column;
-  flex-wrap: nowrap;
-  gap: 1px;
-  background: none;
-  border: none;
-  padding: 0;
-}
-
-.consola-lado .selector-idioma button {
-  text-align: left;
-  padding: 9px 11px;
-  border-radius: 8px;
-  font-size: 0.92rem;
-}
-
-.consola-mapa {
-  grid-area: mapa;
-  position: relative;
-  background: var(--tinta);
-  overflow: hidden;
-}
-
-/* El mapa llena su zona: mide su contenedor, así que sin esto nace a cero. */
-.consola-mapa > div {
-  width: 100%;
-  height: 100%;
-}
-
-/* Que no haya taxis que pintar se dice con palabras. Un plano vacío se lee
-   como «esto está roto», y es justo cuando hay que saber que no es eso. */
-.consola-mapa-vacio {
-  position: absolute;
-  inset: auto 0 14px;
-  margin: 0;
-  text-align: center;
-  color: var(--humo);
-  font-size: 0.86rem;
-  pointer-events: none;
-}
-
-/* Debajo del mapa, no al lado: lo que dice —quién espera, cuántos libres— se
-   lee mirando el mapa, y las dos cosas juntas son la vista de despachar.
-   Con tope de alto para que una tarde con quince esperando no se coma el plano. */
+/* La lista del dique. El contenedor (.mesa-dock) pone fondo, hueco y scroll;
+   esto solo apila sus filas. */
 .consola-ahora {
-  grid-area: ahora;
-  background: var(--carbon);
-  padding: 14px;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -2807,36 +2954,6 @@ button.importe.elegido-importe {
   font-size: 0.78rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--humo);
-}
-
-/* Los cuatro números de cabecera. Grandes a propósito: son lo que se mira de
-   reojo mientras se hace otra cosa. */
-.consola-cifras {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px 10px;
-  font-size: 0.82rem;
-  color: var(--humo);
-}
-
-.consola-cifras b {
-  font-size: 1.3rem;
-  color: var(--hueso);
-  margin-right: 5px;
-}
-
-.consola-urgente,
-.consola-urgente b {
-  color: var(--ambar-claro);
-}
-
-.consola-avisos {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin: 0;
-  font-size: 0.8rem;
   color: var(--humo);
 }
 
@@ -2879,13 +2996,13 @@ button.importe.elegido-importe {
   text-decoration: none;
 }
 
+/* El cuerpo de la hoja. Conserva el nombre de la consola vieja a propósito:
+   todas las reglas de tamaños de botones, tablas y tarjetas de más abajo
+   cuelgan de él, y lo que era «la columna de trabajo» ahora es «la hoja». */
 .consola-trabajo {
-  grid-area: trabajo;
-  background: var(--carbon);
-  /* Hueco arriba para el conmutador de papeles, que va flotando en esa esquina
-     (position: fixed) y no empuja nada. Es el mismo apaño que `.hoja-completa`
-     hace en el teléfono. */
-  padding: 46px 18px 16px;
+  flex: 1;
+  min-height: 0;
+  padding: 16px 18px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;

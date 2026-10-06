@@ -2071,13 +2071,17 @@ function Viajes() {
       {error && <p className="aviso">{error}</p>}
       {viajes?.length === 0 && <p className="nota">Ninguna carrera con ese filtro.</p>}
       {viajes !== null && viajes.length > 0 && (
-        <Tabla cabeceras={['Cuándo', 'Teléfono', 'Origen → Destino', 'Taxi', 'Estado', 'Precio']}>
+        <Tabla cabeceras={['Cuándo', 'Teléfono', 'Origen → Destino', 'Taxi', 'Recogida', 'Bajada', 'Estado', 'Precio']}>
           {viajes.map((v) => (
             <tr key={v.id}>
               <td className="tabla-tenue">{cuando(v.creada_en)}</td>
               <td>{v.telefono_cliente ?? '—'}</td>
               <td>{v.origen} → {v.destino}</td>
               <td>{v.matricula ?? v.conductor ?? '—'}</td>
+              {/* Solo la hora: el día ya lo dice «Cuándo», y una carrera no
+                  cruza la medianoche en una isla de veinte minutos. */}
+              <td className="tabla-tenue">{v.recogido_en === null ? '—' : soloHora(v.recogido_en)}</td>
+              <td className="tabla-tenue">{v.bajada_en === null ? '—' : soloHora(v.bajada_en)}</td>
               <td className="tabla-clave">{v.estado.toLowerCase().replace(/_/g, ' ')}</td>
               <td className="tabla-numero">
                 {v.precio_xaf === null ? '—' : `${v.precio_xaf.toLocaleString('es')} XAF`}
@@ -2435,6 +2439,143 @@ function Accesos() {
   );
 }
 
+// Una recarga, como tarjeta con sus botones. Vivía pegada dentro de la
+// pestaña de pagos; al pasar los pagos a la bandeja hizo falta nombrarla,
+// porque ahora se pinta en dos sitios: pendiente en la bandeja y decidida en
+// el archivo. El propio estado dice si lleva botones.
+function TarjetaRecarga({ recarga: r, ocupada, alConfirmar, alRechazar }: {
+  recarga: RecargaOperador;
+  ocupada: boolean;
+  alConfirmar: (referencia: string) => void;
+  alRechazar: (referencia: string) => void;
+}) {
+  return (
+    <div className="oferta">
+      <div className="oferta-ruta">
+        {r.importe_xaf.toLocaleString('es')} XAF · {r.referencia}
+      </div>
+      <div className="nota">{r.conductor_nombre} · {r.conductor_telefono}</div>
+      <div className="nota">
+        Pago por <strong>{ETIQUETA_METODO[r.metodo] ?? r.metodo}</strong>
+        {' · '}Estado: <strong>{ETIQUETA_ESTADO_RECARGA[r.estado] ?? r.estado}</strong>
+      </div>
+      {r.nota && <div className="nota">Nota: {r.nota}</div>}
+      {r.estado === 'pendiente' && (
+        <div className="fila">
+          <button
+            type="button" className="principal" disabled={ocupada}
+            onClick={() => alConfirmar(r.referencia)}
+          >
+            Confirmar pago
+          </button>
+          <button
+            type="button" className="secundario" disabled={ocupada}
+            onClick={() => alRechazar(r.referencia)}
+          >
+            Rechazar
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Cuánto hace de una fecha, con la palabra ya puesta.
+function haceDesde(iso: string): string {
+  return hace(Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000)));
+}
+
+// Una fila por decisión pendiente, venga de donde venga.
+type Pendiente =
+  | { clase: 'incidencia'; cuando: string; incidencia: IncidenciaOperador }
+  | { clase: 'pago'; cuando: string; recarga: RecargaOperador }
+  | { clase: 'alta'; cuando: string; conductor: ConductorOperador };
+
+const ETIQUETA_PENDIENTE: Record<Pendiente['clase'], string> = {
+  incidencia: 'Incidencia',
+  pago: 'Pago',
+  alta: 'Alta de taxista',
+};
+
+// La bandeja (06/10): todo lo que espera una decisión del operador, en UNA
+// lista y con la más vieja arriba. La regla es la misma que en «esperando
+// taxi»: lo urgente es lo viejo, porque detrás de cada fila hay alguien que
+// no puede cobrar, trabajar o cerrar su queja hasta que alguien decida.
+function Bandeja({
+  incidencias, recargas, altas, ocupadoId,
+  alResolver, alConfirmarPago, alRechazarPago, alAbrirAlta,
+}: {
+  incidencias: IncidenciaOperador[] | null;
+  recargas: RecargaOperador[] | null;
+  altas: ConductorOperador[] | null;
+  ocupadoId: number | string | null;
+  alResolver: (id: number, accion: 'sancionar' | 'perdonar') => void;
+  alConfirmarPago: (referencia: string) => void;
+  alRechazarPago: (referencia: string) => void;
+  alAbrirAlta: (id: number) => void;
+}) {
+  // Hasta que estén las tres listas no se pinta nada: una bandeja a medias
+  // dice «no queda nada» cuando sí queda, que es el peor mensaje posible.
+  if (incidencias === null || recargas === null || altas === null) {
+    return <p className="nota">Cargando…</p>;
+  }
+  const pendientes: Pendiente[] = [
+    ...incidencias.map((i) => ({ clase: 'incidencia' as const, cuando: i.creada_en, incidencia: i })),
+    ...recargas.map((r) => ({ clase: 'pago' as const, cuando: r.solicitada_en, recarga: r })),
+    ...altas.map((c) => ({ clase: 'alta' as const, cuando: c.fecha_alta, conductor: c })),
+  ].sort((a, b) => new Date(a.cuando).getTime() - new Date(b.cuando).getTime());
+
+  if (pendientes.length === 0) {
+    return <p className="nota">Nada pendiente. Todo decidido.</p>;
+  }
+  // Con tope. En producción aquí habrá docenas; pero una base con miles de
+  // pendientes atascados no puede colgar el navegador del operador, que es
+  // exactamente el día en que más lo necesita. Se enseñan los cien más
+  // viejos: decididos esos, entran los siguientes solos.
+  const visibles = pendientes.slice(0, 100);
+  return (
+    <>
+      {visibles.map((p) => (
+        <div
+          key={`${p.clase}-${p.clase === 'incidencia' ? p.incidencia.id : p.clase === 'pago' ? p.recarga.id : p.conductor.id}`}
+          className="pendiente"
+        >
+          <p className="pendiente-cabecera">
+            <span className={`pendiente-clase pendiente-${p.clase}`}>
+              {ETIQUETA_PENDIENTE[p.clase]}
+            </span>
+            <span className="pendiente-hace">hace {haceDesde(p.cuando)}</span>
+          </p>
+          {p.clase === 'incidencia' && (
+            <FilaIncidencia
+              incidencia={p.incidencia}
+              ocupada={ocupadoId === p.incidencia.id}
+              alResolver={alResolver}
+            />
+          )}
+          {p.clase === 'pago' && (
+            <TarjetaRecarga
+              recarga={p.recarga}
+              ocupada={ocupadoId === p.recarga.referencia}
+              alConfirmar={alConfirmarPago}
+              alRechazar={alRechazarPago}
+            />
+          )}
+          {p.clase === 'alta' && (
+            <FilaConductor conductor={p.conductor} alAbrir={alAbrirAlta} />
+          )}
+        </div>
+      ))}
+      {pendientes.length > visibles.length && (
+        <p className="nota">
+          Y {pendientes.length - visibles.length} más, esperando detrás de
+          estos. Decide estos primero: la lista se rellena sola.
+        </p>
+      )}
+    </>
+  );
+}
+
 // Seis entradas, agrupadas por LO QUE SE ESTÁ HACIENDO y no por qué tabla es.
 //
 // Eran once, ordenadas como está hecha la base de datos. Pero quien opera no
@@ -2465,7 +2606,6 @@ type Seccion = (typeof SECCIONES)[number][0];
 const SECCIONES_AGENTE: Seccion[] = ['sitios', 'ajustes'];
 
 const FILTROS_CONDUCTOR = ['pendiente', 'verificado', 'suspendido', 'bloqueado', 'todos'] as const;
-const FILTROS_RECARGA = ['pendiente', 'confirmada', 'rechazada', 'caducada', 'todas'] as const;
 
 export default function PanelOperador({ modo = 'operador', alVolver }: {
   modo?: 'operador' | 'agente';
@@ -2481,8 +2621,14 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   const [seccion, setSeccion] = useState<Seccion>(esAgente ? 'sitios' : 'porhacer');
   // Qué pestaña dentro de cada grupo. Separadas para que cambiar de grupo y
   // volver te devuelva donde estabas.
-  const [enPorHacer, setEnPorHacer] = useState<'incidencias' | 'pagos' | 'altas'>('incidencias');
   const [enGente, setEnGente] = useState<'conductores' | 'pasajeros'>('conductores');
+  // El archivo de la bandeja: lo ya decidido. Cerrado por defecto, porque a
+  // la bandeja se viene a decidir, no a releer.
+  const [verResueltas, setVerResueltas] = useState(false);
+  // Las altas pendientes tienen su propia lista: la de Gente obedece al
+  // filtro que el operador deje puesto allí, y la bandeja no puede depender
+  // de en qué se quedó mirando otro día.
+  const [altas, setAltas] = useState<ConductorOperador[] | null>(null);
   const [enSitios, setEnSitios] = useState<'zonas' | 'barrios' | 'lugares'>('zonas');
   const [stats, setStats] = useState<EstadisticasOperador | null>(null);
   const [salud, setSalud] = useState<SaludOperador | null>(null);
@@ -2500,13 +2646,12 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   const [busquedaPasajero, setBusquedaPasajero] = useState('');
   const [fichaPasajero, setFichaPasajero] = useState<number | null>(null);
 
-  // Incidencias
+  // Incidencias y pagos PENDIENTES: son la bandeja. Lo resuelto vive aparte
+  // y se pide solo si alguien abre el archivo.
   const [incidencias, setIncidencias] = useState<IncidenciaOperador[] | null>(null);
-  const [filtroIncidencias, setFiltroIncidencias] = useState<'pendientes' | 'resueltas'>('pendientes');
-
-  // Pagos
   const [recargas, setRecargas] = useState<RecargaOperador[] | null>(null);
-  const [filtroRecarga, setFiltroRecarga] = useState<(typeof FILTROS_RECARGA)[number]>('pendiente');
+  const [archivoIncidencias, setArchivoIncidencias] = useState<IncidenciaOperador[] | null>(null);
+  const [archivoRecargas, setArchivoRecargas] = useState<RecargaOperador[] | null>(null);
 
   function cargarStats() {
     api.estadisticasOperador().then(setStats).catch((e) => setError(e.message));
@@ -2540,18 +2685,37 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   }, [busquedaPasajero]);
 
   function cargarIncidencias() {
-    api.incidenciasOperador(filtroIncidencias)
+    api.incidenciasOperador('pendientes')
       .then((r) => setIncidencias(r.incidencias))
       .catch((e) => setError(e.message));
   }
-  useEffect(cargarIncidencias, [filtroIncidencias]);
+  useEffect(cargarIncidencias, []);
 
   function cargarRecargas() {
-    api.recargasOperador(filtroRecarga === 'todas' ? undefined : filtroRecarga)
+    api.recargasOperador('pendiente')
       .then((r) => setRecargas(r.recargas))
       .catch((e) => setError(e.message));
   }
-  useEffect(cargarRecargas, [filtroRecarga]);
+  useEffect(cargarRecargas, []);
+
+  function cargarAltas() {
+    api.conductoresOperador('pendiente')
+      .then((r) => setAltas(r.conductores))
+      .catch((e) => setError(e.message));
+  }
+  useEffect(cargarAltas, []);
+
+  // El archivo se pide al abrirlo, no antes: es lectura de consulta, y
+  // cargarlo siempre sería pedir doscientas filas para una pestaña cerrada.
+  useEffect(() => {
+    if (!verResueltas) return;
+    api.incidenciasOperador('resueltas')
+      .then((r) => setArchivoIncidencias(r.incidencias))
+      .catch(() => undefined);
+    api.recargasOperador()
+      .then((r) => setArchivoRecargas(r.recargas.filter((x) => x.estado !== 'pendiente')))
+      .catch(() => undefined);
+  }, [verResueltas]);
 
   async function cambiarEstadoConductor(id: number, estado: string) {
     setOcupadoId(id);
@@ -2562,6 +2726,7 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
         busquedaConductor ? undefined : (filtroConductor === 'todos' ? undefined : filtroConductor),
         busquedaConductor || undefined,
       ).then((r) => setConductores(r.conductores)).catch(() => undefined);
+      cargarAltas();
       cargarStats();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo cambiar el estado.');
@@ -2642,16 +2807,15 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   // de alguien que no los va a ver.
   const enOrdenador = useEsOrdenador();
   const enConsola = enOrdenador && !esAgente;
-  // Los REGISTROS se llevan la ventana entera. Son tablas de doscientas filas
-  // que se recorren comparando columnas, y debajo del mapa les quedaban cuatro
-  // dedos de alto: para leer una tabla hay que verla, no asomarse a ella.
-  //
-  // El mapa y la columna de «ahora mismo» sirven para despachar —saber dónde
-  // hay un taxi y quién está esperando— y eso no es lo que se está haciendo
-  // cuando se mira quién tocó un precio el martes. Cada cosa a lo suyo.
-  const enRegistro = seccion === 'registros';
-  const [anchoMapa, setAnchoMapa] = useState<number>(() => medidaGuardada('ancho'));
-  const [altoMapa, setAltoMapa] = useState<number>(() => medidaGuardada('alto'));
+  // LA HOJA (06/10): lo que se consulta —Gente, Registros, Sitios, Ajustes—
+  // se abre encima del mapa y se cierra con Esc, que te devuelve al despacho.
+  // Cerrada, la consola ES el mapa con lo vivo alrededor: una sola
+  // distribución que aprender, y láminas que se le ponen encima.
+  const [hojaAbierta, setHojaAbierta] = useState(false);
+  // El dique de lo vivo se pliega para ver el plano entero, pero no se
+  // redimensiona: un tamaño que se puede dejar mal puesto es un ajuste más
+  // que recordar, y aquí el ancho lo decide el contenido.
+  const [dockPlegado, setDockPlegado] = useState(false);
   const [taxisVivos, setTaxisVivos] = useState<TaxiVivo[] | null>(null);
   const [viajesVivos, setViajesVivos] = useState<ViajeVivo[] | null>(null);
 
@@ -2673,6 +2837,18 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
     cargar();
     const reloj = setInterval(cargar, 6000);
     return () => { vivo = false; clearInterval(reloj); };
+  }, [enConsola]);
+
+  // Esc cierra la hoja desde cualquier sitio. Es el gesto de «quita esto de
+  // en medio», y tener que buscar la cruz con el ratón en mitad de una
+  // llamada es justo lo que la mesa quiere evitar.
+  useEffect(() => {
+    if (!enConsola) return;
+    const alTeclear = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setHojaAbierta(false);
+    };
+    window.addEventListener('keydown', alTeclear);
+    return () => window.removeEventListener('keydown', alTeclear);
   }, [enConsola]);
 
   // Los taxis que el mapa puede pintar: los que han mandado alguna posición.
@@ -2715,54 +2891,61 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
 
         {seccion === 'central' && <Central />}
 
-        {/* LA BANDEJA. Lo que hay aquí es gente esperando una decisión tuya:
-            una incidencia sin resolver, un pago sin confirmar, un taxista que
-            no puede trabajar hasta que le des el alta. Juntas porque se hacen
-            del tirón, al sentarse, y porque repartidas en tres pestañas hay que
-            entrar en las tres para saber si queda algo. */}
+        {/* LA BANDEJA (06/10). Una sola lista: cada cosa que espera una
+            decisión —una incidencia, un pago, un alta— es una fila, con la
+            más vieja arriba. La regla es la de «esperando taxi»: lo urgente
+            es lo viejo. Eran tres pestañas, y había que entrar en las tres
+            para saber si quedaba algo. */}
         {seccion === 'porhacer' && (
-          <div className="selector-idioma">
-            {([
-              ['incidencias', 'Incidencias', stats?.incidenciasPendientes ?? 0],
-              ['pagos', 'Pagos', stats?.recargasPendientes ?? 0],
-              ['altas', 'Altas de taxista', stats?.conductores.pendientes ?? 0],
-            ] as const).map(([id, etiqueta, cuantos]) => (
-              <button
-                key={id} type="button"
-                className={id === enPorHacer ? 'idioma-activo' : undefined}
-                onClick={() => setEnPorHacer(id)}
-              >
-                {etiqueta}{cuantos > 0 && ` (${cuantos})`}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {seccion === 'porhacer' && enPorHacer === 'incidencias' && (
-          <>
-            <div className="selector-idioma">
-              {(['pendientes', 'resueltas'] as const).map((f) => (
-                <button
-                  key={f} type="button"
-                  className={f === filtroIncidencias ? 'idioma-activo' : undefined}
-                  onClick={() => setFiltroIncidencias(f)}
-                >
-                  {f === 'pendientes' ? 'Por revisar' : 'Resueltas'}
-                </button>
-              ))}
-            </div>
-            {incidencias?.length === 0 && (
-              <p className="nota">
-                {filtroIncidencias === 'pendientes' ? 'Nada por revisar. Todo al día.' : 'Ninguna resuelta todavía.'}
-              </p>
-            )}
-            {incidencias?.map((i) => (
-              <FilaIncidencia
-                key={i.id} incidencia={i} ocupada={ocupadoId === i.id}
-                alResolver={resolverIncidencia}
+          fichaConductor !== null
+            ? (
+              <FichaConductor
+                id={fichaConductor}
+                alVolver={() => setFichaConductor(null)}
+                alCambiarEstado={cambiarEstadoConductor}
+                ocupado={ocupadoId !== null}
               />
-            ))}
-          </>
+            )
+            : (
+              <>
+                <Bandeja
+                  incidencias={incidencias}
+                  recargas={recargas}
+                  altas={altas}
+                  ocupadoId={ocupadoId}
+                  alResolver={resolverIncidencia}
+                  alConfirmarPago={confirmarPago}
+                  alRechazarPago={rechazarPago}
+                  alAbrirAlta={setFichaConductor}
+                />
+                <button
+                  type="button" className="secundario"
+                  onClick={() => setVerResueltas(!verResueltas)}
+                >
+                  {verResueltas ? 'Ocultar lo ya decidido' : 'Ver lo ya decidido'}
+                </button>
+                {verResueltas && (
+                  <>
+                    <h3 className="bandeja-titulo">Incidencias resueltas</h3>
+                    {archivoIncidencias?.length === 0 && <p className="nota">Ninguna todavía.</p>}
+                    {archivoIncidencias?.map((i) => (
+                      <FilaIncidencia
+                        key={i.id} incidencia={i} ocupada={false}
+                        alResolver={resolverIncidencia}
+                      />
+                    ))}
+                    <h3 className="bandeja-titulo">Pagos decididos</h3>
+                    {archivoRecargas?.length === 0 && <p className="nota">Ninguno todavía.</p>}
+                    {archivoRecargas?.map((r) => (
+                      <TarjetaRecarga
+                        key={r.id} recarga={r} ocupada={false}
+                        alConfirmar={confirmarPago} alRechazar={rechazarPago}
+                      />
+                    ))}
+                  </>
+                )}
+              </>
+            )
         )}
 
         {seccion === 'gente' && !enFicha && (
@@ -2779,11 +2962,7 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
           </div>
         )}
 
-        {/* Las altas pendientes son la MISMA lista de taxistas con el filtro
-            puesto, no otra pantalla: así se verifica desde donde se ve la ficha
-            entera, que es lo que hace falta para decidir. */}
-        {((seccion === 'gente' && enGente === 'conductores')
-          || (seccion === 'porhacer' && enPorHacer === 'altas')) && (
+        {seccion === 'gente' && enGente === 'conductores' && (
           fichaConductor !== null
             ? (
               <FichaConductor
@@ -2796,7 +2975,7 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
             : (
               <>
                 <Buscador alBuscar={setBusquedaConductor} />
-                {!busquedaConductor && seccion === 'gente' && (
+                {!busquedaConductor && (
                   <div className="selector-idioma">
                     {FILTROS_CONDUCTOR.map((f) => (
                       <button
@@ -2841,52 +3020,6 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
             )
         )}
 
-        {seccion === 'porhacer' && enPorHacer === 'pagos' && (
-          <>
-            <div className="selector-idioma">
-              {FILTROS_RECARGA.map((f) => (
-                <button
-                  key={f} type="button"
-                  className={f === filtroRecarga ? 'idioma-activo' : undefined}
-                  onClick={() => setFiltroRecarga(f)}
-                >
-                  {f === 'todas' ? 'Todas' : ETIQUETA_ESTADO_RECARGA[f]}
-                </button>
-              ))}
-            </div>
-            {recargas?.length === 0 && <p className="nota">No hay recargas en este estado.</p>}
-            {recargas?.map((r) => (
-              <div className="oferta" key={r.id}>
-                <div className="oferta-ruta">
-                  {r.importe_xaf.toLocaleString('es')} XAF · {r.referencia}
-                </div>
-                <div className="nota">{r.conductor_nombre} · {r.conductor_telefono}</div>
-                <div className="nota">
-                  Pago por <strong>{ETIQUETA_METODO[r.metodo] ?? r.metodo}</strong>
-                  {' · '}Estado: <strong>{ETIQUETA_ESTADO_RECARGA[r.estado] ?? r.estado}</strong>
-                </div>
-                {r.nota && <div className="nota">Nota: {r.nota}</div>}
-                {r.estado === 'pendiente' && (
-                  <div className="fila">
-                    <button
-                      type="button" className="principal" disabled={ocupadoId === r.referencia}
-                      onClick={() => confirmarPago(r.referencia)}
-                    >
-                      Confirmar pago
-                    </button>
-                    <button
-                      type="button" className="secundario" disabled={ocupadoId === r.referencia}
-                      onClick={() => rechazarPago(r.referencia)}
-                    >
-                      Rechazar
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </>
-        )}
-
         {seccion === 'registros' && <Registros />}
 
         {/* Distritos, barrios y lugares eran tres entradas de once para la
@@ -2927,47 +3060,134 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
     </>
   );
 
-  // --- La consola, en pantalla ancha -------------------------------------
+  // --- La consola, en pantalla ancha: la mesa (06/10) ---------------------
+  //
+  // El mapa ES la pantalla. Encima, tres cosas y solo tres: las cifras-botón,
+  // el dique derecho con lo vivo, y la hoja con lo que se consulta. No hay
+  // «Resumen» ni columna de avisos: cada dato aparece UNA vez, y donde
+  // aparece es donde se arregla.
   if (enConsola) {
+    const esperando = (viajesVivos ?? []).filter((v) => VIVO_SIN_TAXI.includes(v.estado));
+    const libres = (taxisVivos ?? []).filter((t) => t.estado === 'DISPONIBLE').length;
+    const abrirHoja = (id: Seccion) => {
+      setSeccion(id);
+      setHojaAbierta(true);
+      setFichaConductor(null);
+      setFichaPasajero(null);
+    };
+    const tituloHoja = seccion === 'central'
+      ? 'Nueva solicitud'
+      : SECCIONES.find(([id]) => id === seccion)?.[1] ?? '';
     return (
-      <main
-        className={enRegistro ? 'consola consola-registro' : 'consola'}
-        style={{
-          ['--ancho-mapa' as string]: `${anchoMapa}px`,
-          ['--alto-mapa' as string]: `${altoMapa}px`,
-        }}
-      >
-        <nav className="consola-lado">
-          <h1>Operador</h1>
-          {barraSecciones}
+      <main className="mesa">
+        <nav className="mesa-rail">
+          <button
+            type="button"
+            className={!hojaAbierta ? 'mesa-rail-activo' : undefined}
+            onClick={() => setHojaAbierta(false)}
+          >
+            <i>🗺️</i>Despacho
+          </button>
+          {/* Central no está en el raíl: su botón es «Nueva solicitud», en el
+              dique, que es donde están los ojos cuando suena el teléfono. */}
+          {visibles.filter(([id]) => id !== 'central').map(([id, etiqueta]) => (
+            <button
+              key={id} type="button"
+              className={hojaAbierta && id === seccion ? 'mesa-rail-activo' : undefined}
+              onClick={() => abrirHoja(id)}
+            >
+              <i>{ICONO[id]}</i>{etiqueta}
+              {/* Con tope: el globo dice «hay mucho», no lleva la cuenta.
+                  Cuatro cifras no caben en él y tampoco dicen nada más. */}
+              {id === 'porhacer' && porHacer > 0 && (
+                <span className="mesa-globo">{porHacer > 99 ? '+99' : porHacer}</span>
+              )}
+              {id === 'ajustes' && hayAlarma && <span className="mesa-globo">⚠</span>}
+            </button>
+          ))}
         </nav>
-        {!enRegistro && (
-        <div className="consola-mapa">
-          {/* Sin referencias: en una pantalla con treinta taxis, los cientos de
-              puntos del gazetteer convierten el plano en una sopa y lo que se
-              viene a mirar aquí es dónde están los coches. */}
-          <Mapa puntos={[]} taxis={taxisEnMapa} encuadre="flota" />
-          {taxisVivos !== null && taxisEnMapa.length === 0 && (
-            <p className="consola-mapa-vacio">
-              {taxisVivos.length === 0
-                ? 'Ningún taxi en servicio ahora mismo.'
-                : `${taxisVivos.length} en servicio, ninguno ha mandado su posición todavía.`}
-            </p>
+        <div className="mesa-escena">
+          <div className="mesa-mapa">
+            {/* Sin referencias: en una pantalla con treinta taxis, los cientos
+                de puntos del gazetteer convierten el plano en una sopa y lo
+                que se viene a mirar aquí es dónde están los coches. */}
+            <Mapa puntos={[]} taxis={taxisEnMapa} encuadre="flota" />
+            {taxisVivos !== null && taxisEnMapa.length === 0 && (
+              <p className="mesa-mapa-vacio">
+                {taxisVivos.length === 0
+                  ? 'Ningún taxi en servicio ahora mismo.'
+                  : `${taxisVivos.length} en servicio, ninguno ha mandado su posición todavía.`}
+              </p>
+            )}
+          </div>
+
+          {/* Las cifras son BOTONES: cada número abre lo que cuenta. Un
+              número que no lleva a ningún sitio obliga a recordar dónde se
+              arregla lo que dice. */}
+          <div className={dockPlegado ? 'mesa-chips mesa-chips-anchas' : 'mesa-chips'}>
+            <button type="button" className="mesa-chip" onClick={() => abrirHoja('registros')}>
+              <b>{libres}</b><small>libres</small>
+            </button>
+            <button type="button" className="mesa-chip" onClick={() => abrirHoja('registros')}>
+              <b>{(taxisVivos ?? []).length}</b><small>en servicio</small>
+            </button>
+            <button
+              type="button"
+              className={esperando.length > 0 ? 'mesa-chip mesa-chip-urgente' : 'mesa-chip'}
+              onClick={() => { setHojaAbierta(false); setDockPlegado(false); }}
+            >
+              <b>{esperando.length}</b><small>esperando taxi</small>
+            </button>
+            {porHacer > 0 && (
+              <button
+                type="button" className="mesa-chip mesa-chip-aviso"
+                onClick={() => abrirHoja('porhacer')}
+              >
+                <b>{porHacer}</b><small>por hacer</small>
+              </button>
+            )}
+            {hayAlarma && (
+              <button
+                type="button" className="mesa-chip mesa-chip-urgente"
+                onClick={() => abrirHoja('ajustes')}
+              >
+                <b>⚠</b><small>salud</small>
+              </button>
+            )}
+          </div>
+
+          {!dockPlegado && (
+            <aside className="mesa-dock">
+              <button
+                type="button" className="principal mesa-llamada"
+                onClick={() => abrirHoja('central')}
+              >
+                📞 Nueva solicitud
+              </button>
+              <DockVivo viajes={viajesVivos} />
+            </aside>
+          )}
+          <button
+            type="button"
+            className={dockPlegado ? 'mesa-plegar mesa-plegar-suelto' : 'mesa-plegar'}
+            aria-label={dockPlegado ? 'Abrir lo vivo' : 'Plegar lo vivo'}
+            onClick={() => setDockPlegado(!dockPlegado)}
+          >
+            {dockPlegado ? '⟨' : '⟩'}
+          </button>
+
+          {hojaAbierta && (
+            <div className={dockPlegado ? 'mesa-hoja mesa-hoja-ancha' : 'mesa-hoja'}>
+              <header className="mesa-hoja-cabecera">
+                <h2>{tituloHoja}</h2>
+                <button type="button" className="mesa-cerrar" onClick={() => setHojaAbierta(false)}>
+                  Cerrar ✕ <small>Esc</small>
+                </button>
+              </header>
+              <section className="consola-trabajo">{contenido}</section>
+            </div>
           )}
         </div>
-        )}
-        {!enRegistro && <Banda cual="alto" valor={altoMapa} alCambiar={setAltoMapa} />}
-        {!enRegistro && (
-          <AhoraMismo
-            viajes={viajesVivos}
-            taxis={taxisVivos}
-            alarma={hayAlarma}
-            incidencias={stats?.incidenciasPendientes ?? 0}
-            recargas={stats?.recargasPendientes ?? 0}
-          />
-        )}
-        {!enRegistro && <Banda cual="ancho" valor={anchoMapa} alCambiar={setAnchoMapa} />}
-        <section className="consola-trabajo">{contenido}</section>
       </main>
     );
   }
@@ -2995,101 +3215,32 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   );
 }
 
-// --- La consola de despacho (03/10) ----------------------------------------
+// --- La mesa de despacho (03/10; rehecha el 06/10) --------------------------
 //
 // El panel se escribió para el teléfono, que es donde se usa casi todo esto.
-// Pero despachar no se hace de pie con el móvil: se hace sentado, mirando una
-// pantalla grande, y ahí una columna estrecha con las secciones en pastillas
-// desperdicia el 70 % del monitor y obliga a cambiar de sección para saber si
-// hay alguien esperando taxi.
+// Pero despachar no se hace de pie con el móvil: se hace sentado, con el
+// teléfono sonando y los ojos en el plano.
 //
-// Así que en pantalla ancha cambia la DISPOSICIÓN, no las funciones: las mismas
-// secciones, el mismo código, repartidos en cuatro zonas que se ven a la vez.
-// En el teléfono no cambia absolutamente nada.
+// La primera consola repartía la pantalla en cuatro zonas fijas con fronteras
+// arrastrables, y se quedó corta por lo de siempre: las mismas cosas acababan
+// dichas en dos sitios —los taxis en el mapa Y en una columna de cifras, la
+// salud en los avisos Y en una pestaña— y cada repetición es un sitio más
+// donde mirar para saber lo mismo. Ahora el mapa ES la pantalla, lo vivo
+// flota encima y lo que se consulta se abre como una hoja que se cierra con
+// Esc. En el teléfono no cambia absolutamente nada.
 
 const ANCHO_CONSOLA = 1100;
 
-// Las dos fronteras de la consola se mueven, y las dos se recuerdan. Es una
-// preferencia de trabajo, no un adorno: quien despacha quiere el mapa grande,
-// quien revisa papeles lo quiere pequeño, y volver a ajustarlo en cada recarga
-// convierte una ayuda en una tarea.
-const MEDIDAS = {
-  ancho: { clave: 'operador:anchoMapa', porDefecto: 520, minimo: 280 },
-  alto: { clave: 'operador:altoMapa', porDefecto: 460, minimo: 180 },
-} as const;
-
-function medidaGuardada(cual: keyof typeof MEDIDAS): number {
-  const { clave, porDefecto, minimo } = MEDIDAS[cual];
-  try {
-    const guardada = Number(localStorage.getItem(clave));
-    if (Number.isFinite(guardada) && guardada >= minimo) return guardada;
-  } catch {
-    // Sin almacenamiento se empieza por la medida de siempre.
-  }
-  return porDefecto;
-}
-
-// Una banda que se arrastra. La misma pieza para la frontera vertical (cuánto
-// mide el mapa de ancho) y la horizontal (cuánto de alto): son el mismo gesto y
-// el mismo guardado, y tenerlas por duplicado era garantizar que una de las dos
-// se quedara sin el arreglo del día que aparezca un fallo.
-//
-// Con `setPointerCapture`: sin eso, al arrastrar rápido el puntero sale de la
-// banda —que mide seis píxeles— y el navegador deja de mandar los eventos a
-// mitad de gesto, con la frontera a medio camino. Capturado, el gesto sigue
-// siendo suyo hasta que se levanta el dedo.
-function Banda({
-  cual, valor, alCambiar,
-}: {
-  cual: keyof typeof MEDIDAS;
-  valor: number;
-  alCambiar: (n: number) => void;
-}) {
-  const esAncho = cual === 'ancho';
-  // La última medida del arrastre, para guardarla al soltar. NO vale leer
-  // `valor`: el manejador de «soltar» se quedó con el que había cuando se
-  // dibujó, y en un arrastre rápido React no ha vuelto a dibujar entre el
-  // último movimiento y el dedo levantado. Se guardaba la medida ANTERIOR, y al
-  // recargar la banda volvía a su sitio como si no se hubiera tocado.
-  const ultima = useRef(valor);
-  return (
-    <div
-      className={esAncho ? 'consola-banda' : 'consola-banda-alto'}
-      role="separator"
-      aria-orientation={esAncho ? 'vertical' : 'horizontal'}
-      aria-label={esAncho ? 'Ancho del mapa' : 'Alto del mapa'}
-      onPointerDown={(e) => {
-        e.currentTarget.setPointerCapture(e.pointerId);
-        e.currentTarget.dataset.arrastrando = 'si';
-      }}
-      onPointerMove={(e) => {
-        if (e.currentTarget.dataset.arrastrando !== 'si') return;
-        // Siempre contra la esquina de la rejilla, no contra la ventana: a la
-        // izquierda está la barra de secciones, y sin restarla el mapa se
-        // quedaba 210 px más ancho de lo que se pedía.
-        const caja = e.currentTarget.parentElement?.getBoundingClientRect();
-        const nuevo = esAncho
-          ? e.clientX - (caja?.left ?? 0) - 210
-          : e.clientY - (caja?.top ?? 0);
-        // El tope de arriba deja siempre sitio para lo de al lado: sin él, la
-        // banda se podía llevar hasta el borde y dejar el otro panel en nada,
-        // sin forma evidente de recuperarlo.
-        const tope = esAncho ? window.innerWidth - 420 : window.innerHeight - 160;
-        const ajustado = Math.max(MEDIDAS[cual].minimo, Math.min(nuevo, tope));
-        ultima.current = ajustado;
-        alCambiar(ajustado);
-      }}
-      onPointerUp={(e) => {
-        delete e.currentTarget.dataset.arrastrando;
-        try {
-          localStorage.setItem(MEDIDAS[cual].clave, String(ultima.current));
-        } catch {
-          // Si no se puede guardar, se pierde al recargar y ya está.
-        }
-      }}
-    />
-  );
-}
+// Los pictogramas del raíl. Emoji del sistema y no SVG a propósito: esto es
+// una herramienta interna de escritorio, y seis dibujos que ya vienen con el
+// ordenador dicen lo mismo sin añadir un byte al paquete.
+const ICONO: Record<string, string> = {
+  porhacer: '📥',
+  gente: '👤',
+  registros: '📒',
+  sitios: '📍',
+  ajustes: '⚙️',
+};
 
 function useEsOrdenador(): boolean {
   const [ancha, setAncha] = useState(
@@ -3112,49 +3263,28 @@ function hace(segundos: number): string {
   if (segundos < 60) return `${segundos} s`;
   const min = Math.floor(segundos / 60);
   if (min < 60) return `${min} min`;
-  return `${Math.floor(min / 60)} h ${min % 60} min`;
+  const horas = Math.floor(min / 60);
+  // A partir de dos días, en días: «1704 h 5 min» obliga a dividir de cabeza,
+  // y en la bandeja hay pendientes que llevan semanas.
+  if (horas >= 48) return `${Math.floor(horas / 24)} días`;
+  return `${horas} h ${min % 60} min`;
 }
 
 const VIVO_SIN_TAXI = ['SOLICITADO', 'EMITIDO'];
 
-// La columna de «ahora mismo». Lo que NO puede esperar a que alguien entre en
-// una sección: quién está pidiendo taxi y no lo tiene todavía.
+// El dique de lo vivo. Lo que NO puede esperar a que alguien entre en una
+// sección: quién está pidiendo taxi y no lo tiene todavía. Las cifras que
+// vivían aquí arriba son ahora los botones sobre el mapa; esto es la lista.
 //
 // Ordenada por quién lleva más esperando, y no por lo más reciente, que sería
 // lo natural en un registro: aquí lo urgente es lo viejo. Quien lleva cuatro
 // minutos sin taxi está a punto de colgar e irse andando.
-function AhoraMismo({
-  viajes, taxis, alarma, incidencias, recargas,
-}: {
-  viajes: ViajeVivo[] | null;
-  taxis: TaxiVivo[] | null;
-  alarma: boolean;
-  incidencias: number;
-  recargas: number;
-}) {
+function DockVivo({ viajes }: { viajes: ViajeVivo[] | null }) {
   const sinTaxi = (viajes ?? []).filter((v) => VIVO_SIN_TAXI.includes(v.estado));
   const enMarcha = (viajes ?? []).filter((v) => !VIVO_SIN_TAXI.includes(v.estado));
-  const libres = (taxis ?? []).filter((t) => t.estado === 'DISPONIBLE').length;
 
   return (
     <div className="consola-ahora">
-      <div className="consola-cifras">
-        <span><b>{libres}</b> libres</span>
-        <span><b>{(taxis ?? []).length}</b> en servicio</span>
-        <span className={sinTaxi.length > 0 ? 'consola-urgente' : undefined}>
-          <b>{sinTaxi.length}</b> sin taxi
-        </span>
-        <span><b>{enMarcha.length}</b> en marcha</span>
-      </div>
-
-      {(alarma || incidencias > 0 || recargas > 0) && (
-        <p className="consola-avisos">
-          {alarma && <span className="consola-urgente">⚠ alarma de salud</span>}
-          {incidencias > 0 && <span>{incidencias} incidencias</span>}
-          {recargas > 0 && <span>{recargas} pagos</span>}
-        </p>
-      )}
-
       <h3>Esperando taxi</h3>
       {viajes === null && <p className="nota">…</p>}
       {viajes !== null && sinTaxi.length === 0 && (
