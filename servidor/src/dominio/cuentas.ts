@@ -65,11 +65,14 @@ export async function apuntarIntento(
   telefono: string,
   paso: Paso,
   acertado: boolean,
+  // Por dónde fue el código (migración 082). Solo tiene sentido en el paso
+  // 'codigo'; en los demás se queda en 'sms' y no lo mira nadie.
+  canal: 'sms' | 'llamada' = 'sms',
 ): Promise<void> {
   await cliente.query(
-    `INSERT INTO intento_cuenta (uuid_dispositivo, telefono, paso, acertado)
-     VALUES ($1, $2, $3, $4)`,
-    [uuid, telefono, paso, acertado],
+    `INSERT INTO intento_cuenta (uuid_dispositivo, telefono, paso, acertado, canal)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [uuid, telefono, paso, acertado, canal],
   );
 }
 
@@ -132,15 +135,19 @@ export async function codigosFallados(
 // Cuándo se mandó el último SMS a este número, para el cooldown. Por número y
 // no por aparato: lo que se protege es el teléfono de quien recibe los
 // mensajes, que puede no tener nada que ver con quien los está pidiendo.
+// Por canal (migración 082): el freno entre códigos protege el coste de CADA
+// canal, y el SMS que no llega no puede bloquear la llamada que lo salva —la
+// salida de emergencia estaría detrás de la misma puerta atascada.
 export async function ultimoCodigoEnviado(
   cliente: Lector,
   telefono: string,
+  canal: 'sms' | 'llamada' = 'sms',
 ): Promise<Date | null> {
   const res = await cliente.query(
     `SELECT max(momento) AS cuando
      FROM intento_cuenta
-     WHERE telefono = $1 AND paso = 'codigo' AND acertado`,
-    [telefono],
+     WHERE telefono = $1 AND paso = 'codigo' AND acertado AND canal = $2`,
+    [telefono, canal],
   );
   const cuando = res.rows[0]?.cuando;
   return cuando ? new Date(cuando) : null;

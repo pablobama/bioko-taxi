@@ -151,8 +151,13 @@ export function registrarRutasCuenta(
       throw errorHttp(429, 'Demasiados códigos fallados con este número. Prueba dentro de una hora.');
     }
 
+    // El freno es POR CANAL (migración 082): pedir el SMS no bloquea la
+    // primera llamada. Si fuera uno solo, «no me llega, llamadme» contestaría
+    // «espera 40 segundos», que es exactamente el fallo que se reportó el día
+    // del estreno.
+    const canal = canalDesde(req);
     const esperaSeg = await leerParametroEntero(pool, 'recuperacion_cooldown_seg');
-    const ultimo = await ultimoCodigoEnviado(pool, telefono);
+    const ultimo = await ultimoCodigoEnviado(pool, telefono, canal);
     if (ultimo) {
       const desde = (Date.now() - ultimo.getTime()) / 1000;
       if (desde < esperaSeg) {
@@ -160,11 +165,10 @@ export function registrarRutasCuenta(
       }
     }
 
-    const canal = canalDesde(req);
     await servicioVerificacion.enviarCodigo(telefono, canal);
     // Se apunta DESPUÉS de mandarlo: si Twilio falla, el reloj del cooldown no
     // se pone en marcha y la persona puede volver a intentarlo ya.
-    await apuntarIntento(pool, uuid, telefono, 'codigo', true);
+    await apuntarIntento(pool, uuid, telefono, 'codigo', true, canal);
     return { enviado: true, canal };
   });
 

@@ -577,13 +577,24 @@ function VerificarTelefono({
   const [comprobando, setComprobando] = useState(false);
   const [error, setError] = useState('');
   const [segundosParaReenviar, setSegundosParaReenviar] = useState(COOLDOWN_REENVIO_S);
+  // El reloj de la llamada va aparte, como en el servidor (migración 082):
+  // esta pantalla manda el SMS sola nada más abrirse, y con un solo reloj el
+  // botón de «llamadme» nacería siempre apagado un minuto — la salida de
+  // emergencia detrás de la misma puerta atascada.
+  const [segundosLlamada, setSegundosLlamada] = useState(0);
+  const [porLlamada, setPorLlamada] = useState(false);
 
-  async function enviar() {
+  async function enviar(canal: 'sms' | 'llamada' = 'sms') {
     setEnviando(true);
     setError('');
     try {
-      await api.enviarCodigoVerificacion();
-      setSegundosParaReenviar(COOLDOWN_REENVIO_S);
+      await api.enviarCodigoVerificacion(canal);
+      // Que se VEA que se pidió: el texto de arriba pasa a decir «te estamos
+      // llamando», que es lo que la persona necesita para ponerse a esperar
+      // el teléfono en vez de mirar los SMS.
+      setPorLlamada(canal === 'llamada');
+      if (canal === 'llamada') setSegundosLlamada(COOLDOWN_REENVIO_S);
+      else setSegundosParaReenviar(COOLDOWN_REENVIO_S);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -594,10 +605,13 @@ function VerificarTelefono({
   useEffect(() => { void enviar(); }, []);
 
   useEffect(() => {
-    if (segundosParaReenviar <= 0) return;
-    const reloj = setTimeout(() => setSegundosParaReenviar((s) => s - 1), 1000);
+    if (segundosParaReenviar <= 0 && segundosLlamada <= 0) return;
+    const reloj = setTimeout(() => {
+      setSegundosParaReenviar((s) => Math.max(0, s - 1));
+      setSegundosLlamada((s) => Math.max(0, s - 1));
+    }, 1000);
     return () => clearTimeout(reloj);
-  }, [segundosParaReenviar]);
+  }, [segundosParaReenviar, segundosLlamada]);
 
   async function comprobar() {
     setComprobando(true);
@@ -616,7 +630,9 @@ function VerificarTelefono({
   return (
     <>
       <h1>{t('verificacion.titulo')}</h1>
-      <p className="nota">{t('verificacion.nota', { telefono })}</p>
+      <p className="nota">
+        {t(porLlamada ? 'verificacion.notaLlamada' : 'verificacion.nota', { telefono })}
+      </p>
       {error && <p className="aviso">{error}</p>}
       <input
         type="text" inputMode="numeric" autoComplete="off" maxLength={6}
@@ -633,13 +649,25 @@ function VerificarTelefono({
       <button
         type="button" className="secundario"
         disabled={enviando || segundosParaReenviar > 0}
-        onClick={enviar}
+        onClick={() => void enviar()}
       >
         {enviando
           ? t('verificacion.enviando')
           : segundosParaReenviar > 0
             ? t('verificacion.reenviarEn', { seg: segundosParaReenviar })
             : t('verificacion.reenviar')}
+      </button>
+      {/* La salida para cuando el SMS no llega (migración 081): GETESA tira
+          los mensajes de remitente internacional, y sin esto el alta se
+          quedaba parada aquí para siempre. */}
+      <button
+        type="button" className="secundario"
+        disabled={enviando || segundosLlamada > 0}
+        onClick={() => void enviar('llamada')}
+      >
+        {segundosLlamada > 0
+          ? t('verificacion.llamando', { seg: segundosLlamada })
+          : t('verificacion.llamadme')}
       </button>
     </>
   );
@@ -663,6 +691,30 @@ function EntrarOperador({ alEntrar, alVolver }: { alEntrar: () => void; alVolver
   const [fase, setFase] = useState<'telefono' | 'codigo'>('telefono');
   const [ocupado, setOcupado] = useState(false);
   const [aviso, setAviso] = useState('');
+  // La llamada para cuando el SMS no llega (migración 081), con su reloj
+  // aparte (082). El operador también está en Malabo.
+  const [llamando, setLlamando] = useState(false);
+  const [segundosLlamada, setSegundosLlamada] = useState(0);
+
+  useEffect(() => {
+    if (segundosLlamada <= 0) return;
+    const reloj = setTimeout(() => setSegundosLlamada((s) => s - 1), 1000);
+    return () => clearTimeout(reloj);
+  }, [segundosLlamada]);
+
+  async function pedirLlamada() {
+    setOcupado(true);
+    setAviso('');
+    try {
+      await api.pedirCodigoOperador(telefono.trim(), 'llamada');
+      setLlamando(true);
+      setSegundosLlamada(60);
+    } catch (error) {
+      setAviso(mensajeDeError(error, 'No se pudo pedir la llamada.'));
+    } finally {
+      setOcupado(false);
+    }
+  }
 
   async function pedirCodigo() {
     setOcupado(true);
@@ -719,8 +771,14 @@ function EntrarOperador({ alEntrar, alVolver }: { alEntrar: () => void; alVolver
               la calle, y la pantalla no puede delatar lo que el servidor
               calla. Si no, esta puerta sería la forma de averiguar quién
               manda en la plataforma. */}
+          {/* Y si se pidió la llamada, se dice: sin esto, la persona se
+              queda mirando los SMS mientras le suena el teléfono. El «si está
+              autorizado» se mantiene: la pantalla no delata lo que el
+              servidor calla. */}
           <p className="nota">
-            Si ese número está autorizado, le acaba de llegar un código. Escríbelo.
+            {llamando
+              ? 'Si ese número está autorizado, le estamos llamando ahora mismo. Responde y escucha el código.'
+              : 'Si ese número está autorizado, le acaba de llegar un código. Escríbelo.'}
           </p>
           <input
             type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
@@ -736,7 +794,16 @@ function EntrarOperador({ alEntrar, alVolver }: { alEntrar: () => void; alVolver
           </button>
           <button
             type="button" className="secundario"
-            onClick={() => { setFase('telefono'); setCodigo(''); setAviso(''); }}
+            disabled={ocupado || segundosLlamada > 0}
+            onClick={pedirLlamada}
+          >
+            {segundosLlamada > 0
+              ? `Llamando… puedes pedir otra en ${segundosLlamada} s`
+              : 'No me llega: llamadme y decídmelo'}
+          </button>
+          <button
+            type="button" className="secundario"
+            onClick={() => { setFase('telefono'); setCodigo(''); setAviso(''); setLlamando(false); }}
           >
             Cambiar el número
           </button>
@@ -787,23 +854,32 @@ function VolverConTelefono({
   const [otroPapel, setOtroPapel] = useState(false);
   const [codigo, setCodigo] = useState('');
   const [ocupado, setOcupado] = useState(false);
+  // Un reloj POR CANAL, como en el servidor (migración 082): el SMS que no
+  // llega no puede dejar apagado el botón de la llamada, que existe justo
+  // para ese momento. Con un solo reloj, «no me llega, llamadme» contestaba
+  // «espera 40 segundos» — y así se estrenó, y así se reportó.
   const [segundosParaReenviar, setSegundosParaReenviar] = useState(0);
+  const [segundosLlamada, setSegundosLlamada] = useState(0);
   // Si el último código se pidió por llamada, lo que la pantalla dice cambia:
   // «te hemos enviado un SMS» mientras suena el teléfono es decirle a la
   // persona que mire donde no es.
   const [porLlamada, setPorLlamada] = useState(false);
 
   useEffect(() => {
-    if (segundosParaReenviar <= 0) return;
-    const reloj = setTimeout(() => setSegundosParaReenviar((s) => s - 1), 1000);
+    if (segundosParaReenviar <= 0 && segundosLlamada <= 0) return;
+    const reloj = setTimeout(() => {
+      setSegundosParaReenviar((s) => Math.max(0, s - 1));
+      setSegundosLlamada((s) => Math.max(0, s - 1));
+    }, 1000);
     return () => clearTimeout(reloj);
-  }, [segundosParaReenviar]);
+  }, [segundosParaReenviar, segundosLlamada]);
 
   async function enviarCodigo(numero: string, canal: 'sms' | 'llamada' = 'sms') {
     try {
       await api.pedirCodigoCuenta(numero, canal);
       setPorLlamada(canal === 'llamada');
-      setSegundosParaReenviar(COOLDOWN_REENVIO_S);
+      if (canal === 'llamada') setSegundosLlamada(COOLDOWN_REENVIO_S);
+      else setSegundosParaReenviar(COOLDOWN_REENVIO_S);
     } catch (error) {
       // El SMS puede no salir —cooldown, o Twilio caído— y aun así hay que
       // dejar escribir el código: puede que ya tenga uno del intento anterior.
@@ -885,10 +961,12 @@ function VolverConTelefono({
             porque cuesta más y porque el SMS funciona para la mayoría. */}
         <button
           type="button" className="secundario"
-          disabled={ocupado || segundosParaReenviar > 0}
+          disabled={ocupado || segundosLlamada > 0}
           onClick={() => void enviarCodigo(canonico, 'llamada')}
         >
-          {t('verificacion.llamadme')}
+          {segundosLlamada > 0
+            ? t('verificacion.llamando', { seg: segundosLlamada })
+            : t('verificacion.llamadme')}
         </button>
         <p className="nota-pequena">{t('verificacion.siNoLlegaNada')}</p>
         <button

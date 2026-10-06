@@ -304,6 +304,34 @@ test('no se manda ningún SMS a un número que no está registrado', async () =>
   assert.ok(!servicioVerificacion.enviados.includes(telefono));
 });
 
+// El arreglo del día siguiente al estreno (migración 082): el freno entre
+// códigos es POR CANAL. Con uno solo, quien pedía el SMS, veía que no llegaba
+// y pulsaba «llamadme» recibía «espera 40 segundos»: la salida de emergencia
+// detrás de la misma puerta atascada. Se reportó con estas palabras: «la
+// nueva funcionalidad de llamarme no está funcionando».
+test('la llamada no espera al reloj del SMS; dos llamadas seguidas sí', async () => {
+  const telefono = telefonoUnico();
+  await darDeAltaPasajero(telefono);
+  const uuid = randomUUID();
+
+  const sms = await llamar('POST', '/api/cuenta/codigo', uuid, { telefono });
+  assert.equal(sms.status, 200, JSON.stringify(sms.cuerpo));
+
+  // Acto seguido, sin esperar: la llamada sale.
+  const llamada = await llamar('POST', '/api/cuenta/codigo', uuid, {
+    telefono, canal: 'llamada',
+  });
+  assert.equal(llamada.status, 200, JSON.stringify(llamada.cuerpo));
+  assert.equal(llamada.cuerpo.canal, 'llamada');
+  assert.deepEqual(servicioVerificacion.canales.at(-1), { telefono, canal: 'llamada' });
+
+  // Pero el canal de la llamada lleva su propio freno: la segunda espera.
+  const otraLlamada = await llamar('POST', '/api/cuenta/codigo', uuid, {
+    telefono, canal: 'llamada',
+  });
+  assert.equal(otraLlamada.status, 429);
+});
+
 test('dos códigos seguidos al mismo número: el segundo da 429', async () => {
   const telefono = telefonoUnico();
   await darDeAltaPasajero(telefono);

@@ -299,17 +299,18 @@ export function registrarRutasOperador(
       // una forma de averiguar quién manda en la plataforma, que es
       // exactamente a quién hay que ir a buscar para entrar.
       if (await esTelefonoDeOperador(pool, telefono)) {
-        const ultimo = await ultimoCodigoEnviado(pool, telefono);
+        // El operador también está en Malabo: si a su línea no le llega el
+        // SMS, puede pedir que le llamen (migración 081). Y el freno entre
+        // códigos es POR CANAL (082): el SMS que no llegó no bloquea la
+        // llamada que lo salva.
+        const canal = cuerpo.canal === 'llamada' ? 'llamada' as const : 'sms' as const;
+        const ultimo = await ultimoCodigoEnviado(pool, telefono, canal);
         const esperaSeg = await leerParametroEntero(pool, 'recuperacion_cooldown_seg');
         const esperado = ultimo !== null
           && (Date.now() - ultimo.getTime()) / 1000 < esperaSeg;
         if (!esperado) {
-          // El operador también está en Malabo: si a su línea no le llega el
-          // SMS, puede pedir que le llamen (migración 081).
-          await servicioVerificacion.enviarCodigo(
-            telefono, cuerpo.canal === 'llamada' ? 'llamada' : 'sms',
-          );
-          await apuntarIntento(pool, uuid, telefono, 'codigo', true);
+          await servicioVerificacion.enviarCodigo(telefono, canal);
+          await apuntarIntento(pool, uuid, telefono, 'codigo', true, canal);
         }
       }
       return { enviado: true };
@@ -563,6 +564,9 @@ export function registrarRutasOperador(
     // es solo para no reventar la pantalla si algún día deja de serlo.
     const filas = await pool.query(
       `SELECT c.id, c.nombre, c.telefono, c.correo, c.estado_verificacion,
+              -- Para la bandeja (06/10): lo pendiente se ordena por
+              -- antigüedad, y la edad de un alta es su fecha.
+              c.fecha_alta,
               v.matricula, v.marca, v.color, v.carroceria,
               v.aire_acondicionado, v.seguro
        FROM conductor c
@@ -1542,7 +1546,15 @@ export function registrarRutasOperador(
               ro.nombre AS origen, rd.nombre AS destino,
               c.nombre AS conductor, v.matricula,
               (SELECT max(t.creado_en) FROM transicion t
-               WHERE t.solicitud_id = s.id) AS cerrada_en
+               WHERE t.solicitud_id = s.id) AS cerrada_en,
+              -- Cuándo subió el cliente y cuándo bajó (06/10). De la tabla de
+              -- transiciones, que es la que no miente: min() porque a un
+              -- estado solo se llega una vez, y si algún día se llegara dos,
+              -- la primera es la de verdad.
+              (SELECT min(t.creado_en) FROM transicion t
+               WHERE t.solicitud_id = s.id AND t.estado_nuevo = 'RECOGIDO') AS recogido_en,
+              (SELECT min(t.creado_en) FROM transicion t
+               WHERE t.solicitud_id = s.id AND t.estado_nuevo = 'COMPLETADO') AS bajada_en
        FROM solicitud s
        JOIN referencia ro ON ro.id = s.referencia_origen_id
        JOIN referencia rd ON rd.id = s.referencia_destino_id

@@ -21,6 +21,8 @@ interface FilaTelefono {
   id: number;
   telefono: string | null;
   verificacionEnviadaEn: string | null;
+  // La última llamada de verificación (migración 082). Cada canal, su reloj.
+  llamadaEn: string | null;
 }
 
 export function registrarRutasVerificacion(
@@ -50,19 +52,19 @@ export function registrarRutasVerificacion(
     const fila = dispositivo.rows[0];
     if (fila.tipo === 'conductor' && fila.conductor_id !== null) {
       const conductor = await pool.query(
-        'SELECT id, telefono, verificacion_enviada_en FROM conductor WHERE id = $1',
+        'SELECT id, telefono, verificacion_enviada_en, llamada_verificacion_en FROM conductor WHERE id = $1',
         [fila.conductor_id],
       );
-      return { tabla: 'conductor', id: conductor.rows[0].id, telefono: conductor.rows[0].telefono, verificacionEnviadaEn: conductor.rows[0].verificacion_enviada_en };
+      return { tabla: 'conductor', id: conductor.rows[0].id, telefono: conductor.rows[0].telefono, verificacionEnviadaEn: conductor.rows[0].verificacion_enviada_en, llamadaEn: conductor.rows[0].llamada_verificacion_en };
     }
     const perfil = await pool.query(
-      'SELECT id, telefono, verificacion_enviada_en FROM perfil_cliente WHERE dispositivo_id = $1',
+      'SELECT id, telefono, verificacion_enviada_en, llamada_verificacion_en FROM perfil_cliente WHERE dispositivo_id = $1',
       [fila.id],
     );
     if (perfil.rowCount === 0) {
       throw errorHttp(404, 'Este dispositivo no tiene perfil de pasajero.');
     }
-    return { tabla: 'perfil_cliente', id: perfil.rows[0].id, telefono: perfil.rows[0].telefono, verificacionEnviadaEn: perfil.rows[0].verificacion_enviada_en };
+    return { tabla: 'perfil_cliente', id: perfil.rows[0].id, telefono: perfil.rows[0].telefono, verificacionEnviadaEn: perfil.rows[0].verificacion_enviada_en, llamadaEn: perfil.rows[0].llamada_verificacion_en };
   }
 
   app.post('/api/verificacion/enviar', async (req) => {
@@ -73,21 +75,28 @@ export function registrarRutasVerificacion(
       // nada que enviar. Exento del gate, no es un error.
       return { enviado: false, motivo: 'sin_telefono' };
     }
+    // Por SMS salvo que pida la llamada (migración 081): en Malabo hay líneas
+    // a las que el SMS no llega, y sin esto el alta se queda ahí parada.
+    const canal = ((req.body ?? {}) as { canal?: string }).canal === 'llamada'
+      ? 'llamada' as const
+      : 'sms' as const;
+    // Cada canal lleva su reloj (migración 082): esta pantalla manda el SMS
+    // sola nada más abrirse, y con un solo freno el botón de «llamadme»
+    // nacería siempre bloqueado un minuto — la salida de emergencia detrás de
+    // la misma puerta atascada.
     const cooldownSeg = await leerParametroEntero(pool, 'verificacion_cooldown_seg');
-    if (fila.verificacionEnviadaEn) {
-      const segundosDesde = (Date.now() - new Date(fila.verificacionEnviadaEn).getTime()) / 1000;
+    const anterior = canal === 'llamada' ? fila.llamadaEn : fila.verificacionEnviadaEn;
+    if (anterior) {
+      const segundosDesde = (Date.now() - new Date(anterior).getTime()) / 1000;
       if (segundosDesde < cooldownSeg) {
         throw errorHttp(429, `Espera ${Math.ceil(cooldownSeg - segundosDesde)} segundos antes de pedir otro código.`);
       }
     }
-    // Por SMS salvo que pida la llamada (migración 081): en Malabo hay líneas a
-    // las que el SMS no llega, y sin esto el alta se queda ahí parada.
-    const canal = ((req.body ?? {}) as { canal?: string }).canal === 'llamada'
-      ? 'llamada' as const
-      : 'sms' as const;
     await servicioVerificacion.enviarCodigo(fila.telefono, canal);
     await pool.query(
-      `UPDATE ${fila.tabla} SET verificacion_enviada_en = now() WHERE id = $1`,
+      canal === 'llamada'
+        ? `UPDATE ${fila.tabla} SET llamada_verificacion_en = now() WHERE id = $1`
+        : `UPDATE ${fila.tabla} SET verificacion_enviada_en = now() WHERE id = $1`,
       [fila.id],
     );
     return { enviado: true, canal };

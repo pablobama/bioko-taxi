@@ -422,6 +422,8 @@ export interface ConductorOperador {
   telefono: string;
   correo: string | null;
   estado_verificacion: string;
+  // Para ordenar la bandeja por antigüedad: la edad de un alta es su fecha.
+  fecha_alta: string;
   matricula: string | null;
   marca: string | null;
   color: string | null;
@@ -659,6 +661,10 @@ export interface ViajeOperador {
   estado: string;
   creada_en: string;
   cerrada_en: string | null;
+  // Cuándo subió el cliente y cuándo bajó (06/10). Nulos si la carrera no
+  // llegó a ese punto: una cancelada no tiene recogida que contar.
+  recogido_en: string | null;
+  bajada_en: string | null;
   telefono_cliente: string | null;
   precio_xaf: number | null;
   origen: string;
@@ -854,10 +860,10 @@ export const api = {
 
   // --- Verificación de teléfono (migración 027) -----------------------------
 
-  enviarCodigoVerificacion: () =>
+  enviarCodigoVerificacion: (canal: 'sms' | 'llamada' = 'sms') =>
     pedirJson<{ enviado: boolean; motivo?: string }>('/api/verificacion/enviar', {
       method: 'POST',
-      body: '{}',
+      body: JSON.stringify({ canal }),
     }),
 
   comprobarCodigoVerificacion: (codigo: string) =>
