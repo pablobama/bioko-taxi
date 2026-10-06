@@ -2896,6 +2896,95 @@ button.importe.elegido-importe {
   opacity: 0.7;
 }
 
+/* Las filas que se despliegan (06/10): la carrera de arriba es la línea que
+   se compara; lo de dentro es lo que se consulta de UNA. */
+.tabla-desplegable {
+  cursor: pointer;
+}
+
+.tabla-desplegable:hover td {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.tabla-detalle td {
+  background: rgba(255, 255, 255, 0.02);
+  padding: 10px 14px;
+}
+
+.tabla-detalle-datos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  align-items: center;
+  font-size: 0.84rem;
+}
+
+.tabla-detalle-datos b {
+  color: var(--humo);
+  font-weight: 600;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-right: 5px;
+}
+
+/* La tarjeta del mapa: lo tocado, contestando. Abajo a la izquierda para no
+   pelearse ni con las cifras (arriba) ni con el dique (derecha). */
+.mesa-tarjeta {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  width: 310px;
+  max-height: 55%;
+  overflow-y: auto;
+  z-index: 13;
+  background: rgba(28, 28, 33, 0.95);
+  border: 1px solid var(--borde);
+  border-radius: 13px;
+  padding: 13px 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mesa-tarjeta h3 {
+  margin: 0 18px 0 0;
+  font-size: 0.98rem;
+}
+
+.mesa-tarjeta-cerrar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: none;
+  border: none;
+  color: var(--humo);
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+
+.mesa-tarjeta-titulo {
+  margin: 4px 0 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--humo);
+}
+
+/* Cada taxi candidato: matrícula a un lado, distancia al otro. */
+.mesa-ofrecer {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.mesa-ofrecer span {
+  color: var(--humo);
+  font-weight: 400;
+}
+
 /* --- La bandeja ------------------------------------------------------------
  * Cada pendiente lleva encima su clase y su edad. La edad es la columna que
  * manda: la lista viene con lo más viejo arriba.

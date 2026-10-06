@@ -5,7 +5,7 @@
 // Solo en español a propósito: es herramienta interna, no cara al pasajero
 // ni al taxista, así que no pasa por i18n.ts.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import {
   api,
   type AccesoOperador, type AparatoOperador,
@@ -13,11 +13,13 @@ import {
   type FichaConductorOperador, type FichaPasajeroOperador, type IncidenciaOperador,
   type ParametroOperador, type PasajeroOperador, type PeriodoRecorrido,
   type RecargaOperador, type RecorridoOperador, type ReferenciaOperador,
-  type SaludOperador, type SolicitudCentral, type TaxiVivo, type TransicionOperador,
+  type SaludOperador, type SinOfertaViva, type SolicitudCentral, type TaxiVivo,
+  type TransicionOperador,
   type ViajeVivo,
   type ViajeOperador, type ViajeResumenOperador, type ZonaOperador,
 } from './api';
 import { ESTILO_CATEGORIA } from './categorias';
+import { metrosEntre } from './geo';
 import { ErrorDelServidor } from './conexion';
 import Mapa, { colorDeCalor } from './Mapa';
 
@@ -462,6 +464,114 @@ function FilaIncidencia({
 }
 
 // --- Fichas -------------------------------------------------------------------
+
+// El alta de un taxista hecha por el operador (06/10). Plegada tras un botón:
+// darla es un acto de vez en cuando, y un formulario siempre abierto empuja
+// la lista que se usa a todas horas.
+//
+// Lo que promete el texto de después de guardar es exactamente lo que pasa:
+// nace verificado (lo verificó quien lo dio de alta) y el TELÉFONO queda por
+// confirmar — lo confirma el taxista con el código, o con el vale, la primera
+// vez que entra. Sin eso, dar de alta sería regalar la cuenta de un número a
+// quien lo dicte primero.
+function AltaDeTaxista({ alCreada }: { alCreada: (conductorId: number) => void }) {
+  const [abierta, setAbierta] = useState(false);
+  const [nombre, setNombre] = useState('');
+  const [telefono, setTelefono] = useState('');
+  const [matricula, setMatricula] = useState('');
+  const [marca, setMarca] = useState('');
+  const [carroceria, setCarroceria] = useState<'turismo' | '4x4'>('turismo');
+  const [aire, setAire] = useState(false);
+  const [seguro, setSeguro] = useState(false);
+  const [error, setError] = useState('');
+  const [ocupado, setOcupado] = useState(false);
+
+  if (!abierta) {
+    return (
+      <button type="button" className="secundario" onClick={() => setAbierta(true)}>
+        Dar de alta un taxista
+      </button>
+    );
+  }
+
+  const completo = nombre.trim() !== '' && telefono.trim().length >= 6
+    && matricula.trim() !== '' && marca.trim() !== '';
+
+  async function guardar() {
+    setError('');
+    setOcupado(true);
+    try {
+      const r = await api.darDeAltaTaxista({
+        nombre: nombre.trim(),
+        telefono: telefono.trim(),
+        matricula: matricula.trim(),
+        marca: marca.trim(),
+        carroceria,
+        aireAcondicionado: aire,
+        seguro,
+      });
+      setAbierta(false);
+      alCreada(r.conductorId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo dar el alta.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  return (
+    <>
+      <p className="nota">
+        Nace verificado —lo estás verificando tú— y con el número por
+        confirmar: la primera vez que entre, el código del SMS (o tu vale) es
+        lo que demuestra que esa línea es suya.
+      </p>
+      {error && <p className="aviso">{error}</p>}
+      <div className="fila">
+        <input value={nombre} placeholder="Nombre" onChange={(e) => setNombre(e.target.value)} />
+        <input
+          value={telefono} inputMode="tel" placeholder="Teléfono"
+          onChange={(e) => setTelefono(e.target.value)}
+        />
+      </div>
+      <div className="fila">
+        <input
+          value={matricula} placeholder="Matrícula"
+          onChange={(e) => setMatricula(e.target.value)}
+        />
+        <input value={marca} placeholder="Marca" onChange={(e) => setMarca(e.target.value)} />
+        <select
+          value={carroceria}
+          onChange={(e) => setCarroceria(e.target.value as 'turismo' | '4x4')}
+        >
+          <option value="turismo">Turismo</option>
+          <option value="4x4">4x4</option>
+        </select>
+      </div>
+      <div className="fila">
+        <label className="casilla">
+          <input type="checkbox" checked={aire} onChange={(e) => setAire(e.target.checked)} />
+          Aire acondicionado
+        </label>
+        <label className="casilla">
+          <input type="checkbox" checked={seguro} onChange={(e) => setSeguro(e.target.checked)} />
+          Seguro en regla
+        </label>
+      </div>
+      <div className="fila">
+        <button
+          type="button" className="principal"
+          disabled={!completo || ocupado} onClick={guardar}
+        >
+          Darlo de alta
+        </button>
+        <button type="button" className="secundario" onClick={() => setAbierta(false)}>
+          Dejarlo
+        </button>
+      </div>
+    </>
+  );
+}
 
 // Cambiar el número con el que entra alguien (05/10).
 //
@@ -2041,11 +2151,23 @@ const ESTADOS_VIAJE = [
   'CLIENTE_AUSENTE', 'NO_PRESENTADO', 'INCIDENCIA',
 ] as const;
 
-function Viajes() {
+function Viajes({ alVerEnMapa }: { alVerEnMapa?: (id: number) => void }) {
   const [viajes, setViajes] = useState<ViajeOperador[] | null>(null);
   const [estado, setEstado] = useState<string>('todos');
   const [busqueda, setBusqueda] = useState('');
   const [error, setError] = useState('');
+  // Las filas desplegadas. Varias a la vez a propósito: comparar dos carreras
+  // es exactamente abrir las dos.
+  const [abiertos, setAbiertos] = useState<Set<number>>(new Set());
+
+  function alternar(id: number) {
+    setAbiertos((antes) => {
+      const ahora = new Set(antes);
+      if (ahora.has(id)) ahora.delete(id);
+      else ahora.add(id);
+      return ahora;
+    });
+  }
 
   useEffect(() => {
     setViajes(null);
@@ -2070,23 +2192,54 @@ function Viajes() {
       </div>
       {error && <p className="aviso">{error}</p>}
       {viajes?.length === 0 && <p className="nota">Ninguna carrera con ese filtro.</p>}
+      {/* Cuatro columnas arriba y el resto DENTRO (06/10, pedido con estas
+          palabras): la tabla se recorre comparando horas y rutas, y ocho
+          columnas obligaban a leer en diagonal. Lo que se consulta de una
+          carrera concreta —teléfono, zonas, precio— sale al desplegarla. */}
       {viajes !== null && viajes.length > 0 && (
-        <Tabla cabeceras={['Cuándo', 'Teléfono', 'Origen → Destino', 'Taxi', 'Recogida', 'Bajada', 'Estado', 'Precio']}>
+        <Tabla cabeceras={['Cuándo', 'Emitido', 'Origen → Destino', 'Taxi', '']}>
           {viajes.map((v) => (
-            <tr key={v.id}>
-              <td className="tabla-tenue">{cuando(v.creada_en)}</td>
-              <td>{v.telefono_cliente ?? '—'}</td>
-              <td>{v.origen} → {v.destino}</td>
-              <td>{v.matricula ?? v.conductor ?? '—'}</td>
-              {/* Solo la hora: el día ya lo dice «Cuándo», y una carrera no
-                  cruza la medianoche en una isla de veinte minutos. */}
-              <td className="tabla-tenue">{v.recogido_en === null ? '—' : soloHora(v.recogido_en)}</td>
-              <td className="tabla-tenue">{v.bajada_en === null ? '—' : soloHora(v.bajada_en)}</td>
-              <td className="tabla-clave">{v.estado.toLowerCase().replace(/_/g, ' ')}</td>
-              <td className="tabla-numero">
-                {v.precio_xaf === null ? '—' : `${v.precio_xaf.toLocaleString('es')} XAF`}
-              </td>
-            </tr>
+            <Fragment key={v.id}>
+              <tr className="tabla-desplegable" onClick={() => alternar(v.id)}>
+                <td className="tabla-tenue">{cuando(v.creada_en)}</td>
+                {/* Solo la hora: el día ya lo dice «Cuándo», y una carrera no
+                    cruza la medianoche en una isla de veinte minutos. */}
+                <td className="tabla-tenue">{v.emitido_en === null ? '—' : soloHora(v.emitido_en)}</td>
+                <td>{v.origen} → {v.destino}</td>
+                <td>{v.matricula ?? v.conductor ?? '—'}</td>
+                <td className="tabla-tenue">{abiertos.has(v.id) ? '▾' : '▸'}</td>
+              </tr>
+              {abiertos.has(v.id) && (
+                <tr className="tabla-detalle">
+                  <td colSpan={5}>
+                    <div className="tabla-detalle-datos">
+                      <span><b>Estado</b> {v.estado.toLowerCase().replace(/_/g, ' ')}</span>
+                      <span><b>Teléfono</b> {v.telefono_cliente ?? '—'}</span>
+                      <span>
+                        <b>Recogida</b> {v.zona_recogida}
+                        {v.recogido_en !== null && ` · ${soloHora(v.recogido_en)}`}
+                      </span>
+                      <span>
+                        <b>Bajada</b> {v.zona_bajada}
+                        {v.bajada_en !== null && ` · ${soloHora(v.bajada_en)}`}
+                      </span>
+                      <span>
+                        <b>Precio</b>{' '}
+                        {v.precio_xaf === null ? '—' : `${v.precio_xaf.toLocaleString('es')} XAF`}
+                      </span>
+                      {alVerEnMapa !== undefined && (v.conductor !== null || v.matricula !== null) && (
+                        <button
+                          type="button" className="secundario"
+                          onClick={(e) => { e.stopPropagation(); alVerEnMapa(v.id); }}
+                        >
+                          Ver en el mapa
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </Fragment>
           ))}
         </Tabla>
       )}
@@ -2190,7 +2343,7 @@ const TIPOS_REGISTRO = [
   ['cambios', 'Quién tocó qué'],
 ] as const;
 
-function Registros() {
+function Registros({ alVerViaje }: { alVerViaje?: (id: number) => void }) {
   const [tipo, setTipo] = useState<(typeof TIPOS_REGISTRO)[number][0]>('carreras');
   return (
     <>
@@ -2205,7 +2358,7 @@ function Registros() {
           </button>
         ))}
       </div>
-      {tipo === 'carreras' && <Viajes />}
+      {tipo === 'carreras' && <Viajes alVerEnMapa={alVerViaje} />}
       {tipo === 'flota' && <TaxisPorZona />}
       {tipo === 'cambios' && <Cambios />}
     </>
@@ -2496,6 +2649,156 @@ const ETIQUETA_PENDIENTE: Record<Pendiente['clase'], string> = {
   pago: 'Pago',
   alta: 'Alta de taxista',
 };
+
+// La tarjeta del mapa (06/10): lo que se toca, contesta. Un taxi dice quién
+// es y abre su ficha; una espera viva ofrece mandársela a un taxi concreto —
+// la oferta dirigida—; una apagada dice cuándo murió y deja llamar al
+// cliente. Vive abajo a la izquierda para no pelearse ni con las cifras ni
+// con el dique.
+function TarjetaDelMapa({
+  foco, taxis, viajes, sinOferta, alCerrar, alAbrirFicha,
+}: {
+  foco: { tipo: 'taxi' | 'viva' | 'apagada'; id: number };
+  taxis: TaxiVivo[] | null;
+  viajes: ViajeVivo[] | null;
+  sinOferta: SinOfertaViva[] | null;
+  alCerrar: () => void;
+  alAbrirFicha: (conductorId: number) => void;
+}) {
+  const [mensaje, setMensaje] = useState('');
+  const [error, setError] = useState('');
+  const [ocupado, setOcupado] = useState(false);
+
+  async function ofrecer(viajeId: number, conductorId: number, etiqueta: string) {
+    setOcupado(true);
+    setError('');
+    try {
+      await api.ofrecerViaje(viajeId, conductorId);
+      setMensaje(`Oferta mandada a ${etiqueta}. Decide él; si acepta, lo verás aquí.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo mandar la oferta.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  let cuerpo: React.ReactNode;
+  if (foco.tipo === 'taxi') {
+    const t = (taxis ?? []).find((x) => x.conductor_id === foco.id);
+    cuerpo = t === undefined
+      ? <p className="nota">Ese taxi ya no está en servicio.</p>
+      : (
+        <>
+          <h3>{t.matricula ?? t.nombre}</h3>
+          <p className="nota">
+            {t.nombre} · {t.estado === 'DISPONIBLE' ? 'libre' : 'con pasajero'}
+            {t.zona !== null && ` · ${t.zona}`}
+          </p>
+          <p className="nota">
+            {t.visto_hace_seg === null
+              ? 'Sin posición todavía'
+              : `Última posición hace ${hace(t.visto_hace_seg)}`}
+            {' · '}
+            <a className="consola-tel" href={`tel:${t.telefono}`}>{t.telefono}</a>
+          </p>
+          <button type="button" className="secundario" onClick={() => alAbrirFicha(foco.id)}>
+            Ver su ficha
+          </button>
+        </>
+      );
+  } else if (foco.tipo === 'viva') {
+    const v = (viajes ?? []).find((x) => x.id === foco.id);
+    if (v === undefined || !VIVO_SIN_TAXI.includes(v.estado)) {
+      cuerpo = <p className="nota">Ya no está esperando: alguien la cogió o se cerró.</p>;
+    } else {
+      // Los taxis libres más cercanos al punto de recogida, que son los que
+      // tiene sentido mandar. Cinco: más es una lista, no una decisión.
+      const cercanos = (taxis ?? [])
+        .filter((t): t is TaxiVivo & { lat: number; lng: number } => (
+          t.estado === 'DISPONIBLE' && t.lat !== null && t.lng !== null
+        ))
+        .map((t) => ({
+          t,
+          metros: metrosEntre({ lat: v.origen_lat, lng: v.origen_lng }, { lat: t.lat, lng: t.lng }),
+        }))
+        .sort((a, b) => a.metros - b.metros)
+        .slice(0, 5);
+      cuerpo = (
+        <>
+          <h3>{v.origen} → {v.destino}</h3>
+          <p className="nota">
+            Esperando desde hace {hace(v.espera_seg)}
+            {v.telefono_cliente !== null && (
+              <>
+                {' · '}
+                <a className="consola-tel" href={`tel:${v.telefono_cliente}`}>
+                  {v.telefono_cliente}
+                </a>
+              </>
+            )}
+          </p>
+          {mensaje !== '' && <p className="nota">{mensaje}</p>}
+          {error !== '' && <p className="aviso">{error}</p>}
+          {cercanos.length === 0 && (
+            <p className="nota">Ningún taxi libre con posición a quien mandársela.</p>
+          )}
+          {cercanos.length > 0 && (
+            <>
+              <p className="mesa-tarjeta-titulo">Mandársela a un taxi</p>
+              {cercanos.map(({ t, metros }) => (
+                <button
+                  key={t.conductor_id} type="button" className="secundario mesa-ofrecer"
+                  disabled={ocupado}
+                  onClick={() => ofrecer(
+                    v.id, t.conductor_id, t.matricula ?? t.nombre,
+                  )}
+                >
+                  {t.matricula ?? t.nombre}
+                  <span>
+                    {metros < 1000 ? `${Math.round(metros)} m` : `${(metros / 1000).toFixed(1)} km`}
+                  </span>
+                </button>
+              ))}
+            </>
+          )}
+        </>
+      );
+    }
+  } else {
+    const q = (sinOferta ?? []).find((x) => x.id === foco.id);
+    cuerpo = q === undefined
+      ? <p className="nota">Ya no está en la última hora.</p>
+      : (
+        <>
+          <h3>{q.origen} → {q.destino}</h3>
+          <p className="nota">
+            Se quedó sin taxi hace {hace(q.hace_seg)}.
+            {q.telefono_cliente !== null && (
+              <>
+                {' '}
+                <a className="consola-tel" href={`tel:${q.telefono_cliente}`}>
+                  {q.telefono_cliente}
+                </a>
+              </>
+            )}
+          </p>
+          <p className="nota">
+            Si sigue esperando, llámale y crea la solicitud de nuevo desde
+            «Nueva solicitud»: con un taxi ya libre, esta vez saldrá.
+          </p>
+        </>
+      );
+  }
+
+  return (
+    <div className="mesa-tarjeta">
+      <button type="button" className="mesa-tarjeta-cerrar" aria-label="Cerrar" onClick={alCerrar}>
+        ✕
+      </button>
+      {cuerpo}
+    </div>
+  );
+}
 
 // La bandeja (06/10): todo lo que espera una decisión del operador, en UNA
 // lista y con la más vieja arriba. La regla es la misma que en «esperando
@@ -2818,6 +3121,47 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   const [dockPlegado, setDockPlegado] = useState(false);
   const [taxisVivos, setTaxisVivos] = useState<TaxiVivo[] | null>(null);
   const [viajesVivos, setViajesVivos] = useState<ViajeVivo[] | null>(null);
+  const [sinOfertaVivas, setSinOfertaVivas] = useState<SinOfertaViva[] | null>(null);
+  // Lo que está tocado en el mapa: un taxi, una espera viva o una apagada.
+  const [foco, setFoco] = useState<{ tipo: 'taxi' | 'viva' | 'apagada'; id: number } | null>(null);
+  // Las carreras dibujadas sobre el plano (06/10): id → tramos de su traza.
+  // Un Map y no una sola: comparar dos viajes es verlos JUNTOS.
+  const [trazas, setTrazas] = useState<Map<number, Array<Array<{ lat: number; lng: number }>>>>(new Map());
+  const [avisoTraza, setAvisoTraza] = useState('');
+
+  async function verViajeEnMapa(id: number) {
+    try {
+      const t = await api.trazaViaje(id);
+      if (t.tramos.length === 0) {
+        setAvisoTraza('Esa carrera no tiene traza guardada: o no llegó a tener taxi, o su rastro no se grabó.');
+        return;
+      }
+      setAvisoTraza('');
+      setTrazas((antes) => new Map(antes).set(id, t.tramos));
+      setHojaAbierta(false);
+    } catch (e) {
+      setAvisoTraza(e instanceof Error ? e.message : 'No se pudo cargar la traza.');
+    }
+  }
+  // Los barrios situados, para que el encuadre arranque en Malabo y no en la
+  // isla entera. Se piden una vez: los barrios no se mueven a lo largo del día.
+  const [ciudad, setCiudad] = useState<Array<{ lat: number; lng: number }>>([]);
+
+  useEffect(() => {
+    if (!enConsola) return;
+    api.zonasOperador()
+      .then((r) => setCiudad(
+        r.zonas
+          .filter((z): z is typeof z & { lat: number; lng: number } => z.lat !== null && z.lng !== null)
+          // Solo lo que está en Bioko. Una zona con el centroide fuera de la
+          // isla —en la base de desarrollo las hay en mitad del Pacífico, de
+          // las pruebas de «fuera de Bioko se rechaza»— estiraría el encuadre
+          // a medio planeta y el plano saldría negro.
+          .filter((z) => z.lat > 3.2 && z.lat < 3.9 && z.lng > 8.3 && z.lng < 9.1)
+          .map((z) => ({ lat: z.lat, lng: z.lng })),
+      ))
+      .catch(() => undefined);
+  }, [enConsola]);
 
   useEffect(() => {
     if (!enConsola) return;
@@ -2828,6 +3172,7 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
           if (!vivo) return;
           setTaxisVivos(r.taxis);
           setViajesVivos(r.viajes);
+          setSinOfertaVivas(r.sinOferta);
         })
         // En silencio: esta vista se repinta sola cada seis segundos, y un
         // cartel de error por un corte de un segundo taparía el trabajo. Lo que
@@ -2989,9 +3334,34 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                   </div>
                 )}
                 {conductores?.length === 0 && <p className="nota">No hay conductores que encajen.</p>}
-                {conductores?.map((c) => (
+                {/* En el ordenador, tabla (06/10): una lista de cincuenta
+                    taxistas se recorre bajando por UNA columna —la matrícula,
+                    el estado— y las tarjetas obligaban a leer cada una
+                    entera. En el teléfono siguen las tarjetas, que con el
+                    pulgar son más fáciles de acertar. */}
+                {enConsola && conductores !== null && conductores.length > 0 && (
+                  <Tabla cabeceras={['Taxi', 'Nombre', 'Teléfono', 'Estado', 'Alta']}>
+                    {conductores.map((c) => (
+                      <tr
+                        key={c.id} className="tabla-desplegable"
+                        onClick={() => setFichaConductor(c.id)}
+                      >
+                        <td className="tabla-clave">{c.matricula ?? '—'}</td>
+                        <td>{c.nombre}</td>
+                        <td className="tabla-tenue">{c.telefono}</td>
+                        <td>{ETIQUETA_ESTADO[c.estado_verificacion] ?? c.estado_verificacion}</td>
+                        <td className="tabla-tenue">{cuando(c.fecha_alta)}</td>
+                      </tr>
+                    ))}
+                  </Tabla>
+                )}
+                {!enConsola && conductores?.map((c) => (
                   <FilaConductor key={c.id} conductor={c} alAbrir={setFichaConductor} />
                 ))}
+                {/* El alta hecha por el operador (06/10): con el coche
+                    delante, en vez de esperar a que el taxista se registre
+                    solo desde su móvil. */}
+                <AltaDeTaxista alCreada={(id) => { cargarStats(); setFichaConductor(id); }} />
               </>
             )
         )}
@@ -3003,7 +3373,23 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
               <>
                 <Buscador alBuscar={setBusquedaPasajero} />
                 {pasajeros?.length === 0 && <p className="nota">No hay pasajeros que encajen.</p>}
-                {pasajeros?.map((p) => (
+                {enConsola && pasajeros !== null && pasajeros.length > 0 && (
+                  <Tabla cabeceras={['Nombre', 'Teléfono', 'Viajes', 'Strikes', 'Estado']}>
+                    {pasajeros.map((p) => (
+                      <tr
+                        key={p.dispositivo_id} className="tabla-desplegable"
+                        onClick={() => setFichaPasajero(p.dispositivo_id)}
+                      >
+                        <td>{p.nombre ?? `Dispositivo ${p.dispositivo_id}`}</td>
+                        <td className="tabla-tenue">{p.telefono ?? '—'}</td>
+                        <td className="tabla-numero">{p.viajes}</td>
+                        <td className="tabla-numero">{p.strikes > 0 ? p.strikes : '—'}</td>
+                        <td>{p.bloqueado_en ? 'BLOQUEADO' : '—'}</td>
+                      </tr>
+                    ))}
+                  </Tabla>
+                )}
+                {!enConsola && pasajeros?.map((p) => (
                   <button
                     key={p.dispositivo_id} type="button" className="oferta oferta-boton"
                     onClick={() => setFichaPasajero(p.dispositivo_id)}
@@ -3020,7 +3406,9 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
             )
         )}
 
-        {seccion === 'registros' && <Registros />}
+        {seccion === 'registros' && (
+          <Registros alVerViaje={enConsola ? verViajeEnMapa : undefined} />
+        )}
 
         {/* Distritos, barrios y lugares eran tres entradas de once para la
             MISMA tarea: mantener el catálogo de sitios. Una, con tres
@@ -3111,7 +3499,27 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
             {/* Sin referencias: en una pantalla con treinta taxis, los cientos
                 de puntos del gazetteer convierten el plano en una sopa y lo
                 que se viene a mirar aquí es dónde están los coches. */}
-            <Mapa puntos={[]} taxis={taxisEnMapa} encuadre="flota" />
+            <Mapa
+              puntos={[]}
+              taxis={taxisEnMapa}
+              encuadre="flota"
+              ciudad={ciudad}
+              esperas={[
+                // Las apagadas primero: lo que se pinta después queda ENCIMA,
+                // y cuando una espera viva y una muerta caen en el mismo
+                // cruce, el dedo tiene que encontrar a la que aún espera.
+                ...(sinOfertaVivas ?? []).map((q) => ({
+                  id: q.id, lat: q.origen_lat, lng: q.origen_lng, viva: false,
+                })),
+                ...esperando.map((v) => ({
+                  id: v.id, lat: v.origen_lat, lng: v.origen_lng,
+                  viva: true, etiqueta: hace(v.espera_seg),
+                })),
+              ]}
+              alTocarTaxi={(id) => setFoco({ tipo: 'taxi', id })}
+              alTocarEspera={(id, viva) => setFoco({ tipo: viva ? 'viva' : 'apagada', id })}
+              recorrido={trazas.size > 0 ? [...trazas.values()].flat() : undefined}
+            />
             {taxisVivos !== null && taxisEnMapa.length === 0 && (
               <p className="mesa-mapa-vacio">
                 {taxisVivos.length === 0
@@ -3154,7 +3562,38 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                 <b>⚠</b><small>salud</small>
               </button>
             )}
+            {trazas.size > 0 && (
+              <button
+                type="button" className="mesa-chip"
+                onClick={() => setTrazas(new Map())}
+              >
+                <b>{trazas.size}</b>
+                <small>{trazas.size === 1 ? 'viaje dibujado · quitar' : 'viajes dibujados · quitar'}</small>
+              </button>
+            )}
+            {avisoTraza !== '' && (
+              <button type="button" className="mesa-chip" onClick={() => setAvisoTraza('')}>
+                <small>{avisoTraza} ✕</small>
+              </button>
+            )}
           </div>
+
+          {foco !== null && (
+            <TarjetaDelMapa
+              key={`${foco.tipo}-${foco.id}`}
+              foco={foco}
+              taxis={taxisVivos}
+              viajes={viajesVivos}
+              sinOferta={sinOfertaVivas}
+              alCerrar={() => setFoco(null)}
+              alAbrirFicha={(conductorId) => {
+                setEnGente('conductores');
+                setFichaConductor(conductorId);
+                setSeccion('gente');
+                setHojaAbierta(true);
+              }}
+            />
+          )}
 
           {!dockPlegado && (
             <aside className="mesa-dock">

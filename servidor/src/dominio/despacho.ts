@@ -347,6 +347,9 @@ async function ofertarA(
   conductorIds: number[],
   oleada: number,
   ahora: Date,
+  // Quién convoca (06/10): el reloj de oleadas es 'sistema'; la oferta
+  // dirigida desde la mesa es 'operador', y el registro tiene que decirlo.
+  actor: 'sistema' | 'operador' = 'sistema',
 ): Promise<void> {
   if (conductorIds.length === 0) {
     return;
@@ -386,7 +389,10 @@ async function ofertarA(
         veredicto === null ? null : Math.round(veredicto.metrosExtra),
       ],
     );
-    await transicionarConductor(cliente, conductorId, 'OFERTADO', 'sistema', `oleada_${oleada}`);
+    await transicionarConductor(
+      cliente, conductorId, 'OFERTADO', actor,
+      actor === 'operador' ? 'oferta_dirigida' : `oleada_${oleada}`,
+    );
     await emisor.emitir({
       tipo: 'D1_broadcast_solicitud',
       rol: 'conductor',
@@ -689,6 +695,42 @@ async function avisarACiudadEntera(
   );
   await ofertarA(cliente, emisor, solicitud, nuevos, 5, ahora);
   return nuevos.length > 0;
+}
+
+// La oferta dirigida (06/10): el operador, mirando el mapa, le manda ESTA
+// carrera a ESTE taxi. No es asignar a dedo: el taxista la recibe como
+// cualquier oferta y decide él — la mesa elige a quién AVISAR, no quién
+// conduce. Es el mismo camino que el «coche elegido» del pasajero (oleada 0),
+// con la mesa eligiendo en su lugar.
+//
+// OLEADA 6 A PROPÓSITO: fuera de la contabilidad de las oleadas 1-4, para que
+// el reparto automático siga su curso como si esta oferta no existiera. Lo
+// único que la ve es el aviso a la ciudad entera, que espera mientras alguien
+// tenga una oferta viva delante — y eso es exactamente lo que debe hacer.
+export async function ofrecerAMano(
+  pool: pg.Pool,
+  emisor: EmisorEventos,
+  solicitudId: number,
+  conductorId: number,
+  ahora: Date = new Date(),
+): Promise<{ ofrecida: boolean; motivo?: 'estado' | 'no_elegible' }> {
+  return enTransaccion(pool, async (cliente) => {
+    const solicitud = await bloquearSolicitud(cliente, solicitudId);
+    if (solicitud.estado !== 'EMITIDO') {
+      return { ofrecida: false, motivo: 'estado' as const };
+    }
+    // Los MISMOS filtros duros que una oleada: verificado, suscrito, latido
+    // vivo, plaza libre y sin oferta previa de esta carrera. La mesa salta la
+    // geografía, no la seguridad.
+    const elegible = await candidatos(
+      cliente, solicitudId, [], 1, ahora, false, conductorId,
+    );
+    if (elegible.length === 0) {
+      return { ofrecida: false, motivo: 'no_elegible' as const };
+    }
+    await ofertarA(cliente, emisor, solicitud, elegible, 6, ahora, 'operador');
+    return { ofrecida: true };
+  });
 }
 
 export interface ResultadoReclamacion {

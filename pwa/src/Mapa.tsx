@@ -70,6 +70,24 @@ export interface PropiedadesMapa {
   // La flota, para la consola del operador. Es distinto de `taxi`: aquél es EL
   // coche de este viaje, dibujado grande y orientado; éstos son muchos, y lo
   // único que se les pide es decir dónde están y si están libres.
+  // Clic en un taxi de la flota: la consola abre su tarjeta. Solo se pasa
+  // desde la mesa; en el resto de vistas los puntos no son botones.
+  alTocarTaxi?: (id: number) => void;
+  // Las esperas (06/10): dónde se está pidiendo taxi AHORA sin tenerlo (rojo,
+  // latiendo) y dónde se pidió hace poco y murió sin oferta (apagado). Es el
+  // mapa de la demanda que no se sirve, que ninguna tabla enseña.
+  esperas?: Array<{
+    id: number;
+    lat: number;
+    lng: number;
+    viva: boolean;
+    etiqueta?: string;
+  }>;
+  alTocarEspera?: (id: number, viva: boolean) => void;
+  // El suelo del encuadre de flota: los barrios situados de la ciudad. Sin
+  // esto, una madrugada sin taxis enseñaba la isla entera —selva y mar— en
+  // vez de Malabo, que es donde pasa todo.
+  ciudad?: Array<{ lat: number; lng: number }>;
   taxis?: Array<{
     id: number;
     lat: number;
@@ -146,7 +164,8 @@ const PRIORIDAD: Record<string, number> = {
 };
 
 export default function Mapa({
-  puntos, origen, destino, taxi, taxis, mira = false, alMoverCentro,
+  puntos, origen, destino, taxi, taxis, alTocarTaxi, esperas, alTocarEspera,
+  ciudad, mira = false, alMoverCentro,
   buscando, encuadre = 'persona', paradas, recorrido,
   origenEnVivo = false,
   maxPasadas = 1, rumbo = null, rumboCoche = null, yo = null, alCalcularRuta,
@@ -296,12 +315,16 @@ export default function Mapa({
       // no cabe en el encuadre es un taxi que el operador no va a mandar a
       // ningún sitio porque no sabe que existe.
       for (const t of taxis ?? []) enfoque.push(aMundo(t.lat, t.lng));
+      // La ciudad entra SIEMPRE en el encuadre: el taxi suelto que ande por
+      // la carretera del sur lo amplía, pero Malabo nunca se sale del plano.
+      for (const p of ciudad ?? []) enfoque.push(aMundo(p.lat, p.lng));
+      for (const e of esperas ?? []) if (e.viva) enfoque.push(aMundo(e.lat, e.lng));
       // Sin ninguno, la isla entera. El respaldo de más abajo —cinco kilómetros
       // alrededor del centro del recuadro— cae en mitad de Bioko, que es selva:
       // el operador veía un rectángulo negro y no sabía si el mapa estaba roto
       // o es que no había taxis. Enseñando la isla, el mapa dice dónde está
       // mirando aunque no haya nada que enseñar encima.
-      if ((taxis ?? []).length === 0) {
+      if ((taxis ?? []).length === 0 && (ciudad ?? []).length === 0) {
         const { recuadro: caja } = listo.plano;
         enfoque.push(aMundo(caja.sur, caja.oeste));
         enfoque.push(aMundo(caja.norte, caja.este));
@@ -635,8 +658,13 @@ export default function Mapa({
           {/* Por dónde anduvo el taxi. Cada tramo por separado, sin unir los
               huecos, y con un punto en el principio y el final de cada uno:
               en un recorrido de un mes, media ciudad pintada de naranja no
-              dice nada si no se ve dónde arrancó cada trozo. */}
-          {encuadre === 'recorrido' && (recorrido ?? []).map((tramo, i) => {
+              dice nada si no se ve dónde arrancó cada trozo.
+
+              Se pinta SIEMPRE que llegue la traza, no solo con el encuadre
+              de recorrido: la mesa del operador dibuja viajes sobre el plano
+              de la flota (06/10), y atarlo al encuadre los hacía invisibles
+              sin ningún error en ninguna parte. */}
+          {(recorrido ?? []).map((tramo, i) => {
             const xy = tramo.map((p) => pantalla(p.lat, p.lng));
             const d = xy
               .map((q, j) => `${j === 0 ? 'M' : 'L'}${q[0].toFixed(1)} ${q[1].toFixed(1)}`)
@@ -766,10 +794,53 @@ export default function Mapa({
 
               La matrícula va al lado, pequeña: sin ella el mapa dice que «hay
               un taxi ahí» pero no cuál, y el operador no puede llamarle. */}
+          {/* Las esperas, DEBAJO de la flota: un taxi encima de una espera
+              es exactamente lo que el operador quiere poder tocar. La viva
+              late en rojo con su tiempo al lado; la que murió sin oferta
+              queda como una brasa apagada, que es lo que es. */}
+          {/* El stopPropagation del pointerdown es lo que hace tocables los
+              puntos: el plano captura el puntero para el arrastre
+              (setPointerCapture) y, capturado, el click se dispara en el
+              contenedor y no en el punto — el toque no llegaba nunca. */}
+          {(esperas ?? []).map((e) => {
+            const xy = pantalla(e.lat, e.lng);
+            return (
+              <g
+                key={`esp-${e.viva ? 'v' : 'm'}-${e.id}`}
+                transform={`translate(${xy[0].toFixed(1)},${xy[1].toFixed(1)})`}
+                onClick={() => alTocarEspera?.(e.id, e.viva)}
+                onPointerDown={alTocarEspera ? (ev) => ev.stopPropagation() : undefined}
+                style={alTocarEspera ? { cursor: 'pointer' } : undefined}
+              >
+                {e.viva && <circle r={22} fill="#ff5a5a" className="pulso-origen" />}
+                <circle
+                  r={e.viva ? 7 : 5}
+                  fill={e.viva ? '#ff5a5a' : '#6e3a3a'}
+                  stroke="#16161a"
+                  strokeWidth={2}
+                />
+                {e.viva && e.etiqueta && (
+                  <text
+                    x={11} y={4} fontSize={11} fill="#ff8a8a"
+                    stroke="#16161a" strokeWidth={3} paintOrder="stroke"
+                  >
+                    {e.etiqueta}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+
           {(taxis ?? []).map((t) => {
             const xy = pantalla(t.lat, t.lng);
             return (
-              <g key={t.id} transform={`translate(${xy[0].toFixed(1)},${xy[1].toFixed(1)})`}>
+              <g
+                key={t.id}
+                transform={`translate(${xy[0].toFixed(1)},${xy[1].toFixed(1)})`}
+                onClick={() => alTocarTaxi?.(t.id)}
+                onPointerDown={alTocarTaxi ? (ev) => ev.stopPropagation() : undefined}
+                style={alTocarTaxi ? { cursor: 'pointer' } : undefined}
+              >
                 <circle
                   r={7}
                   fill={t.libre ? '#ffb020' : '#5a5a64'}

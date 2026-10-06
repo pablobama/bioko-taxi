@@ -805,6 +805,148 @@ test('salud: el cuadro de mandos evalúa las alarmas y detecta la zona que se qu
   assert.equal(mensajeria.disparada, false, 'sin fuente de datos no hay alarma');
 });
 
+// Un taxista listo para trabajar: verificado, suscrito, con el latido fresco
+// y plantado en la zona que se le diga. Lo que las oleadas exigen de verdad.
+async function taxistaListo(zonaId: number): Promise<number> {
+  const telefono = telefonoUnico();
+  const alta = await app.inject({
+    method: 'POST', url: '/api/conductor/alta', headers: cabeceras(randomUUID()),
+    payload: {
+      nombre: `Taxista listo ${telefono.slice(-4)}`, telefono,
+      matricula: `MB-${telefono.slice(-5)}D`, marca: 'Toyota', carroceria: 'turismo',
+    },
+  });
+  assert.equal(alta.statusCode, 200, alta.body);
+  const conductorId = Number(alta.json().conductorId);
+  await pool.query(
+    `UPDATE conductor SET estado_verificacion = 'verificado',
+            telefono_verificado_en = now(),
+            suscrito_hasta = now() + interval '30 days'
+     WHERE id = $1`,
+    [conductorId],
+  );
+  await pool.query(
+    `UPDATE presencia SET estado = 'DISPONIBLE', ultimo_heartbeat = now(), zona_id = $2
+     WHERE conductor_id = $1`,
+    [conductorId, zonaId],
+  );
+  return conductorId;
+}
+
+// La oferta dirigida (06/10). Lo que se comprueba no es que inserte una fila:
+// es que la mesa salta la GEOGRAFÍA y no la seguridad. El taxi de otra zona
+// —que ninguna oleada habría convocado todavía— recibe la oferta con la firma
+// del operador; y el que ya la tiene delante no la recibe dos veces.
+// El alta hecha por el operador (06/10). Las tres cosas que importan: nace
+// verificado (lo verificó él), el TELÉFONO queda por confirmar (de esa línea
+// no ha demostrado nada nadie), y el aparato del operador NO queda vinculado
+// como si fuera el taxi — que es lo que haría el alta normal, pensada para
+// que la mande el propio taxista desde su móvil.
+test('alta por el operador: verificado, número por confirmar y sin robarle el aparato', async () => {
+  const telefono = telefonoUnico();
+  const res = await app.inject({
+    method: 'POST', url: '/api/operador/conductores', headers: cabeceras(UUID_OPERADOR),
+    payload: {
+      nombre: 'Alta del panel', telefono,
+      matricula: `MB-${telefono.slice(-5)}P`, marca: 'Toyota', carroceria: 'turismo',
+    },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  const conductorId = Number(res.json().conductorId);
+
+  const fila = await pool.query(
+    'SELECT estado_verificacion, telefono_verificado_en FROM conductor WHERE id = $1',
+    [conductorId],
+  );
+  assert.equal(fila.rows[0].estado_verificacion, 'verificado');
+  assert.equal(fila.rows[0].telefono_verificado_en, null, 'la línea aún no demostró nada');
+
+  const aparato = await pool.query(
+    'SELECT 1 FROM dispositivo WHERE conductor_id = $1',
+    [conductorId],
+  );
+  assert.equal(aparato.rowCount, 0, 'el aparato del operador no es el taxi');
+
+  // Y el taxista entra desde SU móvil con solo el número, como siempre.
+  const registro = await app.inject({
+    method: 'POST', url: '/api/conductor/registro', headers: cabeceras(randomUUID()),
+    payload: { telefono },
+  });
+  assert.equal(registro.statusCode, 200, registro.body);
+
+  // Repetir el alta con el mismo número avisa con nombre y apellido.
+  const repetida = await app.inject({
+    method: 'POST', url: '/api/operador/conductores', headers: cabeceras(UUID_OPERADOR),
+    payload: {
+      nombre: 'Otro', telefono, matricula: 'MB-XXXXX', marca: 'Kia', carroceria: 'turismo',
+    },
+  });
+  assert.equal(repetida.statusCode, 409);
+  assert.match(repetida.json().error, /Alta del panel/);
+});
+
+test('oferta dirigida: llega al taxi de otra zona, firmada, y sin duplicar', async () => {
+  const { zonaId, origenId, destinoId } = await crearZonaConReferencias();
+  const otraZona = await crearZonaConReferencias();
+  const deAqui = await taxistaListo(zonaId);
+  const deAlli = await taxistaListo(otraZona.zonaId);
+
+  // La carrera nace por la central y queda EMITIDO: hay un taxi vivo en la
+  // zona (deAqui), que recibe la oleada 1.
+  const creada = await app.inject({
+    method: 'POST', url: '/api/operador/solicitudes', headers: cabeceras(UUID_OPERADOR),
+    payload: {
+      telefono: `+240333${Date.now() % 1000000}${Math.floor(Math.random() * 90 + 10)}`,
+      origenId, destinoId,
+    },
+  });
+  assert.equal(creada.statusCode, 201, creada.body);
+  assert.equal(creada.json().estado, 'EMITIDO', 'con un taxi vivo en la zona no puede morir');
+  const solicitudId = Number(creada.json().solicitudId);
+
+  // El de la otra zona no tiene oferta: ninguna oleada lo habría llamado aún.
+  const antes = await pool.query(
+    'SELECT 1 FROM oferta WHERE solicitud_id = $1 AND conductor_id = $2',
+    [solicitudId, deAlli],
+  );
+  assert.equal(antes.rowCount, 0);
+
+  const dirigida = await app.inject({
+    method: 'POST', url: `/api/operador/viajes/${solicitudId}/ofrecer`,
+    headers: cabeceras(UUID_OPERADOR), payload: { conductorId: deAlli },
+  });
+  assert.equal(dirigida.statusCode, 200, dirigida.body);
+
+  const oferta = await pool.query(
+    `SELECT oleada, resultado FROM oferta WHERE solicitud_id = $1 AND conductor_id = $2`,
+    [solicitudId, deAlli],
+  );
+  assert.equal(oferta.rowCount, 1);
+  assert.equal(Number(oferta.rows[0].oleada), 6, 'fuera de la contabilidad de las oleadas 1-4');
+  assert.equal(oferta.rows[0].resultado, null, 'viva: el taxista decide');
+
+  // Firmada: el registro dice que la mandó el operador, no el reloj.
+  const firma = await pool.query(
+    `SELECT actor, origen_evento FROM transicion
+     WHERE conductor_id = $1 AND estado_nuevo = 'OFERTADO'
+     ORDER BY creado_en DESC LIMIT 1`,
+    [deAlli],
+  );
+  assert.equal(firma.rows[0].actor, 'operador');
+  assert.equal(firma.rows[0].origen_evento, 'oferta_dirigida');
+
+  // Al que ya la tiene delante (oleada 1) no se le duplica.
+  const duplicada = await app.inject({
+    method: 'POST', url: `/api/operador/viajes/${solicitudId}/ofrecer`,
+    headers: cabeceras(UUID_OPERADOR), payload: { conductorId: deAqui },
+  });
+  assert.equal(duplicada.statusCode, 409, duplicada.body);
+
+  // Y la carrera sigue EMITIDO: ofrecer no asigna, avisa.
+  const estado = await pool.query('SELECT estado FROM solicitud WHERE id = $1', [solicitudId]);
+  assert.equal(estado.rows[0].estado, 'EMITIDO');
+});
+
 test('central: crear una solicitud por teléfono le da dispositivo propio al que llama y es idempotente', async () => {
   // Espera el corte R1 («zona recién creada y vacía»), así que necesita que no
   // haya taxistas de «toda la isla» en servicio ni aviso a la ciudad entera
@@ -853,6 +995,31 @@ test('central: crear una solicitud por teléfono le da dispositivo propio al que
 });
 
 // --- Migración 067: quién tocó los precios y los parámetros ----------------
+
+// El 403 del 06/10: «los precios no se pueden poner desde el ordenador». El
+// guardián del trabajo de campo se quedó mirando solo la lista vieja de uuids
+// cuando la 080 estrenó la entrada por teléfono, y el operador que entraba
+// por SMS no podía fijar una banda. Y de propina, sus cambios quedaban
+// apuntados como «ni operador ni conductor».
+test('campo: el operador que entró por teléfono fija precios, y firma como operador', async () => {
+  const porTelefono = await entrarComoOperador(raizNueva());
+  const { zonaId } = await crearZonaConReferencias();
+  const otra = await crearZonaConReferencias();
+
+  const res = await app.inject({
+    method: 'POST', url: '/api/operador/bandas', headers: cabeceras(porTelefono),
+    payload: { zonaOrigenId: zonaId, zonaDestinoId: otra.zonaId, p25: 900, p50: 1400, p75: 1900 },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+
+  const cambios = await app.inject({
+    method: 'GET', url: '/api/operador/cambios', headers: cabeceras(porTelefono),
+  });
+  const mio = cambios.json().cambios.find(
+    (c: { clave: string }) => c.clave === `${zonaId}→${otra.zonaId}`,
+  );
+  assert.equal(mio?.quien, 'operador', 'el registro dice QUIÉN fue, no «nadie»');
+});
 
 test('cambiar una banda deja rastro de quién, cuándo y qué había antes', async () => {
   const { zonaId } = await crearZonaConReferencias();

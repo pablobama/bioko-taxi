@@ -12,7 +12,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { enTransaccion } from '../bd/conexion.js';
 import { esAgenteDeCampoPorUuid } from '../dominio/agentes.js';
-import { iniciarDespacho } from '../dominio/despacho.js';
+import { iniciarDespacho, ofrecerAMano } from '../dominio/despacho.js';
 import { ErrorEntidadInexistente } from '../dominio/errores.js';
 import type { EmisorEventos } from '../dominio/eventos.js';
 import {
@@ -210,7 +210,14 @@ export function registrarRutasOperador(
   // a sus companeros ni el dinero.
   async function exigirCampo(req: FastifyRequest): Promise<void> {
     const uuid = uuidDesde(req);
-    if (esOperador(uuid)) return;
+    // `esOperadorAhora` y no `esOperador` (06/10): este guardián se quedó
+    // mirando solo la lista vieja de uuids cuando la migración 080 estrenó la
+    // entrada por teléfono, y el operador que entraba por SMS recibía 403 al
+    // guardar una banda de precios desde su ordenador. El otro guardián
+    // (`exigirOperador`) sí se actualizó aquel día; este se escapó porque su
+    // camino feliz —el uuid del entorno— seguía funcionando para quien lo
+    // probó.
+    if (await esOperadorAhora(pool, uuid)) return;
     // Taxista agente (migración 025) o PASAJERO agente (migración 072). Quien
     // mejor sitúa un barrio es a veces alguien que ni conduce: el del mercado,
     // la enfermera del centro de salud. Lo que puede hacer es lo mismo en los
@@ -239,7 +246,11 @@ export function registrarRutasOperador(
       dispositivoId: fila.rowCount === 0 ? null : Number(fila.rows[0].id),
       conductorId: fila.rowCount === 0 || fila.rows[0].conductor_id === null
         ? null : Number(fila.rows[0].conductor_id),
-      esOperador: esOperador(uuid),
+      // El mismo olvido de la migración 080 que `exigirCampo`: con la lista
+      // vieja, los cambios del operador por teléfono quedaban apuntados como
+      // «ni operador ni conductor» — un registro que decía que nadie hizo lo
+      // que alguien hizo.
+      esOperador: await esOperadorAhora(pool, uuid),
     };
   }
 
@@ -552,6 +563,85 @@ export function registrarRutasOperador(
     if (perfil.rowCount === 0) throw errorHttp(404, 'Ese dispositivo no tiene perfil de pasajero.');
     const crudo = ((req.body ?? {}) as { telefono?: string }).telefono;
     return cambiarTelefono(req, 'perfil_cliente', Number(perfil.rows[0].id), crudo);
+  });
+
+  // El alta de un taxista hecha desde el panel (06/10). Hasta hoy el alta
+  // era siempre del propio taxista desde su móvil; ahora el operador, con el
+  // coche delante o el papeleo en la mano, lo da de alta él.
+  //
+  // Nace VERIFICADO: lo verificó el operador al darlo de alta, que es más de
+  // lo que hace la auto-aceptación del alta propia. Lo que NO nace es el
+  // teléfono confirmado: de esa línea no ha demostrado nada nadie, y la
+  // confirma el propio taxista con un código —o con el vale del operador— la
+  // primera vez que entra. Y a propósito NO se toca `dispositivo`: el aparato
+  // del operador no puede quedarse vinculado como si fuera el taxi.
+  app.post('/api/operador/conductores', async (req) => {
+    await exigirOperador(req);
+    const cuerpo = (req.body ?? {}) as {
+      nombre?: string; telefono?: string; matricula?: string;
+      marca?: string; carroceria?: string; color?: string;
+      aireAcondicionado?: boolean; seguro?: boolean;
+    };
+    const nombre = cuerpo.nombre?.trim();
+    const telefono = normalizarTelefono(cuerpo.telefono?.trim());
+    const matricula = cuerpo.matricula?.trim().toUpperCase();
+    const marca = cuerpo.marca?.trim();
+    const carroceria = cuerpo.carroceria;
+    if (!nombre || !telefono || !matricula || !marca || !carroceria) {
+      throw errorHttp(400, 'Faltan datos: nombre, teléfono, matrícula, marca y carrocería son obligatorios.');
+    }
+    if (!['turismo', '4x4'].includes(carroceria)) {
+      throw errorHttp(400, 'Carrocería no válida. Opciones: turismo, 4x4.');
+    }
+
+    const resultado = await enTransaccion(pool, async (cliente) => {
+      const yaConductor = await cliente.query(
+        'SELECT id, nombre FROM conductor WHERE telefono = $1',
+        [telefono],
+      );
+      if ((yaConductor.rowCount ?? 0) > 0) {
+        throw errorHttp(
+          409,
+          `Ese teléfono ya es de ${yaConductor.rows[0].nombre}. `
+          + 'Búscalo en la lista: puede que solo haya que verificarlo o cambiarle el coche.',
+        );
+      }
+      const matriculaAjena = await cliente.query(
+        'SELECT conductor_id FROM vehiculo WHERE matricula = $1',
+        [matricula],
+      );
+      if ((matriculaAjena.rowCount ?? 0) > 0) {
+        throw errorHttp(409, `La matrícula ${matricula} ya está registrada por otro conductor.`);
+      }
+
+      const creado = await cliente.query(
+        `INSERT INTO conductor (telefono, nombre, estado_verificacion)
+         VALUES ($1, $2, 'verificado') RETURNING id`,
+        [telefono, nombre],
+      );
+      const conductorId: number = Number(creado.rows[0].id);
+      await cliente.query(
+        `INSERT INTO vehiculo (conductor_id, matricula, marca, carroceria, color, aire_acondicionado, seguro)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          conductorId, matricula, marca, carroceria,
+          cuerpo.color?.trim() || null, cuerpo.aireAcondicionado ?? false, cuerpo.seguro ?? false,
+        ],
+      );
+      await cliente.query(
+        'INSERT INTO monedero (conductor_id) VALUES ($1) ON CONFLICT (conductor_id) DO NOTHING',
+        [conductorId],
+      );
+      await cliente.query(
+        `INSERT INTO presencia (conductor_id, estado) VALUES ($1, 'DESCONECTADO')
+         ON CONFLICT (conductor_id) DO NOTHING`,
+        [conductorId],
+      );
+      return conductorId;
+    });
+    // Quién lo dio de alta, en el registro de siempre (067).
+    await apuntarCambio(req, 'conductor', `${resultado}.alta`, null, `${nombre} · ${telefono} · ${matricula}`);
+    return { conductorId: resultado };
   });
 
   app.get('/api/operador/conductores', async (req) => {
@@ -1464,7 +1554,7 @@ export function registrarRutasOperador(
     // ni una posición: un taxi en servicio del que no sabemos dónde está es
     // justo el que hay que mirar, y esconderlo del mapa lo haría invisible.
     const taxis = await pool.query(
-      `SELECT c.id::int AS conductor_id, c.nombre, v.matricula,
+      `SELECT c.id::int AS conductor_id, c.nombre, c.telefono, v.matricula,
               p.estado, z.nombre AS zona,
               r.lat, r.lng,
               EXTRACT(EPOCH FROM (now() - r.creado_en))::int AS visto_hace_seg,
@@ -1514,11 +1604,56 @@ export function registrarRutasOperador(
        LEFT JOIN conductor c ON c.id = s.conductor_id
        LEFT JOIN vehiculo v ON v.conductor_id = c.id
        WHERE s.estado IN ('SOLICITADO', 'EMITIDO', 'ACEPTADO', 'EN_CAMINO', 'RECOGIDO')
-       ORDER BY s.creada_en ASC
+       -- Los que ESPERAN van primero, pase lo que pase con el tope: el día
+       -- que haya sesenta viajes en marcha, lo que no puede quedarse fuera de
+       -- la lista es el pasajero sin taxi. Con el orden de antes (solo por
+       -- antigüedad), bastaban sesenta zombis viejos para esconderlo.
+       ORDER BY (s.estado IN ('SOLICITADO', 'EMITIDO')) DESC, s.creada_en ASC
        LIMIT 60`,
     );
 
-    return { taxis: taxis.rows, viajes: viajes.rows, momento: new Date().toISOString() };
+    // La demanda que NO se sirvió (06/10): dónde se pidió taxi hace poco y
+    // murió sin oferta. En el mapa son los puntos apagados — el operador ve
+    // dónde se está perdiendo trabajo, que es lo que ninguna tabla enseña.
+    const sinOferta = await pool.query(
+      `SELECT s.id::int AS id, s.creada_en, s.telefono_cliente,
+              EXTRACT(EPOCH FROM (now() - s.creada_en))::int AS hace_seg,
+              ro.nombre AS origen, ro.lat AS origen_lat, ro.lng AS origen_lng,
+              rd.nombre AS destino
+       FROM solicitud s
+       JOIN referencia ro ON ro.id = s.referencia_origen_id
+       JOIN referencia rd ON rd.id = s.referencia_destino_id
+       WHERE s.estado = 'SIN_OFERTA'
+         AND s.creada_en > now() - interval '60 minutes'
+       ORDER BY s.creada_en DESC
+       LIMIT 40`,
+    );
+
+    return {
+      taxis: taxis.rows,
+      viajes: viajes.rows,
+      sinOferta: sinOferta.rows,
+      momento: new Date().toISOString(),
+    };
+  });
+
+  // La oferta dirigida, desde el mapa de la mesa (06/10). El taxista la
+  // recibe como cualquier otra y decide él; aquí solo se elige a quién avisar.
+  app.post('/api/operador/viajes/:id/ofrecer', async (req) => {
+    await exigirOperador(req);
+    const id = Number((req.params as { id: string }).id);
+    const conductorId = Number(((req.body ?? {}) as { conductorId?: number }).conductorId);
+    if (!Number.isInteger(id) || !Number.isInteger(conductorId)) {
+      throw errorHttp(400, 'Faltan la carrera y el taxi.');
+    }
+    const r = await ofrecerAMano(pool, emisor, id, conductorId);
+    if (!r.ofrecida) {
+      throw errorHttp(409, r.motivo === 'estado'
+        ? 'Esa carrera ya no está esperando: alguien la cogió o se cerró.'
+        : 'Ese taxi no puede recibirla ahora: ya tiene esta oferta delante, '
+          + 'va lleno, o lleva un rato sin dar señales.');
+    }
+    return { ofrecida: true };
   });
 
   // Todas las carreras, no solo las que dictó el operador (03/10).
@@ -1554,10 +1689,21 @@ export function registrarRutasOperador(
               (SELECT min(t.creado_en) FROM transicion t
                WHERE t.solicitud_id = s.id AND t.estado_nuevo = 'RECOGIDO') AS recogido_en,
               (SELECT min(t.creado_en) FROM transicion t
-               WHERE t.solicitud_id = s.id AND t.estado_nuevo = 'COMPLETADO') AS bajada_en
+               WHERE t.solicitud_id = s.id AND t.estado_nuevo = 'COMPLETADO') AS bajada_en,
+              (SELECT min(t.creado_en) FROM transicion t
+               WHERE t.solicitud_id = s.id AND t.estado_nuevo = 'EMITIDO') AS emitido_en,
+              -- La zona de recogida y la de bajada (06/10). No hace falta
+              -- guardar nada: el origen y el destino son referencias del
+              -- catálogo, y cada referencia vive en una zona. Si algún día un
+              -- sitio se muda de zona, el registro dirá la zona de HOY — se
+              -- asume: mudar un sitio de zona es corregir un error, y el
+              -- registro corregido es mejor que el equivocado.
+              zro.nombre AS zona_recogida, zrd.nombre AS zona_bajada
        FROM solicitud s
        JOIN referencia ro ON ro.id = s.referencia_origen_id
        JOIN referencia rd ON rd.id = s.referencia_destino_id
+       JOIN zona zro ON zro.id = ro.zona_id
+       JOIN zona zrd ON zrd.id = rd.zona_id
        LEFT JOIN conductor c ON c.id = s.conductor_id
        LEFT JOIN vehiculo v ON v.conductor_id = c.id
        WHERE ($1::text IS NULL OR s.estado = $1)
@@ -1567,6 +1713,66 @@ export function registrarRutasOperador(
       [estado?.trim() || null, buscado],
     );
     return { viajes: filas.rows };
+  });
+
+  // La traza de UNA carrera sobre el plano (06/10): por dónde fue de verdad,
+  // sacada del rastro del conductor entre que la aceptó y que se cerró. Dos
+  // tramos: la ida a por el cliente y el viaje con él dentro — el mapa los
+  // pinta separados porque el hueco entre ambos es la recogida.
+  app.get('/api/operador/viajes/:id/traza', async (req) => {
+    await exigirOperador(req);
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(id)) throw errorHttp(400, 'Id de carrera no válido.');
+
+    const cabecera = await pool.query(
+      `SELECT s.conductor_id,
+              ro.nombre AS origen, ro.lat AS origen_lat, ro.lng AS origen_lng,
+              rd.nombre AS destino, rd.lat AS destino_lat, rd.lng AS destino_lng,
+              (SELECT min(t.creado_en) FROM transicion t
+               WHERE t.solicitud_id = s.id AND t.estado_nuevo = 'ACEPTADO') AS desde,
+              (SELECT min(t.creado_en) FROM transicion t
+               WHERE t.solicitud_id = s.id AND t.estado_nuevo = 'RECOGIDO') AS recogido_en,
+              (SELECT max(t.creado_en) FROM transicion t
+               WHERE t.solicitud_id = s.id) AS hasta
+       FROM solicitud s
+       JOIN referencia ro ON ro.id = s.referencia_origen_id
+       JOIN referencia rd ON rd.id = s.referencia_destino_id
+       WHERE s.id = $1`,
+      [id],
+    );
+    if (cabecera.rowCount === 0) throw errorHttp(404, 'No existe esa carrera.');
+    const c = cabecera.rows[0];
+    const extremos = {
+      origen: { nombre: c.origen, lat: c.origen_lat, lng: c.origen_lng },
+      destino: { nombre: c.destino, lat: c.destino_lat, lng: c.destino_lng },
+    };
+    if (c.conductor_id === null || c.desde === null) {
+      // Sin taxi no hay rastro que enseñar; los extremos sí, que algo dicen.
+      return { ...extremos, tramos: [] };
+    }
+
+    // Con tope: una carrera son minutos de migas, pero el rastro no sabe de
+    // carreras y un reloj parado podría dejar una ventana de horas.
+    const migas = await pool.query(
+      `SELECT lat, lng, creado_en FROM rastro
+       WHERE conductor_id = $1
+         AND creado_en BETWEEN $2 AND COALESCE($3, $2::timestamptz + interval '3 hours')
+       ORDER BY creado_en
+       LIMIT 3000`,
+      [c.conductor_id, c.desde, c.hasta],
+    );
+    const recogida = c.recogido_en === null ? null : new Date(c.recogido_en).getTime();
+    const ida: Array<{ lat: number; lng: number }> = [];
+    const conCliente: Array<{ lat: number; lng: number }> = [];
+    for (const m of migas.rows) {
+      const punto = { lat: m.lat, lng: m.lng };
+      if (recogida === null || new Date(m.creado_en).getTime() < recogida) ida.push(punto);
+      else conCliente.push(punto);
+    }
+    return {
+      ...extremos,
+      tramos: [ida, conCliente].filter((t) => t.length > 1),
+    };
   });
 
   // Las últimas solicitudes de la central, con lo que el operador tiene que

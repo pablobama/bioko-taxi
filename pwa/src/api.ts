@@ -250,6 +250,8 @@ export interface PuntoMapa {
 export interface TaxiVivo {
   conductor_id: number;
   nombre: string;
+  // Para que la tarjeta del mapa pueda llamarle sin ir a buscar la ficha.
+  telefono: string;
   matricula: string | null;
   estado: string;
   zona: string | null;
@@ -261,6 +263,19 @@ export interface TaxiVivo {
   visto_hace_seg: number | null;
   latido_hace_seg: number | null;
   solicitud_id: number | null;
+}
+
+// Dónde se pidió taxi hace poco y murió sin oferta (06/10): los puntos
+// apagados del mapa — la demanda que no se está sirviendo.
+export interface SinOfertaViva {
+  id: number;
+  creada_en: string;
+  telefono_cliente: string | null;
+  hace_seg: number;
+  origen: string;
+  origen_lat: number;
+  origen_lng: number;
+  destino: string;
 }
 
 export interface ViajeVivo {
@@ -665,6 +680,11 @@ export interface ViajeOperador {
   // llegó a ese punto: una cancelada no tiene recogida que contar.
   recogido_en: string | null;
   bajada_en: string | null;
+  emitido_en: string | null;
+  // La zona del origen y la del destino, del catálogo: cada referencia vive
+  // en una. No se guarda aparte porque ya está dicho.
+  zona_recogida: string;
+  zona_bajada: string;
   telefono_cliente: string | null;
   precio_xaf: number | null;
   origen: string;
@@ -1213,6 +1233,17 @@ export const api = {
       body: JSON.stringify({ telefono, canal }),
     }),
 
+  // El alta de un taxista hecha por el operador (06/10). Nace verificado
+  // —lo verificó quien lo dio de alta— y con el teléfono por confirmar.
+  darDeAltaTaxista: (datos: {
+    nombre: string; telefono: string; matricula: string; marca: string;
+    carroceria: string; color?: string; aireAcondicionado?: boolean; seguro?: boolean;
+  }) =>
+    pedirJson<{ conductorId: number }>('/api/operador/conductores', {
+      method: 'POST',
+      body: JSON.stringify(datos),
+    }),
+
   // Cambiar el número con el que entra alguien (05/10). No es editar un dato
   // de contacto: es cambiarle la llave, y el número nuevo queda sin verificar.
   cambiarTelefonoConductor: (conductorId: number, telefono: string) =>
@@ -1275,9 +1306,24 @@ export const api = {
     }),
 
   vivoOperador: () =>
-    pedirJson<{ taxis: TaxiVivo[]; viajes: ViajeVivo[]; momento: string }>(
-      '/api/operador/vivo',
-    ),
+    pedirJson<{
+      taxis: TaxiVivo[]; viajes: ViajeVivo[]; sinOferta: SinOfertaViva[]; momento: string;
+    }>('/api/operador/vivo'),
+
+  // La traza de una carrera: por dónde fue de verdad, del rastro del taxi.
+  trazaViaje: (viajeId: number) =>
+    pedirJson<{
+      origen: { nombre: string; lat: number; lng: number };
+      destino: { nombre: string; lat: number; lng: number };
+      tramos: Array<Array<{ lat: number; lng: number }>>;
+    }>(`/api/operador/viajes/${viajeId}/traza`),
+
+  // La oferta dirigida (06/10): mandarle ESTA carrera a ESTE taxi. Él decide.
+  ofrecerViaje: (viajeId: number, conductorId: number) =>
+    pedirJson<{ ofrecida: boolean }>(`/api/operador/viajes/${viajeId}/ofrecer`, {
+      method: 'POST',
+      body: JSON.stringify({ conductorId }),
+    }),
 
   incidenciasOperador: (estado?: 'pendientes' | 'resueltas') =>
     pedirJson<{ incidencias: IncidenciaOperador[] }>(
