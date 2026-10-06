@@ -19,6 +19,21 @@ export interface ServicioVerificacionTelefono {
   comprobarCodigo(telefono: string, codigo: string): Promise<boolean>;
 }
 
+// Lo que ve la persona cuando Twilio falla: corto, en su sitio y con el único
+// dato que le sirve — el número que tiene que dictarle al operador para que
+// alguien busque qué pasó. «De avería» a propósito: si dijera solo «este
+// código», más de uno intentaría escribir 60223 en la casilla del código.
+export class ErrorDeTwilio extends Error {
+  statusCode = 502;
+
+  constructor(public readonly codigoTwilio: number) {
+    super(
+      'No se ha podido mandar el código. Contacta con el operador y dile este '
+      + `número de avería: ${codigoTwilio}.`,
+    );
+  }
+}
+
 // Implementación real: API REST de Twilio Verify. No requiere registro A2P
 // 10DLC (a diferencia de un número normal de mensajería) porque Verify está
 // pensado para códigos de un solo uso.
@@ -54,7 +69,15 @@ export class ServicioVerificacionTwilio implements ServicioVerificacionTelefono 
     );
     const datos = await respuesta.json() as Record<string, unknown>;
     if (!respuesta.ok) {
-      throw new Error(`Twilio Verify respondió ${respuesta.status}: ${JSON.stringify(datos)}`);
+      // El detalle entero, AL LOG y no a la persona. El mensaje de este error
+      // viajaba tal cual hasta la pantalla —el manejador de la API reenvía
+      // `message`— y quien no podía entrar se encontraba con «delivery
+      // channel disabled code 60223»: las tripas de Twilio en inglés, que no
+      // le dicen qué hacer y sí le enseñan con qué está hecha la plataforma.
+      console.error(`Twilio Verify respondió ${respuesta.status}: ${JSON.stringify(datos)}`);
+      throw new ErrorDeTwilio(
+        typeof datos.code === 'number' ? datos.code : respuesta.status,
+      );
     }
     return datos;
   }
@@ -71,8 +94,19 @@ export class ServicioVerificacionTwilio implements ServicioVerificacionTelefono 
   }
 
   async comprobarCodigo(telefono: string, codigo: string): Promise<boolean> {
-    const datos = await this.llamar('VerificationCheck', { To: telefono, Code: codigo });
-    return datos.status === 'approved';
+    try {
+      const datos = await this.llamar('VerificationCheck', { To: telefono, Code: codigo });
+      return datos.status === 'approved';
+    } catch (error) {
+      // 20404: la verificación ya no existe — caducó, o se acertó antes. Para
+      // quien teclea, eso ES un código que no vale, no una avería: se le dice
+      // «código incorrecto» y pide otro, en vez de mandarle al operador con
+      // un número de avería por algo que se arregla solo.
+      if (error instanceof ErrorDeTwilio && error.codigoTwilio === 20404) {
+        return false;
+      }
+      throw error;
+    }
   }
 }
 
