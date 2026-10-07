@@ -794,6 +794,42 @@ export function registrarRutasOperador(
     return { conductorId: resultado.conductorId, numeroTaxi: resultado.numero };
   });
 
+  // Registro de vehículos (migración 087): todos los coches con sus datos,
+  // su conductor y su dueño. Para el panel de registros.
+  app.get('/api/operador/vehiculos', async (req) => {
+    await exigirOperador(req);
+    const res = await pool.query(
+      `SELECT v.matricula, v.marca, v.carroceria, v.color, v.plazas,
+              v.aire_acondicionado, v.seguro,
+              c.id::int AS conductor_id, c.nombre AS conductor, c.apellido AS conductor_apellido,
+              c.telefono AS conductor_telefono, c.numero_taxi,
+              p.nombre AS dueno, p.apellido AS dueno_apellido, p.dip AS dueno_dip
+       FROM vehiculo v
+       JOIN conductor c ON c.id = v.conductor_id
+       LEFT JOIN propietario p ON p.id = v.propietario_id
+       ORDER BY c.numero_taxi NULLS LAST, v.matricula
+       LIMIT 500`,
+    );
+    return { vehiculos: res.rows };
+  });
+
+  // Registro de propietarios (migración 087): cada dueño con sus datos y los
+  // coches que tiene (la flota).
+  app.get('/api/operador/propietarios', async (req) => {
+    await exigirOperador(req);
+    const res = await pool.query(
+      `SELECT p.id::int AS id, p.nombre, p.apellido, p.telefono, p.dip, p.creado_en,
+              count(v.id)::int AS coches,
+              array_remove(array_agg(v.matricula ORDER BY v.matricula), NULL) AS matriculas
+       FROM propietario p
+       LEFT JOIN vehiculo v ON v.propietario_id = p.id
+       GROUP BY p.id
+       ORDER BY p.creado_en DESC
+       LIMIT 500`,
+    );
+    return { propietarios: res.rows };
+  });
+
   app.get('/api/operador/conductores', async (req) => {
     await exigirOperador(req);
     const { estado, q } = (req.query ?? {}) as { estado?: string; q?: string };

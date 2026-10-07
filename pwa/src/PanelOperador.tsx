@@ -13,8 +13,8 @@ import {
   type FichaConductorOperador, type FichaPasajeroOperador, type IncidenciaOperador,
   type ParametroOperador, type PasajeroOperador, type PeriodoRecorrido,
   type RecargaOperador, type RecorridoOperador, type ReferenciaOperador,
-  type SaludOperador, type SinOfertaViva, type SolicitudCentral, type TaxiVivo,
-  type TransicionOperador,
+  type PropietarioRegistro, type SaludOperador, type SinOfertaViva, type SolicitudCentral,
+  type TaxiVivo, type TransicionOperador, type VehiculoRegistro,
   type ViajeVivo,
   type ViajeOperador, type ViajeResumenOperador, type ZonaOperador,
 } from './api';
@@ -2647,9 +2647,70 @@ function TaxisPorZona() {
 // nada que pulsar dentro de ninguno, que es lo que los hace registros.
 const TIPOS_REGISTRO = [
   ['carreras', 'Carreras'],
+  ['vehiculos', 'Vehículos'],
+  ['propietarios', 'Propietarios'],
   ['flota', 'Taxis por zona'],
   ['cambios', 'Quién tocó qué'],
 ] as const;
+
+// El registro de todos los vehículos (migración 087): el coche, de quién es y
+// quién lo conduce, en una tabla que se recorre comparando.
+function RegistroVehiculos() {
+  const [lista, setLista] = useState<VehiculoRegistro[] | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.vehiculosOperador().then((r) => setLista(r.vehiculos))
+      .catch((e) => setError(e instanceof Error ? e.message : 'No se pudo cargar.'));
+  }, []);
+  if (error) return <p className="aviso">{error}</p>;
+  if (lista === null) return <p className="nota">Cargando…</p>;
+  if (lista.length === 0) return <p className="nota">Ningún vehículo todavía.</p>;
+  return (
+    <Tabla cabeceras={['Nº', 'Matrícula', 'Tipo', 'Marca', 'Conductor', 'Dueño', 'Extras']}>
+      {lista.map((v) => (
+        <tr key={v.matricula}>
+          <td className="tabla-clave">{v.numero_taxi ?? '—'}</td>
+          <td className="tabla-clave">{v.matricula}</td>
+          <td>{v.carroceria ? (ETIQUETA_CARROCERIA[v.carroceria] ?? v.carroceria) : '—'}</td>
+          <td>{v.marca ?? '—'}{v.color ? ` · ${v.color}` : ''}</td>
+          <td>{v.conductor}{v.conductor_apellido ? ` ${v.conductor_apellido}` : ''}
+            <span className="tabla-tenue"> · {v.conductor_telefono}</span></td>
+          <td>{v.dueno === null ? '—' : `${v.dueno} ${v.dueno_apellido ?? ''}`.trim()}</td>
+          <td className="tabla-tenue">
+            {[v.aire_acondicionado ? 'aire' : null, v.seguro ? 'seguro' : null,
+              v.plazas ? `${v.plazas} pl.` : null].filter(Boolean).join(' · ') || '—'}
+          </td>
+        </tr>
+      ))}
+    </Tabla>
+  );
+}
+
+// El registro de propietarios (migración 087): cada dueño con su flota.
+function RegistroPropietarios() {
+  const [lista, setLista] = useState<PropietarioRegistro[] | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.propietariosOperador().then((r) => setLista(r.propietarios))
+      .catch((e) => setError(e instanceof Error ? e.message : 'No se pudo cargar.'));
+  }, []);
+  if (error) return <p className="aviso">{error}</p>;
+  if (lista === null) return <p className="nota">Cargando…</p>;
+  if (lista.length === 0) return <p className="nota">Ningún propietario todavía.</p>;
+  return (
+    <Tabla cabeceras={['Nombre', 'Teléfono', 'DIP', 'Coches', 'Matrículas']}>
+      {lista.map((p) => (
+        <tr key={p.id}>
+          <td>{p.nombre} {p.apellido}</td>
+          <td className="tabla-tenue">{p.telefono}</td>
+          <td className="tabla-clave">{p.dip}</td>
+          <td className="tabla-numero">{p.coches}</td>
+          <td className="tabla-tenue">{p.matriculas.join(', ') || '—'}</td>
+        </tr>
+      ))}
+    </Tabla>
+  );
+}
 
 function Registros({ alVerViaje }: { alVerViaje?: (id: number) => void }) {
   const [tipo, setTipo] = useState<(typeof TIPOS_REGISTRO)[number][0]>('carreras');
@@ -2667,6 +2728,8 @@ function Registros({ alVerViaje }: { alVerViaje?: (id: number) => void }) {
         ))}
       </div>
       {tipo === 'carreras' && <Viajes alVerEnMapa={alVerViaje} />}
+      {tipo === 'vehiculos' && <RegistroVehiculos />}
+      {tipo === 'propietarios' && <RegistroPropietarios />}
       {tipo === 'flota' && <TaxisPorZona />}
       {tipo === 'cambios' && <Cambios />}
     </>

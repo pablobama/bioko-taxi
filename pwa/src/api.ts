@@ -247,6 +247,35 @@ export interface PuntoMapa {
 // de al lado tienen que contar lo mismo, y tres peticiones sueltas serían tres
 // relojes distintos.
 
+export interface VehiculoRegistro {
+  matricula: string;
+  marca: string | null;
+  carroceria: string | null;
+  color: string | null;
+  plazas: number | null;
+  aire_acondicionado: boolean;
+  seguro: boolean;
+  conductor_id: number;
+  conductor: string;
+  conductor_apellido: string | null;
+  conductor_telefono: string;
+  numero_taxi: string | null;
+  dueno: string | null;
+  dueno_apellido: string | null;
+  dueno_dip: string | null;
+}
+
+export interface PropietarioRegistro {
+  id: number;
+  nombre: string;
+  apellido: string;
+  telefono: string;
+  dip: string;
+  creado_en: string;
+  coches: number;
+  matriculas: string[];
+}
+
 export interface TaxiVivo {
   conductor_id: number;
   nombre: string;
@@ -1346,6 +1375,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ uuid }),
     }),
+
+  // Registros de vehículos y propietarios (migración 087).
+  vehiculosOperador: () =>
+    pedirJson<{ vehiculos: VehiculoRegistro[] }>('/api/operador/vehiculos'),
+  propietariosOperador: () =>
+    pedirJson<{ propietarios: PropietarioRegistro[] }>('/api/operador/propietarios'),
 
   vivoOperador: () =>
     pedirJson<{
