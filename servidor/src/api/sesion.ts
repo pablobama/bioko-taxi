@@ -195,6 +195,13 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
         [telefono],
       );
       let conductorId: number;
+      // ¿Ya estaba verificado ANTES de este reenvío? Si lo estaba, la central
+      // validó su coche con los papeles delante, y el taxista no puede
+      // cambiarle la matrícula, la marca ni el tipo desde su móvil — solo las
+      // comodidades (color, aire, seguro). Es el mismo corte que la app pone
+      // en gris; aquí se hace de verdad, para que no valga saltárselo a mano.
+      const yaValidado = (existente.rowCount ?? 0) > 0
+        && existente.rows[0].estado_verificacion === 'verificado';
       if ((existente.rowCount ?? 0) > 0) {
         conductorId = existente.rows[0].id;
         // Auto-aceptar (decisión del 2026-07-28, «por ahora», ver
@@ -238,12 +245,24 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
         [conductorId],
       );
       if ((vehiculo.rowCount ?? 0) > 0) {
-        await cliente.query(
-          `UPDATE vehiculo SET matricula = $2, marca = $3, carroceria = $4, color = COALESCE($5, color),
-             aire_acondicionado = $6, seguro = $7
-           WHERE conductor_id = $1`,
-          [conductorId, matricula, marca, carroceria, cuerpo.color?.trim() || null, aireAcondicionado, seguro],
-        );
+        // Con el coche ya validado, la matrícula/marca/tipo se dejan como
+        // están (COALESCE a lo que ya hay sería igual, pero se omiten del SET
+        // para que quede claro que no se tocan); solo cambian las comodidades.
+        if (yaValidado) {
+          await cliente.query(
+            `UPDATE vehiculo SET color = COALESCE($2, color),
+               aire_acondicionado = $3, seguro = $4
+             WHERE conductor_id = $1`,
+            [conductorId, cuerpo.color?.trim() || null, aireAcondicionado, seguro],
+          );
+        } else {
+          await cliente.query(
+            `UPDATE vehiculo SET matricula = $2, marca = $3, carroceria = $4, color = COALESCE($5, color),
+               aire_acondicionado = $6, seguro = $7
+             WHERE conductor_id = $1`,
+            [conductorId, matricula, marca, carroceria, cuerpo.color?.trim() || null, aireAcondicionado, seguro],
+          );
+        }
       } else {
         await cliente.query(
           `INSERT INTO vehiculo (conductor_id, matricula, marca, carroceria, color, aire_acondicionado, seguro)

@@ -1235,19 +1235,29 @@ function AjustesConductor({
         onChange={(e) => setNombre(e.target.value)} />
       <input type="email" value={correo} placeholder={t('campo.correo2')}
         onChange={(e) => setCorreo(e.target.value)} />
+      {/* El coche lo valida la central al dar de alta: una vez verificado,
+          la matrícula, la marca y el tipo quedan en solo lectura, porque son
+          los datos que el operador comprobó con los papeles. El taxista
+          cambia lo suyo; el coche, hablando con la central. */}
+      {conductor.verificado && (
+        <p className="nota">{t('ajustesConductor.cocheValidado')}</p>
+      )}
       <input type="text" value={matricula} placeholder={t('campo.matricula')}
+        disabled={conductor.verificado}
         onChange={(e) => setMatricula(e.target.value)} />
       <input type="text" value={marca} placeholder={t('campo.marcaModelo')}
+        disabled={conductor.verificado}
         onChange={(e) => setMarca(e.target.value)} />
-      <div className="fila">
+      {/* Desplegable, no botones: cuatro tipos en fila desbordaban la
+          pantalla del móvil. */}
+      <select
+        value={carroceria} disabled={conductor.verificado}
+        onChange={(e) => setCarroceria(e.target.value as typeof carroceria)}
+      >
         {(['turismo', '4x4', 'furgoneta', 'autobus'] as const).map((tipo) => (
-          <button
-            key={tipo} type="button"
-            className={carroceria === tipo ? 'principal' : 'secundario'}
-            onClick={() => setCarroceria(tipo)}
-          >{t(`carroceria.${tipo}`)}</button>
+          <option key={tipo} value={tipo}>{t(`carroceria.${tipo}`)}</option>
         ))}
-      </div>
+      </select>
       <label className="casilla">
         <input type="checkbox" checked={aireAcondicionado}
           onChange={(e) => setAireAcondicionado(e.target.checked)} />

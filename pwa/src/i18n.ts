@@ -82,6 +82,7 @@ const es: Diccionario = {
   // Ajustes del taxista
   'ajustesConductor.titulo': 'Tus datos',
   'ajustesConductor.telefono': 'Teléfono: {telefono} (no se puede cambiar aquí: es tu identidad en el sistema).',
+  'ajustesConductor.cocheValidado': 'El coche lo validó la central. Para cambiar la matrícula, la marca o el tipo, habla con ellos.',
   'campo.nombre': 'Nombre',
   'campo.correo2': 'Correo',
   'sonido.encendido': '🔔 Avisos sonoros encendidos',
@@ -510,6 +511,7 @@ const fr: Diccionario = {
 
   'ajustesConductor.titulo': 'Tes données',
   'ajustesConductor.telefono': 'Téléphone : {telefono} (non modifiable ici : c’est ton identité dans le système).',
+  'ajustesConductor.cocheValidado': 'La centrale a validé le véhicule. Pour changer la plaque, la marque ou le type, contacte-la.',
   'campo.nombre': 'Nom',
   'campo.correo2': 'E-mail',
   'sonido.encendido': '🔔 Alertes sonores activées',
@@ -911,6 +913,7 @@ const en: Diccionario = {
 
   'ajustesConductor.titulo': 'Your details',
   'ajustesConductor.telefono': 'Phone: {telefono} (can’t be changed here: it’s your identity in the system).',
+  'ajustesConductor.cocheValidado': 'The office verified the car. To change the plate, make or type, talk to them.',
   'campo.nombre': 'Name',
   'campo.correo2': 'Email',
   'sonido.encendido': '🔔 Sound alerts on',

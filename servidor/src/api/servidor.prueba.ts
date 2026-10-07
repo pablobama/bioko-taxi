@@ -247,6 +247,45 @@ test('alta de taxista: valida los datos y no deja robar una matrícula ajena', a
   }
 });
 
+// Con el coche ya validado, el taxista no le cambia la matrícula ni el tipo
+// desde su móvil (migración 087): la app lo pone en gris y el servidor lo hace
+// de verdad. Solo las comodidades (aire, seguro) siguen a su alcance.
+test('coche validado: el taxista no cambia matrícula ni tipo, solo las comodidades', async () => {
+  const uuid = randomUUID();
+  const telefono = telefonoUnico();
+  const base = sufijoUnico();
+  // El alta propia nace verificada (auto-aceptación vigente), así que el coche
+  // queda validado desde la primera vez.
+  const primera = await app.inject({
+    method: 'POST', url: '/api/conductor/alta', headers: cabeceras(uuid),
+    payload: {
+      nombre: 'Dueño', telefono, matricula: `GE-A${base}`,
+      marca: 'Toyota', carroceria: 'turismo', aireAcondicionado: false,
+    },
+  });
+  assert.equal(primera.statusCode, 200, primera.body);
+
+  // Reenvía con otra matrícula, otro tipo y el aire puesto.
+  const segunda = await app.inject({
+    method: 'POST', url: '/api/conductor/alta', headers: cabeceras(uuid),
+    payload: {
+      nombre: 'Dueño', telefono, matricula: `GE-B${base}`,
+      marca: 'Nissan', carroceria: 'autobus', aireAcondicionado: true,
+    },
+  });
+  assert.equal(segunda.statusCode, 200, segunda.body);
+
+  const v = await pool.query(
+    `SELECT matricula, marca, carroceria, aire_acondicionado
+     FROM vehiculo WHERE conductor_id = (SELECT id FROM conductor WHERE telefono = $1)`,
+    [telefono],
+  );
+  assert.equal(v.rows[0].matricula, `GE-A${base}`, 'la matrícula validada no cambia');
+  assert.equal(v.rows[0].marca, 'Toyota', 'la marca validada no cambia');
+  assert.equal(v.rows[0].carroceria, 'turismo', 'el tipo validado no cambia');
+  assert.equal(v.rows[0].aire_acondicionado, true, 'la comodidad sí cambia');
+});
+
 test('un dispositivo de pasajero no puede darse de alta como taxista', async () => {
   const uuid = randomUUID();
   await app.inject({
