@@ -16,7 +16,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
-import { anunciarLlamadaEntrante, sonarTimbreLlamada, sonarTonoLlamando } from './sonidos';
+import {
+  anunciarLlamadaEntrante, permitirGrabar, sonarTimbreLlamada, sonarTonoLlamando,
+  volverAReproducir,
+} from './sonidos';
 
 export type EstadoLlamada =
   // Sin llamada.
@@ -198,6 +201,11 @@ export function useLlamada({ vivo, locale = 'es-ES' }: { vivo: boolean; locale?:
     ofertaPendiente.current = null;
     setSegundos(0);
     setSilenciado(false);
+    // La sesión vuelve a «playback»: es lo que devuelve los avisos con el
+    // interruptor de silencio puesto, que es como está casi siempre el
+    // teléfono. Sin esto, tras una llamada la radio y los tonos cambiarían
+    // de comportamiento sin motivo aparente.
+    volverAReproducir();
   }, []);
 
   const crearConexion = useCallback(async (): Promise<RTCPeerConnection> => {
@@ -211,6 +219,12 @@ export function useLlamada({ vivo, locale = 'es-ES' }: { vivo: boolean; locale?:
       e.name = 'SinMicrofono';
       throw e;
     }
+    // Declarar que esta página va a GRABAR, no solo reproducir. En iOS, una
+    // PWA instalada tiene la sesión de audio en «playback» —lo que hace que
+    // los tonos y la radio suenen con el silencio puesto— y getUserMedia
+    // rechaza desde ahí con InvalidStateError. Es el mismo arreglo que ya
+    // lleva la radio; a la llamada le faltaba.
+    permitirGrabar();
     const iceServers = await servidoresDeRed(conQuien.current!);
     // Construir la conexión puede lanzar si un servidor ICE es inválido pese
     // al filtro; antes que perder la llamada, se reintenta sin servidores —con
@@ -279,6 +293,9 @@ export function useLlamada({ vivo, locale = 'es-ES' }: { vivo: boolean; locale?:
     setDetalleFallo(null);
     setEstado('saliente');
     setOtroLadoAusente(false);
+    // Dentro del gesto del botón, antes de cualquier await: cambiar la sesión
+    // de audio después ya no cuenta como activación del usuario en iOS.
+    permitirGrabar();
     void (async () => {
       try {
         const pc = await crearConexion();
@@ -307,6 +324,7 @@ export function useLlamada({ vivo, locale = 'es-ES' }: { vivo: boolean; locale?:
     const oferta = ofertaPendiente.current;
     if (!oferta || estado !== 'entrante') return;
     setEstado('conectando');
+    permitirGrabar();
     void (async () => {
       try {
         const pc = await crearConexion();
