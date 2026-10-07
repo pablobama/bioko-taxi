@@ -548,6 +548,50 @@ export function registrarRutasOperador(
     return { telefono: nuevo, antes: anterior };
   }
 
+  // Editar los datos del taxista: nombre, apellido, DIP y correo (migración
+  // 087). El teléfono NO —ese se cambia aparte, porque es con lo que entra—.
+  app.post('/api/operador/conductores/:id/datos', async (req) => {
+    await exigirOperador(req);
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
+    const cuerpo = (req.body ?? {}) as {
+      nombre?: string; apellido?: string; dip?: string; correo?: string;
+    };
+    const nombre = cuerpo.nombre?.trim();
+    const apellido = cuerpo.apellido?.trim();
+    if (!nombre || !apellido) {
+      throw errorHttp(400, 'El nombre y el apellido son obligatorios.');
+    }
+    const dip = dipValido(cuerpo.dip);
+    if (cuerpo.dip && dip === null) {
+      throw errorHttp(400, 'El DIP tiene que ser nueve dígitos.');
+    }
+    const correo = cuerpo.correo?.trim().toLowerCase() || null;
+    if (correo && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(correo)) {
+      throw errorHttp(400, `Correo no válido: «${correo}».`);
+    }
+    // El DIP, único entre conductores: si lo cambia por el de otro, 409.
+    if (dip !== null) {
+      const ajeno = await pool.query(
+        'SELECT nombre FROM conductor WHERE dip = $1 AND id <> $2',
+        [dip, id],
+      );
+      if ((ajeno.rowCount ?? 0) > 0) {
+        throw errorHttp(409, `Ese DIP ya es de otro conductor (${ajeno.rows[0].nombre}).`);
+      }
+    }
+    const res = await pool.query(
+      `UPDATE conductor
+       SET nombre = $2, apellido = $3,
+           dip = COALESCE($4, dip),
+           correo = $5
+       WHERE id = $1`,
+      [id, nombre, apellido, dip, correo],
+    );
+    if (res.rowCount === 0) throw errorHttp(404, 'Conductor no encontrado.');
+    return { guardado: true };
+  });
+
   app.post('/api/operador/conductores/:id/telefono', async (req) => {
     await exigirOperador(req);
     const id = Number((req.params as { id: string }).id);
@@ -581,6 +625,49 @@ export function registrarRutasOperador(
   // confirma el propio taxista con un código —o con el vale del operador— la
   // primera vez que entra. Y a propósito NO se toca `dispositivo`: el aparato
   // del operador no puede quedarse vinculado como si fuera el taxi.
+  // La foto del taxista (migración 088). El cuerpo es la imagen YA reducida en
+  // el navegador (un lado de 400 px); aquí solo se guarda tal cual.
+  app.addContentTypeParser(
+    /^image\//,
+    { parseAs: 'buffer', bodyLimit: 2_000_000 },
+    (_req, cuerpo, hecho) => { hecho(null, cuerpo); },
+  );
+
+  app.post('/api/operador/conductores/:id/foto', async (req) => {
+    await exigirOperador(req);
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
+    const foto = req.body;
+    if (!Buffer.isBuffer(foto) || foto.length === 0) {
+      throw errorHttp(400, 'El cuerpo tiene que ser la imagen, con content-type image/...');
+    }
+    const tipo = String(req.headers['content-type'] ?? 'image/jpeg');
+    const res = await pool.query(
+      'UPDATE conductor SET foto = $2, foto_tipo = $3 WHERE id = $1',
+      [id, foto, tipo],
+    );
+    if (res.rowCount === 0) throw errorHttp(404, 'Conductor no encontrado.');
+    return { subida: true };
+  });
+
+  app.get('/api/operador/conductores/:id/foto', async (req, reply) => {
+    await exigirOperador(req);
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
+    const res = await pool.query(
+      'SELECT foto, foto_tipo FROM conductor WHERE id = $1',
+      [id],
+    );
+    if (res.rowCount === 0 || res.rows[0].foto === null) {
+      throw errorHttp(404, 'Ese taxista no tiene foto.');
+    }
+    // Se puede cachear en el navegador un rato: una foto de carnet no cambia
+    // cada minuto, y volver a abrir la ficha no tiene que bajarla otra vez.
+    void reply.header('cache-control', 'private, max-age=600');
+    void reply.type(res.rows[0].foto_tipo ?? 'image/jpeg');
+    return res.rows[0].foto;
+  });
+
   app.post('/api/operador/conductores', async (req) => {
     await exigirOperador(req);
     const cuerpo = (req.body ?? {}) as {
@@ -747,6 +834,7 @@ export function registrarRutasOperador(
 
     const ficha = await pool.query(
       `SELECT c.id, c.nombre, c.apellido, c.dip, c.telefono, c.correo, c.estado_verificacion,
+              (c.foto IS NOT NULL) AS tiene_foto,
               c.numero_taxi, c.suscrito_hasta, c.es_agente, c.recibe_en_cualquier_zona,
               v.matricula, v.marca, v.color, v.carroceria, v.plazas,
               v.aire_acondicionado, v.seguro,

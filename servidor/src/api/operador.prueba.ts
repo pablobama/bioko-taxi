@@ -1090,6 +1090,64 @@ test('alta por el operador: verificado, número por confirmar y sin robarle el a
 // El propietario (migración 087): el dueño distinto del conductor, la flota
 // —dos coches del mismo DIP reutilizan la ficha— y las validaciones del DIP y
 // de los tipos nuevos de vehículo.
+// Editar los datos del taxista y subir su foto (migraciones 087/088).
+test('ficha: editar datos del taxista y subir su foto', async () => {
+  const telefono = telefonoUnico();
+  const alta = await app.inject({
+    method: 'POST', url: '/api/operador/conductores', headers: cabeceras(UUID_OPERADOR),
+    payload: {
+      nombre: 'Antes', apellido: 'Viejo', telefono, dip: dipUnico(), duenoConduce: true,
+      matricula: `MB-${telefono.slice(-5)}E`, marca: 'Toyota', carroceria: 'turismo',
+    },
+  });
+  assert.equal(alta.statusCode, 200, alta.body);
+  const id = Number(alta.json().conductorId);
+
+  // Editar nombre, apellido y correo.
+  const nuevoDip = dipUnico();
+  const editar = await app.inject({
+    method: 'POST', url: `/api/operador/conductores/${id}/datos`, headers: cabeceras(UUID_OPERADOR),
+    payload: { nombre: 'Ahora', apellido: 'Nuevo', dip: nuevoDip, correo: 'a@b.com' },
+  });
+  assert.equal(editar.statusCode, 200, editar.body);
+  const fila = await pool.query('SELECT nombre, apellido, dip, correo FROM conductor WHERE id = $1', [id]);
+  assert.equal(fila.rows[0].nombre, 'Ahora');
+  assert.equal(fila.rows[0].apellido, 'Nuevo');
+  assert.equal(fila.rows[0].dip, nuevoDip);
+  assert.equal(fila.rows[0].correo, 'a@b.com');
+
+  // Un DIP de tres cifras no cuela.
+  const malDip = await app.inject({
+    method: 'POST', url: `/api/operador/conductores/${id}/datos`, headers: cabeceras(UUID_OPERADOR),
+    payload: { nombre: 'X', apellido: 'Y', dip: '12' },
+  });
+  assert.equal(malDip.statusCode, 400);
+
+  // La ficha empieza sin foto; tras subirla, tiene_foto es true y se sirve.
+  const sinFoto = await app.inject({
+    method: 'GET', url: `/api/operador/conductores/${id}`, headers: cabeceras(UUID_OPERADOR),
+  });
+  assert.equal(sinFoto.json().tiene_foto, false);
+
+  const subir = await app.inject({
+    method: 'POST', url: `/api/operador/conductores/${id}/foto`,
+    headers: { ...cabeceras(UUID_OPERADOR), 'content-type': 'image/jpeg' },
+    payload: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+  });
+  assert.equal(subir.statusCode, 200, subir.body);
+
+  const conFoto = await app.inject({
+    method: 'GET', url: `/api/operador/conductores/${id}`, headers: cabeceras(UUID_OPERADOR),
+  });
+  assert.equal(conFoto.json().tiene_foto, true);
+
+  const servida = await app.inject({
+    method: 'GET', url: `/api/operador/conductores/${id}/foto`, headers: cabeceras(UUID_OPERADOR),
+  });
+  assert.equal(servida.statusCode, 200);
+  assert.match(servida.headers['content-type'] as string, /image\/jpeg/);
+});
+
 test('alta con propietario: dueño aparte, flota por DIP, y DIP/carrocería validados', async () => {
   const dipDueno = dipUnico();
   function altaConDueno(extra: Record<string, unknown> = {}) {

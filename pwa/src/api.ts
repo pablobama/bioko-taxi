@@ -514,6 +514,8 @@ export interface FichaConductorOperador {
   }>;
   // El dueño del coche (migración 087). Null si aún no se ha registrado.
   propietario: PropietarioFicha | null;
+  // Si tiene foto subida (migración 088), para decidir si pedirla.
+  tiene_foto: boolean;
 }
 
 export interface PasajeroOperador {
@@ -1250,6 +1252,22 @@ export const api = {
       body: JSON.stringify({ telefono, canal }),
     }),
 
+  // Editar los datos del taxista (nombre, apellido, DIP, correo). El teléfono
+  // va aparte (cambiarTelefonoConductor).
+  editarDatosConductor: (id: number, datos: {
+    nombre: string; apellido: string; dip?: string; correo?: string;
+  }) =>
+    pedirJson<{ guardado: boolean }>(`/api/operador/conductores/${id}/datos`, {
+      method: 'POST', body: JSON.stringify(datos),
+    }),
+
+  // Subir la foto del taxista (migración 088). La imagen llega YA reducida en
+  // el navegador; aquí solo viaja como cuerpo binario.
+  subirFotoConductor: (id: number, imagen: Blob) =>
+    pedirJson<{ subida: boolean }>(`/api/operador/conductores/${id}/foto`, {
+      method: 'POST', body: imagen, headers: { 'content-type': imagen.type || 'image/jpeg' },
+    }),
+
   // El alta de un taxista hecha por el operador (06/10). Nace verificado
   // —lo verificó quien lo dio de alta— y con el teléfono por confirmar.
   darDeAltaTaxista: (datos: {
@@ -1654,6 +1672,20 @@ export async function bajarVozRadio(
     },
   });
   // Un 404 es lo normal pasadas dos horas: el mensaje se borró. No es un fallo.
+  if (!respuesta.ok) return null;
+  return respuesta.blob();
+}
+
+// Baja la foto del taxista como blob, con las cabeceras de siempre (no por
+// URL: una foto de carnet no se comparte pegando un enlace). Null si no tiene.
+export async function bajarFotoConductor(id: number): Promise<Blob | null> {
+  await asegurarSecreto();
+  const respuesta = await fetch(`/api/operador/conductores/${id}/foto`, {
+    headers: {
+      'x-dispositivo': uuidDispositivo(),
+      ...(secretoDispositivo() !== null ? { 'x-secreto': secretoDispositivo()! } : {}),
+    },
+  });
   if (!respuesta.ok) return null;
   return respuesta.blob();
 }

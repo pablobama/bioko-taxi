@@ -18,7 +18,7 @@ import {
   type ViajeVivo,
   type ViajeOperador, type ViajeResumenOperador, type ZonaOperador,
 } from './api';
-import { abrirEventosOperador } from './api';
+import { abrirEventosOperador, bajarFotoConductor } from './api';
 import { ESTILO_CATEGORIA } from './categorias';
 import { metrosEntre } from './geo';
 import { crearT } from './i18n';
@@ -776,20 +776,159 @@ function ValeDeEntrada({ telefono }: { telefono: string | null }) {
   );
 }
 
+// Reduce una imagen a un lado máximo y la devuelve como JPEG. En el navegador
+// y no en el servidor: así lo que viaja ya es pequeño y el servidor no necesita
+// una librería de imágenes (migración 088).
+async function reducirImagen(archivo: File, lado = 400): Promise<Blob> {
+  const img = await createImageBitmap(archivo);
+  const escala = Math.min(1, lado / Math.max(img.width, img.height));
+  const w = Math.max(1, Math.round(img.width * escala));
+  const h = Math.max(1, Math.round(img.height * escala));
+  const lienzo = document.createElement('canvas');
+  lienzo.width = w;
+  lienzo.height = h;
+  lienzo.getContext('2d')!.drawImage(img, 0, 0, w, h);
+  return new Promise((res, rej) => {
+    lienzo.toBlob((b) => (b ? res(b) : rej(new Error('no se pudo'))), 'image/jpeg', 0.82);
+  });
+}
+
+// La foto del taxista: la enseña y deja cambiarla. El operador la saca con la
+// cámara (en el móvil, el input abre la cámara) o elige un archivo.
+function FotoTaxista({ id, tieneFoto, alCambiar }: {
+  id: number; tieneFoto: boolean; alCambiar: () => void;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [subiendo, setSubiendo] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let vivo = true;
+    let actual: string | null = null;
+    if (tieneFoto) {
+      bajarFotoConductor(id).then((blob) => {
+        if (!vivo || blob === null) return;
+        actual = URL.createObjectURL(blob);
+        setUrl(actual);
+      }).catch(() => undefined);
+    } else {
+      setUrl(null);
+    }
+    return () => { vivo = false; if (actual) URL.revokeObjectURL(actual); };
+  }, [id, tieneFoto]);
+
+  async function elegir(e: React.ChangeEvent<HTMLInputElement>) {
+    const archivo = e.target.files?.[0];
+    e.target.value = '';
+    if (!archivo) return;
+    setError('');
+    setSubiendo(true);
+    try {
+      const reducida = await reducirImagen(archivo);
+      await api.subirFotoConductor(id, reducida);
+      alCambiar();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo subir la foto.');
+    } finally {
+      setSubiendo(false);
+    }
+  }
+
+  return (
+    <div className="foto-taxista">
+      {url !== null
+        ? <img src={url} alt="Foto del taxista" className="foto-taxista-img" />
+        : <div className="foto-taxista-hueco" aria-hidden="true">👤</div>}
+      <label className="secundario foto-taxista-boton">
+        {subiendo ? 'Subiendo…' : url !== null ? 'Cambiar foto' : 'Añadir foto'}
+        <input
+          type="file" accept="image/*" capture="environment"
+          disabled={subiendo} onChange={elegir} hidden
+        />
+      </label>
+      {error !== '' && <p className="aviso">{error}</p>}
+    </div>
+  );
+}
+
+// Editar los datos del taxista: nombre, apellido, DIP y correo.
+function EditarDatosTaxista({ ficha, alGuardado, alCancelar }: {
+  ficha: FichaConductorOperador;
+  alGuardado: () => void;
+  alCancelar: () => void;
+}) {
+  const [nombre, setNombre] = useState(ficha.nombre);
+  const [apellido, setApellido] = useState(ficha.apellido ?? '');
+  const [dip, setDip] = useState(ficha.dip ?? '');
+  const [correo, setCorreo] = useState(ficha.correo ?? '');
+  const [error, setError] = useState('');
+  const [ocupado, setOcupado] = useState(false);
+
+  const completo = nombre.trim() !== '' && apellido.trim() !== ''
+    && (dip.trim() === '' || /^\d{9}$/.test(dip.trim()));
+
+  async function guardar() {
+    setError('');
+    setOcupado(true);
+    try {
+      await api.editarDatosConductor(ficha.id, {
+        nombre: nombre.trim(),
+        apellido: apellido.trim(),
+        dip: dip.trim() || undefined,
+        correo: correo.trim() || undefined,
+      });
+      alGuardado();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo guardar.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  return (
+    <>
+      {error !== '' && <p className="aviso">{error}</p>}
+      <div className="fila">
+        <input value={nombre} placeholder="Nombre" onChange={(e) => setNombre(e.target.value)} />
+        <input value={apellido} placeholder="Apellido" onChange={(e) => setApellido(e.target.value)} />
+      </div>
+      <div className="fila">
+        <input
+          value={dip} inputMode="numeric" placeholder="DIP (9 dígitos)" maxLength={9}
+          onChange={(e) => setDip(e.target.value.replace(/\D/g, '').slice(0, 9))}
+        />
+        <input value={correo} inputMode="email" placeholder="Correo (opcional)" onChange={(e) => setCorreo(e.target.value)} />
+      </div>
+      <div className="fila">
+        <button type="button" className="principal" disabled={!completo || ocupado} onClick={guardar}>
+          Guardar datos
+        </button>
+        <button type="button" className="secundario" onClick={alCancelar}>Cancelar</button>
+      </div>
+    </>
+  );
+}
+
+type CarpetaFicha = 'taxista' | 'dueno' | 'vehiculo' | 'servicio';
+const CARPETAS_FICHA: Array<[CarpetaFicha, string]> = [
+  ['taxista', 'Taxista'], ['dueno', 'Dueño'], ['vehiculo', 'Vehículo'], ['servicio', 'Servicio'],
+];
+
 function FichaConductor({
-  id, alVolver, alCambiarEstado, ocupado,
+  id, alVolver, alCambiarEstado, ocupado, alVerRecorrido,
 }: {
   id: number;
   alVolver: () => void;
   alCambiarEstado: (id: number, estado: string) => Promise<void>;
   ocupado: boolean;
+  // Lleva el recorrido del taxista al mapa del despacho. Solo en la mesa.
+  alVerRecorrido?: (id: number) => void;
 }) {
   const [ficha, setFicha] = useState<FichaConductorOperador | null>(null);
   const [error, setError] = useState('');
-  // Estado propio del formulario de vehículo: la ficha se recarga entera
-  // tras guardar (`cargar()`), y este par se resincroniza con ella —no se
-  // puede leer `ficha.aire_acondicionado` directamente en un checkbox
-  // controlado sin perder lo que el operador esté tecleando a medio camino.
+  const [carpeta, setCarpeta] = useState<CarpetaFicha>('taxista');
+  const [editando, setEditando] = useState(false);
+  const [accionesAbiertas, setAccionesAbiertas] = useState(false);
   const [aireAcondicionado, setAireAcondicionado] = useState(false);
   const [seguro, setSeguro] = useState(false);
   const [guardandoVehiculo, setGuardandoVehiculo] = useState(false);
@@ -819,6 +958,8 @@ function FichaConductor({
   if (!ficha) return <p className="nota">Cargando…</p>;
 
   const o = ficha.ofertas;
+  const esDuenoElConductor = ficha.propietario !== null && ficha.propietario.dip === ficha.dip;
+
   return (
     <>
       <div className="cabecera">
@@ -830,104 +971,170 @@ function FichaConductor({
         </h1>
         <button type="button" className="secundario" onClick={alVolver}>Volver</button>
       </div>
-      <p className="nota">
-        {ficha.telefono}{ficha.dip && ` · DIP ${ficha.dip}`}
-        {ficha.correo && ` · ${ficha.correo}`}
-      </p>
-      <p className="nota">
-        {ficha.matricula ?? 'sin matrícula'}{ficha.marca && ` · ${ficha.marca}`}
-        {ficha.carroceria && ` · ${ETIQUETA_CARROCERIA[ficha.carroceria] ?? ficha.carroceria}`}
-      </p>
-      {/* El dueño del coche (migración 087). Si es el mismo que conduce, se
-          dice, para no hacer leer dos veces los mismos datos. */}
-      {ficha.propietario !== null && (
-        <p className="nota">
-          {ficha.propietario.dip === ficha.dip
-            ? 'Dueño: el mismo que conduce.'
-            : `Dueño: ${ficha.propietario.nombre} ${ficha.propietario.apellido}`
-              + ` · ${ficha.propietario.telefono} · DIP ${ficha.propietario.dip}`}
-        </p>
+
+      {/* Las acciones, siempre a mano: editar los datos y un desplegable con
+          lo que cambia el estado del taxista. */}
+      <div className="fila ficha-acciones">
+        <button type="button" className="secundario" onClick={() => setEditando((v) => !v)}>
+          {editando ? 'Dejar de editar' : 'Editar datos'}
+        </button>
+        <button
+          type="button" className="secundario"
+          onClick={() => setAccionesAbiertas((v) => !v)}
+        >
+          Acciones {accionesAbiertas ? '▾' : '▸'}
+        </button>
+        {alVerRecorrido !== undefined && (
+          <button type="button" className="secundario" onClick={() => alVerRecorrido(ficha.id)}>
+            Ver recorrido en el mapa
+          </button>
+        )}
+      </div>
+      {accionesAbiertas && (
+        <div className="fila ficha-menu-acciones">
+          {ficha.estado_verificacion !== 'verificado' && (
+            <button type="button" className="principal" disabled={ocupado} onClick={() => alCambiarEstado(ficha.id, 'verificado').then(cargar)}>Verificar</button>
+          )}
+          {ficha.estado_verificacion !== 'suspendido' && (
+            <button type="button" className="secundario" disabled={ocupado} onClick={() => alCambiarEstado(ficha.id, 'suspendido').then(cargar)}>Suspender</button>
+          )}
+          {ficha.estado_verificacion !== 'bloqueado' && (
+            <button type="button" className="secundario" disabled={ocupado} onClick={() => alCambiarEstado(ficha.id, 'bloqueado').then(cargar)}>Bloquear</button>
+          )}
+          <button
+            type="button" className="secundario" disabled={ocupado}
+            onClick={() => api.nombrarAgente(ficha.id, !ficha.es_agente).then(cargar)}
+          >
+            {ficha.es_agente ? 'Quitar agente de campo' : 'Nombrar agente de campo'}
+          </button>
+          <button
+            type="button" className="secundario" disabled={ocupado}
+            onClick={() => api.recibirEnCualquierZona(ficha.id, !ficha.recibe_en_cualquier_zona).then(cargar)}
+          >
+            {ficha.recibe_en_cualquier_zona ? 'Recibir solo de su barrio' : 'Recibir de toda la isla'}
+          </button>
+          <ValeDeEntrada telefono={ficha.telefono} />
+          <CambiarTelefono
+            actual={ficha.telefono}
+            alCambiar={(t) => api.cambiarTelefonoConductor(ficha.id, t).then(cargar)}
+          />
+        </div>
       )}
-      <div className="fila">
-        <label className="casilla">
-          <input type="checkbox" checked={aireAcondicionado}
-            onChange={(e) => setAireAcondicionado(e.target.checked)} />
-          Aire acondicionado
-        </label>
-        <label className="casilla">
-          <input type="checkbox" checked={seguro}
-            onChange={(e) => setSeguro(e.target.checked)} />
-          Seguro
-        </label>
-        <button type="button" className="secundario" disabled={guardandoVehiculo} onClick={guardarVehiculo}>
-          {guardandoVehiculo ? 'Guardando…' : 'Guardar'}
-        </button>
-      </div>
-      <p className="nota">
-        Estado: <strong>{ETIQUETA_ESTADO[ficha.estado_verificacion] ?? ficha.estado_verificacion}</strong>
-        {' · '}Presencia: <strong>{ficha.presencia ?? '—'}</strong>
-        {' · '}Suscripción: <strong>{ficha.suscripcionVigente ? `hasta ${fecha(ficha.suscrito_hasta)}` : 'vencida'}</strong>
-      </p>
-      <div className="rejilla">
-        <Dato valor={`${ficha.saldo_xaf.toLocaleString('es')} XAF`} etiqueta="Saldo del monedero" />
-        <Dato
-          valor={ficha.reputacion.media === null ? '—' : ficha.reputacion.media.toFixed(1)}
-          etiqueta={`Nota (${ficha.reputacion.valoraciones} valoraciones)`}
+
+      {editando && (
+        <EditarDatosTaxista
+          ficha={ficha}
+          alGuardado={() => { setEditando(false); cargar(); }}
+          alCancelar={() => setEditando(false)}
         />
-        <Dato valor={ficha.viajes.completados} etiqueta="Viajes completados" />
-        <Dato valor={o.recibidas === 0 ? '—' : `${Math.round((o.aceptadas / o.recibidas) * 100)} %`} etiqueta={`Ofertas aceptadas (de ${o.recibidas})`} />
-        <Dato valor={ficha.viajes.cancelados} etiqueta="Cancelados por él" />
-        <Dato valor={ficha.viajes.ausencias} etiqueta="Clientes ausentes" />
+      )}
+
+      {/* Las carpetas: cada dato donde toca, no todo en una lista larga. */}
+      <div className="selector-idioma">
+        {CARPETAS_FICHA.map(([clave, etiqueta]) => (
+          <button
+            key={clave} type="button"
+            className={clave === carpeta ? 'idioma-activo' : undefined}
+            onClick={() => setCarpeta(clave)}
+          >
+            {etiqueta}
+          </button>
+        ))}
       </div>
-      <div className="fila">
-        {ficha.estado_verificacion !== 'verificado' && (
-          <button type="button" className="principal" disabled={ocupado} onClick={() => alCambiarEstado(ficha.id, 'verificado').then(cargar)}>Verificar</button>
-        )}
-        {ficha.estado_verificacion !== 'suspendido' && (
-          <button type="button" className="secundario" disabled={ocupado} onClick={() => alCambiarEstado(ficha.id, 'suspendido').then(cargar)}>Suspender</button>
-        )}
-        {ficha.estado_verificacion !== 'bloqueado' && (
-          <button type="button" className="secundario" disabled={ocupado} onClick={() => alCambiarEstado(ficha.id, 'bloqueado').then(cargar)}>Bloquear</button>
-        )}
-        <button
-          type="button" className="secundario" disabled={ocupado}
-          onClick={() => api.nombrarAgente(ficha.id, !ficha.es_agente).then(cargar)}
-        >
-          {ficha.es_agente ? 'Quitar el papel de agente de campo' : 'Nombrar agente de campo'}
-        </button>
-        {/* Migración 048: recibir carreras de toda la isla. Va en la ÚLTIMA
-            oleada, así que no le quita ninguna a quien está cerca del
-            pasajero: solo entra cuando nadie más la ha cogido. */}
-        <button
-          type="button" className="secundario" disabled={ocupado}
-          onClick={() => api.recibirEnCualquierZona(
-            ficha.id, !ficha.recibe_en_cualquier_zona,
-          ).then(cargar)}
-        >
-          {ficha.recibe_en_cualquier_zona
-            ? 'Recibir solo de su barrio'
-            : 'Recibir carreras de toda la isla'}
-        </button>
-        <ValeDeEntrada telefono={ficha.telefono} />
-        <CambiarTelefono
-          actual={ficha.telefono}
-          alCambiar={(t) => api.cambiarTelefonoConductor(ficha.id, t).then(cargar)}
-        />
-      </div>
-      <RecorridoConductor id={ficha.id} />
-      <p className="nota">Últimos viajes</p>
-      <ListaViajes viajes={ficha.ultimosViajes} />
-      {ficha.recargas.length > 0 && (
-        <>
-          <p className="nota">Últimas recargas</p>
-          <ul className="ruta">
-            {ficha.recargas.map((r) => (
-              <li key={r.id}>
-                {fecha(r.solicitadaEn)} · {r.importeXaf.toLocaleString('es')} XAF · {ETIQUETA_METODO[r.metodo] ?? r.metodo} · {ETIQUETA_ESTADO_RECARGA[r.estado] ?? r.estado}
-              </li>
-            ))}
-          </ul>
-        </>
+
+      {carpeta === 'taxista' && (
+        <div className="ficha-carpeta">
+          <FotoTaxista id={ficha.id} tieneFoto={ficha.tiene_foto} alCambiar={cargar} />
+          <p className="nota">
+            {ficha.telefono}{ficha.dip && ` · DIP ${ficha.dip}`}
+            {ficha.correo && ` · ${ficha.correo}`}
+          </p>
+          <p className="nota">
+            Estado: <strong>{ETIQUETA_ESTADO[ficha.estado_verificacion] ?? ficha.estado_verificacion}</strong>
+            {' · '}Presencia: <strong>{ficha.presencia ?? '—'}</strong>
+          </p>
+          <div className="rejilla">
+            <Dato valor={`${ficha.saldo_xaf.toLocaleString('es')} XAF`} etiqueta="Saldo del monedero" />
+            <Dato
+              valor={ficha.reputacion.media === null ? '—' : ficha.reputacion.media.toFixed(1)}
+              etiqueta={`Nota (${ficha.reputacion.valoraciones} valoraciones)`}
+            />
+            <Dato valor={ficha.viajes.completados} etiqueta="Viajes completados" />
+            <Dato valor={o.recibidas === 0 ? '—' : `${Math.round((o.aceptadas / o.recibidas) * 100)} %`} etiqueta={`Ofertas aceptadas (de ${o.recibidas})`} />
+            <Dato valor={ficha.viajes.cancelados} etiqueta="Cancelados por él" />
+            <Dato valor={ficha.viajes.ausencias} etiqueta="Clientes ausentes" />
+          </div>
+        </div>
+      )}
+
+      {carpeta === 'dueno' && (
+        <div className="ficha-carpeta">
+          {ficha.propietario === null ? (
+            <p className="nota">Sin dueño registrado todavía. Se añade al dar de alta el coche.</p>
+          ) : esDuenoElConductor ? (
+            <p className="nota">El dueño del coche es el mismo que conduce.</p>
+          ) : (
+            <>
+              <p className="nota"><strong>{ficha.propietario.nombre} {ficha.propietario.apellido}</strong></p>
+              <p className="nota">{ficha.propietario.telefono} · DIP {ficha.propietario.dip}</p>
+              <p className="nota">El dueño no conduce: no lleva foto.</p>
+            </>
+          )}
+        </div>
+      )}
+
+      {carpeta === 'vehiculo' && (
+        <div className="ficha-carpeta">
+          <p className="nota">
+            {ficha.matricula ?? 'sin matrícula'}{ficha.marca && ` · ${ficha.marca}`}
+            {ficha.carroceria && ` · ${ETIQUETA_CARROCERIA[ficha.carroceria] ?? ficha.carroceria}`}
+            {ficha.color && ` · ${ficha.color}`}
+          </p>
+          <p className="nota">Plazas: {ficha.plazas ?? '—'}</p>
+          <div className="fila">
+            <label className="casilla">
+              <input type="checkbox" checked={aireAcondicionado}
+                onChange={(e) => setAireAcondicionado(e.target.checked)} />
+              Aire acondicionado
+            </label>
+            <label className="casilla">
+              <input type="checkbox" checked={seguro}
+                onChange={(e) => setSeguro(e.target.checked)} />
+              Seguro
+            </label>
+            <button type="button" className="secundario" disabled={guardandoVehiculo} onClick={guardarVehiculo}>
+              {guardandoVehiculo ? 'Guardando…' : 'Guardar'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {carpeta === 'servicio' && (
+        <div className="ficha-carpeta">
+          <p className="nota">
+            Nº de taxi: <strong>{ficha.numero_taxi ?? '—'}</strong>
+            {' · '}Suscripción: <strong>{ficha.suscripcionVigente ? `hasta ${fecha(ficha.suscrito_hasta)}` : 'vencida'}</strong>
+          </p>
+          <p className="nota">
+            Recibe: <strong>{ficha.recibe_en_cualquier_zona ? 'de toda la isla' : 'solo de su barrio'}</strong>
+            {ficha.es_agente && ' · es agente de campo'}
+          </p>
+          {alVerRecorrido === undefined && <RecorridoConductor id={ficha.id} />}
+          <p className="nota">Últimos viajes</p>
+          <ListaViajes viajes={ficha.ultimosViajes} />
+          {ficha.recargas.length > 0 && (
+            <>
+              <p className="nota">Últimas recargas</p>
+              <ul className="ruta">
+                {ficha.recargas.map((r) => (
+                  <li key={r.id}>
+                    {fecha(r.solicitadaEn)} · {r.importeXaf.toLocaleString('es')} XAF · {ETIQUETA_METODO[r.metodo] ?? r.metodo} · {ETIQUETA_ESTADO_RECARGA[r.estado] ?? r.estado}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
       )}
     </>
   );

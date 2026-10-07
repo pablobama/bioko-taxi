@@ -1,0 +1,2 @@
+ALTER TABLE conductor DROP COLUMN IF EXISTS foto_tipo;
+ALTER TABLE conductor DROP COLUMN IF EXISTS foto;
