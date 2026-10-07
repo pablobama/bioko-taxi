@@ -17,6 +17,9 @@ type T = ReturnType<typeof crearT>;
 export interface PropiedadesPanelLlamada {
   estado: EstadoLlamada;
   motivoFallo: MotivoFallo;
+  // El error técnico, para enseñarlo pequeño cuando falla: en un iPhone no
+  // hay consola, y es lo que permite saber POR QUÉ no se pudo.
+  detalleFallo: string | null;
   segundos: number;
   silenciado: boolean;
   otroLadoAusente: boolean;
@@ -35,7 +38,7 @@ function reloj(segundos: number): string {
 }
 
 export default function PanelLlamada({
-  estado, motivoFallo, segundos, silenciado, otroLadoAusente, otro, t,
+  estado, motivoFallo, detalleFallo, segundos, silenciado, otroLadoAusente, otro, t,
   alAceptar, alColgar, alAlternarSilencio,
 }: PropiedadesPanelLlamada) {
   if (estado === 'inactiva') return null;
@@ -71,6 +74,9 @@ export default function PanelLlamada({
             <p className="llamada-nota">
               {motivoFallo === 'micro' ? t('llamada.sinMicroNota') : t('llamada.noSePudoNota')}
             </p>
+            {detalleFallo !== null && (
+              <p className="llamada-detalle">{detalleFallo}</p>
+            )}
           </>
         )}
 

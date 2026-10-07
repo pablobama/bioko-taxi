@@ -1045,6 +1045,7 @@ export default function PanelConductor({
       <PanelLlamada
         estado={llamada.estado}
         motivoFallo={llamada.motivoFallo}
+        detalleFallo={llamada.detalleFallo}
         segundos={llamada.segundos}
         silenciado={llamada.silenciado}
         otroLadoAusente={llamada.otroLadoAusente}

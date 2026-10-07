@@ -51,10 +51,39 @@ const RESTRICCIONES_AUDIO: MediaStreamConstraints = {
 // queda mirando un «llamando…» eterno gastando batería.
 const ESPERA_MAXIMA_MS = 35_000;
 
+// El error, en una línea legible. Hace falta para el diagnóstico desde un
+// iPhone, donde no hay consola que mirar: el motivo «no se pudo» es demasiado
+// vago cuando la llamada falla en un sitio y no en otro, y el nombre del
+// error de WebRTC —NotAllowedError, un TypeError de un contexto sin https…—
+// es justo lo que dice qué pasa.
+function describirError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.name === '' ? error.message : `${error.name}: ${error.message}`;
+  }
+  return String(error);
+}
+
+// Una URL de servidor ICE solo vale si empieza por el esquema correcto: iOS es
+// estricto y `new RTCPeerConnection` LANZA si una está mal —y con ella se cae
+// la llamada entera, incluido el STUN de Google que sí era bueno—. Se filtran
+// las malas en vez de dejar que tumben todo: mejor una llamada con menos
+// puentes que ninguna.
+const ESQUEMAS_ICE = /^(stun|stuns|turn|turns):/i;
+
+function servidoresValidos(servidores: RTCIceServer[]): RTCIceServer[] {
+  const buenos: RTCIceServer[] = [];
+  for (const s of servidores) {
+    const urls = (Array.isArray(s.urls) ? s.urls : [s.urls])
+      .filter((u) => typeof u === 'string' && ESQUEMAS_ICE.test(u.trim()));
+    if (urls.length > 0) buenos.push({ ...s, urls });
+  }
+  return buenos;
+}
+
 async function servidoresDeRed(solicitudId: number): Promise<RTCIceServer[]> {
   try {
     const config = await api.configuracionLlamadas(solicitudId);
-    return config.servidores;
+    return servidoresValidos(config.servidores);
   } catch {
     // Sin configuración del servidor se intenta igualmente: con suerte los dos
     // teléfonos se ven directamente.
@@ -99,6 +128,8 @@ export type MotivoFallo = 'micro' | 'red' | null;
 export interface UsoLlamada {
   estado: EstadoLlamada;
   motivoFallo: MotivoFallo;
+  // El error técnico de la última llamada fallida, para diagnóstico.
+  detalleFallo: string | null;
   // Segundos hablando, para que se vea lo que se está gastando.
   segundos: number;
   silenciado: boolean;
@@ -125,6 +156,9 @@ export function useLlamada({ vivo, locale = 'es-ES' }: { vivo: boolean; locale?:
   const [segundos, setSegundos] = useState(0);
   const [silenciado, setSilenciado] = useState(false);
   const [otroLadoAusente, setOtroLadoAusente] = useState(false);
+  // El error técnico de la última llamada fallida, para poder leerlo cuando
+  // falla en un teléfono y no en otro. Null salvo en estado 'fallida'.
+  const [detalleFallo, setDetalleFallo] = useState<string | null>(null);
 
   const conexion = useRef<RTCPeerConnection | null>(null);
   const micro = useRef<MediaStream | null>(null);
@@ -167,9 +201,26 @@ export function useLlamada({ vivo, locale = 'es-ES' }: { vivo: boolean; locale?:
   }, []);
 
   const crearConexion = useCallback(async (): Promise<RTCPeerConnection> => {
-    const pc = new RTCPeerConnection({
-      iceServers: await servidoresDeRed(conQuien.current!),
-    });
+    // El micrófono tiene que EXISTIR antes de nada. En un iPhone, una PWA
+    // instalada servida sin https deja `navigator.mediaDevices` en undefined,
+    // y entonces `getUserMedia` reventaba con un TypeError que se tomaba por
+    // «fallo de red». Se dice lo que de verdad pasa.
+    if (!navigator.mediaDevices?.getUserMedia) {
+      const e = new Error('Este dispositivo no permite usar el micrófono aquí '
+        + '(hace falta https y, en iPhone, Safari o la app instalada).');
+      e.name = 'SinMicrofono';
+      throw e;
+    }
+    const iceServers = await servidoresDeRed(conQuien.current!);
+    // Construir la conexión puede lanzar si un servidor ICE es inválido pese
+    // al filtro; antes que perder la llamada, se reintenta sin servidores —con
+    // suerte los dos teléfonos se ven directos—.
+    let pc: RTCPeerConnection;
+    try {
+      pc = new RTCPeerConnection({ iceServers });
+    } catch {
+      pc = new RTCPeerConnection();
+    }
 
     pc.onicecandidate = (e) => {
       if (e.candidate) void enviar('candidato', e.candidate.toJSON());
@@ -195,9 +246,12 @@ export function useLlamada({ vivo, locale = 'es-ES' }: { vivo: boolean; locale?:
         setEstado('hablando');
       } else if (pc.connectionState === 'failed') {
         // Casi siempre es que los dos están detrás del NAT del operador y no
-        // hay servidor puente configurado. Se dice que falló, no se deja
-        // colgado el «llamando…».
+        // hay servidor puente (TURN) configurado: el audio no encuentra
+        // camino. Se dice que falló, no se deja colgado el «llamando…».
         setMotivoFallo('red');
+        setDetalleFallo(iceServers.length > 0
+          ? 'La conexión no encontró camino pese al puente (TURN). Red muy cerrada.'
+          : 'No hay puente (TURN) configurado: en datos móviles la llamada no pasa.');
         setEstado('fallida');
       }
     };
@@ -213,6 +267,7 @@ export function useLlamada({ vivo, locale = 'es-ES' }: { vivo: boolean; locale?:
     if (estado !== 'inactiva') void enviar('colgar');
     limpiar();
     setMotivoFallo(null);
+    setDetalleFallo(null);
     setEstado('inactiva');
     setOtroLadoAusente(false);
   }, [estado, enviar, limpiar]);
@@ -221,6 +276,7 @@ export function useLlamada({ vivo, locale = 'es-ES' }: { vivo: boolean; locale?:
     if (estado !== 'inactiva') return;
     conQuien.current = solicitudId;
     setMotivoFallo(null);
+    setDetalleFallo(null);
     setEstado('saliente');
     setOtroLadoAusente(false);
     void (async () => {
@@ -240,6 +296,7 @@ export function useLlamada({ vivo, locale = 'es-ES' }: { vivo: boolean; locale?:
         // `getUserMedia` es lo único de aquí que pide permiso al usuario; si
         // falla, es el micrófono y no la red.
         setMotivoFallo(esFalloDeMicrofono(error) ? 'micro' : 'red');
+        setDetalleFallo(describirError(error));
         setEstado('fallida');
         limpiar();
       }
@@ -263,6 +320,7 @@ export function useLlamada({ vivo, locale = 'es-ES' }: { vivo: boolean; locale?:
         await enviar('respuesta', respuesta);
       } catch (error) {
         setMotivoFallo(esFalloDeMicrofono(error) ? 'micro' : 'red');
+        setDetalleFallo(describirError(error));
         setEstado('fallida');
         limpiar();
       }
@@ -369,6 +427,7 @@ export function useLlamada({ vivo, locale = 'es-ES' }: { vivo: boolean; locale?:
   return {
     estado,
     motivoFallo,
+    detalleFallo,
     segundos,
     silenciado,
     otroLadoAusente,

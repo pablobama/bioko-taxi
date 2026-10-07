@@ -988,6 +988,7 @@ export default function PanelCliente({
       <PanelLlamada
         estado={llamada.estado}
         motivoFallo={llamada.motivoFallo}
+        detalleFallo={llamada.detalleFallo}
         segundos={llamada.segundos}
         silenciado={llamada.silenciado}
         otroLadoAusente={llamada.otroLadoAusente}
