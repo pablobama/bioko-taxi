@@ -315,19 +315,26 @@ export default function Mapa({
       // no cabe en el encuadre es un taxi que el operador no va a mandar a
       // ningún sitio porque no sabe que existe.
       for (const t of taxis ?? []) enfoque.push(aMundo(t.lat, t.lng));
-      // La ciudad entra SIEMPRE en el encuadre: el taxi suelto que ande por
-      // la carretera del sur lo amplía, pero Malabo nunca se sale del plano.
-      for (const p of ciudad ?? []) enfoque.push(aMundo(p.lat, p.lng));
       for (const e of esperas ?? []) if (e.viva) enfoque.push(aMundo(e.lat, e.lng));
-      // Sin ninguno, la isla entera. El respaldo de más abajo —cinco kilómetros
-      // alrededor del centro del recuadro— cae en mitad de Bioko, que es selva:
-      // el operador veía un rectángulo negro y no sabía si el mapa estaba roto
-      // o es que no había taxis. Enseñando la isla, el mapa dice dónde está
-      // mirando aunque no haya nada que enseñar encima.
-      if ((taxis ?? []).length === 0 && (ciudad ?? []).length === 0) {
-        const { recuadro: caja } = listo.plano;
-        enfoque.push(aMundo(caja.sur, caja.oeste));
-        enfoque.push(aMundo(caja.norte, caja.este));
+      // EL DISTRITO DE MALABO ENTRA SIEMPRE, y es lo que hace que el mapa
+      // arranque centrado en él: su contorno es el suelo del encuadre, así
+      // que sin taxis se ve el distrito entero y centrado, y con ellos el
+      // que ande por el extremo sur lo amplía sin sacar a Malabo del plano.
+      // Es el mismo dato que se dibuja, así que lo que se ve es lo que se
+      // encuadra. Cae a `ciudad` (los barrios situados) en ficheros viejos
+      // sin límite, y a la isla entera si tampoco hay eso.
+      const limite = listo.plano.limite;
+      if (limite !== undefined && limite.length >= 6) {
+        for (let i = 0; i < limite.length; i += 2) {
+          enfoque.push(aMundo(limite[i], limite[i + 1]));
+        }
+      } else {
+        for (const p of ciudad ?? []) enfoque.push(aMundo(p.lat, p.lng));
+        if ((taxis ?? []).length === 0 && (ciudad ?? []).length === 0) {
+          const { recuadro: caja } = listo.plano;
+          enfoque.push(aMundo(caja.sur, caja.oeste));
+          enfoque.push(aMundo(caja.norte, caja.este));
+        }
       }
     } else if (encuadre === 'recorrido') {
       // Entero: el sentido de esta vista es ver hasta dónde llegó, y un
@@ -624,6 +631,20 @@ export default function Mapa({
                 vectorEffect="non-scaling-stroke"
               />
             ))}
+            {/* El contorno del Distrito de Malabo, en línea de puntos: encima
+                de las calles para que se lea el límite, pero discreta —es una
+                referencia de «hasta aquí es Malabo», no una calle más—. */}
+            {listo!.trazados.limite !== '' && (
+              <path
+                d={listo!.trazados.limite}
+                fill="none"
+                stroke={TEMA_MAPA.limite}
+                strokeWidth={1.4}
+                strokeDasharray="5 4"
+                strokeLinejoin="round"
+                vectorEffect="non-scaling-stroke"
+              />
+            )}
           </g>
 
           {/* Pines de sitios conocidos: caja con la sigla de su categoría y un

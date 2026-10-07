@@ -171,6 +171,48 @@ function bandaDeAgua(puntos) {
   return planas;
 }
 
+// El límite del Distrito de Malabo (relación 19095686 de OSM, admin_level 5).
+//
+// Se baja de Nominatim y no de Overpass: Overpass se cae a menudo —se vio al
+// compilar esto— y para UN polígono conocido, la API de detalles de Nominatim
+// es directa y ligera. La ciudad de Malabo no tiene polígono propio en OSM
+// (es solo un nodo `place=city`); el distrito es el contorno administrativo
+// real que la contiene, y es el que el operador pidió «bien delimitado».
+//
+// Se simplifica fuerte: es una línea de referencia sobre el mapa, no una
+// calle, así que ±100 m no se notan y el contorno baja de 1.739 puntos a un
+// par de cientos.
+const TOLERANCIA_LIMITE_M = 100;
+
+async function descargarLimite() {
+  const r = await fetch(
+    'https://nominatim.openstreetmap.org/details?osmtype=R&osmid=19095686'
+    + '&format=json&polygon_geojson=1',
+    {
+      headers: { 'user-agent': 'taxi-malabo/0.1 (limite del distrito)' },
+      signal: AbortSignal.timeout(60_000),
+    },
+  );
+  if (!r.ok) throw new Error(`Nominatim respondió ${r.status} al pedir el límite`);
+  const d = await r.json();
+  const g = d.geometry;
+  if (!g || (g.type !== 'Polygon' && g.type !== 'MultiPolygon')) {
+    throw new Error(`El límite no vino como polígono (${g?.type}).`);
+  }
+  // El anillo exterior más grande: el distrito es un MultiPolygon (la isla
+  // principal más islotes), y el contorno que interesa es el mayor.
+  const anillos = g.type === 'MultiPolygon'
+    ? g.coordinates.map((poligono) => poligono[0])
+    : [g.coordinates[0]];
+  anillos.sort((a, b) => b.length - a.length);
+  // GeoJSON da [lng, lat]; el resto del fichero es {lat, lon}.
+  const puntos = anillos[0].map(([lon, lat]) => ({ lat, lon }));
+  const simples = simplificar(puntos, TOLERANCIA_LIMITE_M);
+  const planas = [];
+  for (const p of simples) planas.push(redondear(p.lat), redondear(p.lon));
+  return planas;
+}
+
 async function principal() {
   const tipos = Object.keys(CLASES).join('|');
   const consulta = `[out:json][timeout:180];`
@@ -271,12 +313,24 @@ async function principal() {
     agua.push({ p: bandaDeAgua(simplificar(crudos, TOLERANCIA_M)) });
   }
 
+  console.log('Descargando el límite del Distrito de Malabo…');
+  let limite = [];
+  try {
+    limite = await descargarLimite();
+    console.log(`Límite: ${limite.length / 2} puntos`);
+  } catch (error) {
+    // El límite es un adorno útil, no el plano: si Nominatim falla, se compila
+    // el mapa sin él antes que dejar al operador sin plano por una línea.
+    console.warn(`No se pudo bajar el límite (${error.message}); se omite.`);
+  }
+
   const salida = {
-    version: 3,
+    version: 4,
     fuente: 'OpenStreetMap contributors (ODbL)',
     recuadro: RECUADRO,
     vias,
     agua,
+    limite,
   };
 
   // Red de seguridad: nunca sustituir un plano bueno por uno vacío. Malabo

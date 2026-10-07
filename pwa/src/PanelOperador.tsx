@@ -3532,7 +3532,7 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
             </button>
           ))}
         </nav>
-        <div className="mesa-escena">
+        <div className={dockPlegado ? 'mesa-escena mesa-escena-ancha' : 'mesa-escena'}>
           <div className="mesa-mapa">
             {/* Sin referencias: en una pantalla con treinta taxis, los cientos
                 de puntos del gazetteer convierten el plano en una sopa y lo

@@ -244,9 +244,15 @@ body {
 }
 
 /* En la mesa, el dique vive pegado a la derecha y taparía los botones: se
-   corren hacia dentro, justo a su izquierda. */
+   corren hacia dentro, justo a su izquierda. Al plegar el dique, el sitio
+   queda libre y vuelven al borde — como las cifras de arriba (`.mesa-chips`),
+   que hacen el mismo viaje. */
 .mesa-mapa .mapa-zum {
   right: 364px;
+}
+
+.mesa-escena-ancha .mapa-zum {
+  right: 8px;
 }
 
 /* Atribución de OpenStreetMap: obligatoria por la licencia ODbL de los datos. */

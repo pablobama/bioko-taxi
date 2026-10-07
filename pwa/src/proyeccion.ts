@@ -21,6 +21,10 @@ export interface Plano {
   recuadro: { sur: number; oeste: number; norte: number; este: number };
   vias: Array<{ c: number; p: number[] }>;
   agua: Array<{ p: number[] }>;
+  // El contorno del Distrito de Malabo (versión 4 del fichero). Lista plana
+  // [lat, lng, lat, lng…]. Puede faltar en ficheros viejos: se dibuja solo
+  // si viene.
+  limite?: number[];
 }
 
 export type Punto2D = [number, number];
@@ -63,6 +67,8 @@ export interface Trazados {
   porClase: Record<number, string>;
   mar: string;
   costa: string;
+  // El contorno del distrito, cerrado. Vacío si el fichero no lo trae.
+  limite: string;
 }
 
 function aPath(puntos: Punto2D[], cerrar = false): string {
@@ -98,6 +104,13 @@ export function construirTrazados(plano: Plano, proy: Proyeccion): Trazados {
     costa.push(aPath(anillo.slice(0, anillo.length / 2)));
   }
 
+  // El contorno del distrito, un solo anillo cerrado.
+  const limite: Punto2D[] = [];
+  const crudo = plano.limite ?? [];
+  for (let i = 0; i < crudo.length; i += 2) {
+    limite.push(proy.aMundo(crudo[i], crudo[i + 1]));
+  }
+
   return {
     porClase: {
       1: porClase[1].join(''),
@@ -107,6 +120,7 @@ export function construirTrazados(plano: Plano, proy: Proyeccion): Trazados {
     },
     mar: mar.join(''),
     costa: costa.join(''),
+    limite: limite.length >= 3 ? aPath(limite, true) : '',
   };
 }
 
@@ -232,6 +246,9 @@ export const TEMA_MAPA = {
   tierra: '#101015',
   mar: '#0b1a22',
   costa: '#22404d',
+  // El contorno del distrito: una línea discreta, de puntos, que dice «esto
+  // es Malabo» sin competir con las calles ni con los taxis.
+  limite: '#4d5a66',
   vias: {
     1: { color: '#4a4a57', grosor: 6 },
     2: { color: '#383842', grosor: 3.6 },
