@@ -35,6 +35,12 @@ function telefonoUnico(): string {
 }
 
 const UUID_OPERADOR = randomUUID();
+// Un DIP de nueve dígitos que no se repite dentro de la ejecución.
+let siguienteDip = Math.floor(Math.random() * 900_000_000) + 100_000_000;
+function dipUnico(): string {
+  siguienteDip = siguienteDip >= 999_999_999 ? 100_000_000 : siguienteDip + 1;
+  return String(siguienteDip);
+}
 
 let pool: pg.Pool;
 let app: FastifyInstance;
@@ -853,7 +859,8 @@ test('número de taxi: apagado no reparte; encendido numera, y a mano solo por d
     return app.inject({
       method: 'POST', url: '/api/operador/conductores', headers: cabeceras(UUID_OPERADOR),
       payload: {
-        nombre: `Numerado ${telefono.slice(-4)}`, telefono,
+        nombre: `Numerado ${telefono.slice(-4)}`, apellido: 'Taxi', telefono,
+        dip: dipUnico(), duenoConduce: true,
         matricula: `MB-${telefono.slice(-5)}N`, marca: 'Toyota', carroceria: 'turismo',
         ...extra,
       },
@@ -1040,7 +1047,8 @@ test('alta por el operador: verificado, número por confirmar y sin robarle el a
   const res = await app.inject({
     method: 'POST', url: '/api/operador/conductores', headers: cabeceras(UUID_OPERADOR),
     payload: {
-      nombre: 'Alta del panel', telefono,
+      nombre: 'Alta del panel', apellido: 'Obiang', telefono, dip: dipUnico(),
+      duenoConduce: true,
       matricula: `MB-${telefono.slice(-5)}P`, marca: 'Toyota', carroceria: 'turismo',
     },
   });
@@ -1067,15 +1075,80 @@ test('alta por el operador: verificado, número por confirmar y sin robarle el a
   });
   assert.equal(registro.statusCode, 200, registro.body);
 
-  // Repetir el alta con el mismo número avisa con nombre y apellido.
+  // Repetir el alta con el mismo número avisa con el nombre de quien ya lo tiene.
   const repetida = await app.inject({
     method: 'POST', url: '/api/operador/conductores', headers: cabeceras(UUID_OPERADOR),
     payload: {
-      nombre: 'Otro', telefono, matricula: 'MB-XXXXX', marca: 'Kia', carroceria: 'turismo',
+      nombre: 'Otro', apellido: 'Nguema', telefono, dip: dipUnico(), duenoConduce: true,
+      matricula: 'MB-XXXXX', marca: 'Kia', carroceria: 'turismo',
     },
   });
   assert.equal(repetida.statusCode, 409);
   assert.match(repetida.json().error, /Alta del panel/);
+});
+
+// El propietario (migración 087): el dueño distinto del conductor, la flota
+// —dos coches del mismo DIP reutilizan la ficha— y las validaciones del DIP y
+// de los tipos nuevos de vehículo.
+test('alta con propietario: dueño aparte, flota por DIP, y DIP/carrocería validados', async () => {
+  const dipDueno = dipUnico();
+  function altaConDueno(extra: Record<string, unknown> = {}) {
+    const telefono = telefonoUnico();
+    return app.inject({
+      method: 'POST', url: '/api/operador/conductores', headers: cabeceras(UUID_OPERADOR),
+      payload: {
+        nombre: 'Conductor', apellido: 'Empleado', telefono, dip: dipUnico(),
+        duenoConduce: false,
+        propietario: {
+          nombre: 'Doña', apellido: 'Dueña', telefono: telefonoUnico(), dip: dipDueno,
+        },
+        matricula: `MB-${telefono.slice(-5)}D`, marca: 'Toyota', carroceria: 'furgoneta',
+        ...extra,
+      },
+    });
+  }
+
+  const primera = await altaConDueno();
+  assert.equal(primera.statusCode, 200, primera.body);
+  const id1 = Number(primera.json().conductorId);
+
+  // El coche quedó con su dueño, y el dueño NO es el conductor.
+  const v1 = await pool.query(
+    `SELECT p.dip AS dip_dueno, p.nombre, c.dip AS dip_conductor, v.carroceria
+     FROM vehiculo v JOIN propietario p ON p.id = v.propietario_id
+     JOIN conductor c ON c.id = v.conductor_id WHERE v.conductor_id = $1`,
+    [id1],
+  );
+  assert.equal(v1.rows[0].dip_dueno, dipDueno);
+  assert.equal(v1.rows[0].carroceria, 'furgoneta');
+  assert.notEqual(v1.rows[0].dip_dueno, v1.rows[0].dip_conductor, 'dueño ≠ conductor');
+
+  // La FLOTA: otro coche con el MISMO DIP de dueño reutiliza su ficha, no
+  // crea una segunda.
+  const segunda = await altaConDueno({ carroceria: 'autobus' });
+  assert.equal(segunda.statusCode, 200, segunda.body);
+  const cuantosDuenos = await pool.query(
+    'SELECT count(*)::int AS n FROM propietario WHERE dip = $1',
+    [dipDueno],
+  );
+  assert.equal(cuantosDuenos.rows[0].n, 1, 'un DIP, un propietario, aunque tenga dos coches');
+
+  // DIP del conductor mal (no nueve dígitos): 400, y lo dice.
+  const dipMalo = await altaConDueno({ dip: '123' });
+  assert.equal(dipMalo.statusCode, 400);
+  assert.match(dipMalo.json().error, /DIP/);
+
+  // Carrocería inventada: 400.
+  const tipoMalo = await altaConDueno({ carroceria: 'tanque' });
+  assert.equal(tipoMalo.statusCode, 400);
+
+  // Mismo DIP de conductor en dos altas distintas: la segunda, 409.
+  const dipCompartido = dipUnico();
+  const unoA = await altaConDueno({ dip: dipCompartido });
+  assert.equal(unoA.statusCode, 200, unoA.body);
+  const unoB = await altaConDueno({ dip: dipCompartido });
+  assert.equal(unoB.statusCode, 409);
+  assert.match(unoB.json().error, /DIP/);
 });
 
 test('oferta dirigida: llega al taxi de otra zona, firmada, y sin duplicar', async () => {

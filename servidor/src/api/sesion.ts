@@ -21,7 +21,7 @@ import { asignarNumeroSiguiente } from '../dominio/numeros-taxi.js';
 import { esOperadorAhora } from './operador.js';
 
 const PATRON_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const CARROCERIAS = ['turismo', '4x4'];
+const CARROCERIAS = ['turismo', '4x4', 'furgoneta', 'autobus'];
 
 function errorHttp(codigo: number, mensaje: string): Error & { statusCode: number } {
   const error = new Error(mensaje) as Error & { statusCode: number };

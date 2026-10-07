@@ -2950,6 +2950,16 @@ button.importe.elegido-importe {
 
 /* El número de flota (084), como pastilla delante del nombre: es el nombre
    corto del coche, el que se dicta por radio. */
+/* Los títulos de sección dentro del alta de un taxista (migración 087):
+   separan «quién conduce», «de quién es el coche» y «el coche». */
+.alta-titulo {
+  margin: 12px 0 2px;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--humo);
+}
+
 .numero-taxi {
   display: inline-block;
   background: var(--ambar);

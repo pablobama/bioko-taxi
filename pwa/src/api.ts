@@ -472,9 +472,20 @@ export interface ViajeResumenOperador {
   conductor?: string | null;
 }
 
+export interface PropietarioFicha {
+  id: number;
+  nombre: string;
+  apellido: string;
+  telefono: string;
+  dip: string;
+}
+
 export interface FichaConductorOperador {
   id: number;
   nombre: string;
+  // Apellido y DIP (migración 087). Null en fichas de antes.
+  apellido: string | null;
+  dip: string | null;
   telefono: string;
   correo: string | null;
   estado_verificacion: string;
@@ -501,6 +512,8 @@ export interface FichaConductorOperador {
     id: number; importeXaf: number; metodo: string; referencia: string;
     estado: string; solicitadaEn: string;
   }>;
+  // El dueño del coche (migración 087). Null si aún no se ha registrado.
+  propietario: PropietarioFicha | null;
 }
 
 export interface PasajeroOperador {
@@ -810,7 +823,7 @@ export interface AltaConductor {
   correo?: string;
   matricula: string;
   marca: string;
-  carroceria: 'turismo' | '4x4';
+  carroceria: 'turismo' | '4x4' | 'furgoneta' | 'autobus';
   color?: string;
   aireAcondicionado?: boolean;
   seguro?: boolean;
@@ -1240,7 +1253,12 @@ export const api = {
   // El alta de un taxista hecha por el operador (06/10). Nace verificado
   // —lo verificó quien lo dio de alta— y con el teléfono por confirmar.
   darDeAltaTaxista: (datos: {
-    nombre: string; telefono: string; matricula: string; marca: string;
+    // El conductor: nombre, apellido, teléfono y DIP (migración 087).
+    nombre: string; apellido: string; telefono: string; dip: string;
+    // El propietario: o el mismo que conduce, o sus datos aparte.
+    duenoConduce: boolean;
+    propietario?: { nombre: string; apellido: string; telefono: string; dip: string };
+    matricula: string; marca: string;
     carroceria: string; color?: string; aireAcondicionado?: boolean; seguro?: boolean;
     // El número que el coche ya lleva pintado; vacío, el siguiente (084).
     numeroTaxi?: string;

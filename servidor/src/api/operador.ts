@@ -27,6 +27,9 @@ import {
   listarOperadores, marcarVisto, revocar, revocarDispositivo, vincularDispositivo,
 } from '../dominio/operadores.js';
 import { asignarNumeroManual, asignarNumeroSiguiente } from '../dominio/numeros-taxi.js';
+import {
+  dipValido, propietarioDeVehiculo, registrarOReutilizarPropietario,
+} from '../dominio/propietarios.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
 import { emitirVale } from '../dominio/vales.js';
 import { senalesDeTarifa } from '../dominio/precios.js';
@@ -40,6 +43,8 @@ import { crearSolicitud } from '../dominio/transiciones.js';
 
 const PATRON_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ESTADOS_VALIDOS = ['pendiente', 'verificado', 'suspendido', 'bloqueado'];
+// Los tipos de vehículo (migración 087). Informativos: describen el coche.
+const CARROCERIAS_VEHICULO = ['turismo', '4x4', 'furgoneta', 'autobus'];
 const ESTADOS_RECARGA_VALIDOS = ['pendiente', 'confirmada', 'rechazada', 'caducada'];
 
 // Las mismas del CHECK de la migración 021. Se validan aquí para poder decir
@@ -579,24 +584,58 @@ export function registrarRutasOperador(
   app.post('/api/operador/conductores', async (req) => {
     await exigirOperador(req);
     const cuerpo = (req.body ?? {}) as {
-      nombre?: string; telefono?: string; matricula?: string;
-      marca?: string; carroceria?: string; color?: string;
+      // El conductor: la cuenta operativa. Nombre, apellido, teléfono y DIP.
+      nombre?: string; apellido?: string; telefono?: string; dip?: string;
+      // El propietario. Si `duenoConduce`, es la misma persona que el
+      // conductor y no hace falta repetir sus datos.
+      duenoConduce?: boolean;
+      propietario?: {
+        nombre?: string; apellido?: string; telefono?: string; dip?: string;
+      };
+      // El vehículo.
+      matricula?: string; marca?: string; carroceria?: string; color?: string;
       aireAcondicionado?: boolean; seguro?: boolean;
       // El número que el coche ya lleva pintado, si lo lleva. Vacío: el
       // siguiente de la secuencia (migración 084).
       numeroTaxi?: string;
     };
     const nombre = cuerpo.nombre?.trim();
+    const apellido = cuerpo.apellido?.trim();
     const telefono = normalizarTelefono(cuerpo.telefono?.trim());
+    const dip = dipValido(cuerpo.dip);
     const matricula = cuerpo.matricula?.trim().toUpperCase();
     const marca = cuerpo.marca?.trim();
     const carroceria = cuerpo.carroceria;
-    if (!nombre || !telefono || !matricula || !marca || !carroceria) {
-      throw errorHttp(400, 'Faltan datos: nombre, teléfono, matrícula, marca y carrocería son obligatorios.');
+    if (!nombre || !apellido || !telefono || !matricula || !marca || !carroceria) {
+      throw errorHttp(400, 'Faltan datos del conductor o del coche: nombre, apellido, '
+        + 'teléfono, matrícula, marca y carrocería son obligatorios.');
     }
-    if (!['turismo', '4x4'].includes(carroceria)) {
-      throw errorHttp(400, 'Carrocería no válida. Opciones: turismo, 4x4.');
+    if (dip === null) {
+      throw errorHttp(400, 'El DIP del conductor tiene que ser nueve dígitos.');
     }
+    if (!CARROCERIAS_VEHICULO.includes(carroceria)) {
+      throw errorHttp(400, `Carrocería no válida. Opciones: ${CARROCERIAS_VEHICULO.join(', ')}.`);
+    }
+
+    // El propietario: o es el propio conductor (duenoConduce), o se validan sus
+    // datos aparte. Su identidad es el DIP (migración 087).
+    const prop = cuerpo.duenoConduce
+      ? { nombre, apellido, telefono, dip }
+      : (() => {
+        const p = cuerpo.propietario ?? {};
+        const pNombre = p.nombre?.trim();
+        const pApellido = p.apellido?.trim();
+        const pTelefono = normalizarTelefono(p.telefono?.trim());
+        const pDip = dipValido(p.dip);
+        if (!pNombre || !pApellido || !pTelefono) {
+          throw errorHttp(400, 'Faltan datos del propietario: nombre, apellido y teléfono. '
+            + '¿O es el mismo que conduce? Marca «el dueño también conduce».');
+        }
+        if (pDip === null) {
+          throw errorHttp(400, 'El DIP del propietario tiene que ser nueve dígitos.');
+        }
+        return { nombre: pNombre, apellido: pApellido, telefono: pTelefono, dip: pDip };
+      })();
 
     const resultado = await enTransaccion(pool, async (cliente) => {
       const yaConductor = await cliente.query(
@@ -610,6 +649,13 @@ export function registrarRutasOperador(
           + 'Búscalo en la lista: puede que solo haya que verificarlo o cambiarle el coche.',
         );
       }
+      const dipAjeno = await cliente.query(
+        'SELECT nombre FROM conductor WHERE dip = $1',
+        [dip],
+      );
+      if ((dipAjeno.rowCount ?? 0) > 0) {
+        throw errorHttp(409, `Ese DIP ya es de otro conductor (${dipAjeno.rows[0].nombre}).`);
+      }
       const matriculaAjena = await cliente.query(
         'SELECT conductor_id FROM vehiculo WHERE matricula = $1',
         [matricula],
@@ -618,10 +664,13 @@ export function registrarRutasOperador(
         throw errorHttp(409, `La matrícula ${matricula} ya está registrada por otro conductor.`);
       }
 
+      // El propietario primero: se reutiliza por DIP si ya tenía otro coche.
+      const propietarioId = await registrarOReutilizarPropietario(cliente, prop);
+
       const creado = await cliente.query(
-        `INSERT INTO conductor (telefono, nombre, estado_verificacion)
-         VALUES ($1, $2, 'verificado') RETURNING id`,
-        [telefono, nombre],
+        `INSERT INTO conductor (telefono, nombre, apellido, dip, estado_verificacion)
+         VALUES ($1, $2, $3, $4, 'verificado') RETURNING id`,
+        [telefono, nombre, apellido, dip],
       );
       const conductorId: number = Number(creado.rows[0].id);
       // El número de flota (084): el de la secuencia, o el que el coche ya
@@ -631,10 +680,11 @@ export function registrarRutasOperador(
         ? await asignarNumeroManual(cliente, conductorId, cuerpo.numeroTaxi)
         : await asignarNumeroSiguiente(cliente, conductorId);
       await cliente.query(
-        `INSERT INTO vehiculo (conductor_id, matricula, marca, carroceria, color, aire_acondicionado, seguro)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        `INSERT INTO vehiculo
+           (conductor_id, propietario_id, matricula, marca, carroceria, color, aire_acondicionado, seguro)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
-          conductorId, matricula, marca, carroceria,
+          conductorId, propietarioId, matricula, marca, carroceria,
           cuerpo.color?.trim() || null, cuerpo.aireAcondicionado ?? false, cuerpo.seguro ?? false,
         ],
       );
@@ -696,7 +746,7 @@ export function registrarRutasOperador(
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
 
     const ficha = await pool.query(
-      `SELECT c.id, c.nombre, c.telefono, c.correo, c.estado_verificacion,
+      `SELECT c.id, c.nombre, c.apellido, c.dip, c.telefono, c.correo, c.estado_verificacion,
               c.numero_taxi, c.suscrito_hasta, c.es_agente, c.recibe_en_cualquier_zona,
               v.matricula, v.marca, v.color, v.carroceria, v.plazas,
               v.aire_acondicionado, v.seguro,
@@ -738,8 +788,10 @@ export function registrarRutasOperador(
     );
     const reputacion = await reputacionDe(pool, id);
     const recargas = await recargasDe(pool, id, 10);
+    const propietario = await propietarioDeVehiculo(pool, id);
     return {
       ...ficha.rows[0],
+      propietario,
       suscripcionVigente: ficha.rows[0].suscrito_hasta !== null
         && new Date(ficha.rows[0].suscrito_hasta) > new Date(),
       reputacion,

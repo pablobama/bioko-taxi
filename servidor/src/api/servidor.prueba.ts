@@ -237,7 +237,7 @@ test('alta de taxista: valida los datos y no deja robar una matrícula ajena', a
   for (const [carga, patron] of [
     [{ nombre: 'A', telefono: '+240222000111', marca: 'Kia', carroceria: 'turismo' }, /Faltan datos/],
     [{ nombre: 'A', telefono: 'xx', matricula: 'GE-1', marca: 'Kia', carroceria: 'turismo' }, /Teléfono no válido/],
-    [{ nombre: 'A', telefono: '+240222000111', matricula: 'GE-1', marca: 'Kia', carroceria: 'furgoneta' }, /Carrocería no válida/],
+    [{ nombre: 'A', telefono: '+240222000111', matricula: 'GE-1', marca: 'Kia', carroceria: 'camion' }, /Carrocería no válida/],
   ] as Array<[Record<string, unknown>, RegExp]>) {
     const res = await app.inject({
       method: 'POST', url: '/api/conductor/alta', headers: cabeceras(randomUUID()), payload: carga,

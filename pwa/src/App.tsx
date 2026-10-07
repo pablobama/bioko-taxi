@@ -1100,7 +1100,7 @@ function AltaConductorFormulario({
   const [correo, setCorreo] = useState('');
   const [matricula, setMatricula] = useState('');
   const [marca, setMarca] = useState('');
-  const [carroceria, setCarroceria] = useState<'turismo' | '4x4'>('turismo');
+  const [carroceria, setCarroceria] = useState<'turismo' | '4x4' | 'furgoneta' | 'autobus'>('turismo');
   const [aireAcondicionado, setAireAcondicionado] = useState(false);
   const [seguro, setSeguro] = useState(false);
   const [guardando, setGuardando] = useState(false);
@@ -1143,20 +1143,16 @@ function AltaConductorFormulario({
       <input type="text" value={marca} placeholder={t('campo.marcaModelo')}
         onChange={(e) => setMarca(e.target.value)} />
       <div className="fila">
-        <button
-          type="button"
-          className={carroceria === 'turismo' ? 'principal' : 'secundario'}
-          onClick={() => setCarroceria('turismo')}
-        >
-          {t('carroceria.turismo')}
-        </button>
-        <button
-          type="button"
-          className={carroceria === '4x4' ? 'principal' : 'secundario'}
-          onClick={() => setCarroceria('4x4')}
-        >
-          {t('carroceria.4x4')}
-        </button>
+        {(['turismo', '4x4', 'furgoneta', 'autobus'] as const).map((tipo) => (
+          <button
+            key={tipo}
+            type="button"
+            className={carroceria === tipo ? 'principal' : 'secundario'}
+            onClick={() => setCarroceria(tipo)}
+          >
+            {t(`carroceria.${tipo}`)}
+          </button>
+        ))}
       </div>
       <label className="casilla">
         <input type="checkbox" checked={aireAcondicionado}
@@ -1195,8 +1191,10 @@ function AjustesConductor({
   const [correo, setCorreo] = useState(conductor.correo ?? '');
   const [matricula, setMatricula] = useState(conductor.matricula ?? '');
   const [marca, setMarca] = useState(conductor.marca ?? '');
-  const [carroceria, setCarroceria] = useState<'turismo' | '4x4'>(
-    conductor.carroceria === '4x4' ? '4x4' : 'turismo',
+  const [carroceria, setCarroceria] = useState<'turismo' | '4x4' | 'furgoneta' | 'autobus'>(
+    (['turismo', '4x4', 'furgoneta', 'autobus'] as const).includes(
+      conductor.carroceria as never,
+    ) ? conductor.carroceria as 'turismo' | '4x4' | 'furgoneta' | 'autobus' : 'turismo',
   );
   const [aireAcondicionado, setAireAcondicionado] = useState(conductor.aireAcondicionado);
   const [seguro, setSeguro] = useState(conductor.seguro);
@@ -1242,10 +1240,13 @@ function AjustesConductor({
       <input type="text" value={marca} placeholder={t('campo.marcaModelo')}
         onChange={(e) => setMarca(e.target.value)} />
       <div className="fila">
-        <button type="button" className={carroceria === 'turismo' ? 'principal' : 'secundario'}
-          onClick={() => setCarroceria('turismo')}>{t('carroceria.turismo')}</button>
-        <button type="button" className={carroceria === '4x4' ? 'principal' : 'secundario'}
-          onClick={() => setCarroceria('4x4')}>{t('carroceria.4x4')}</button>
+        {(['turismo', '4x4', 'furgoneta', 'autobus'] as const).map((tipo) => (
+          <button
+            key={tipo} type="button"
+            className={carroceria === tipo ? 'principal' : 'secundario'}
+            onClick={() => setCarroceria(tipo)}
+          >{t(`carroceria.${tipo}`)}</button>
+        ))}
       </div>
       <label className="casilla">
         <input type="checkbox" checked={aireAcondicionado}

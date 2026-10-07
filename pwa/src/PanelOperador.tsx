@@ -35,6 +35,10 @@ import Mapa, { colorDeCalor } from './Mapa';
 // es algo que se elija al dar de alta un sitio.
 const CATEGORIAS = Object.keys(ESTILO_CATEGORIA).filter((c) => c !== 'zona').sort();
 
+const ETIQUETA_CARROCERIA: Record<string, string> = {
+  turismo: 'Turismo', '4x4': '4x4', furgoneta: 'Furgoneta', autobus: 'Autobús',
+};
+
 const ETIQUETA_ESTADO: Record<string, string> = {
   pendiente: 'Pendiente',
   verificado: 'Verificado',
@@ -480,12 +484,22 @@ function FilaIncidencia({
 // quien lo dicte primero.
 function AltaDeTaxista({ alCreada }: { alCreada: (conductorId: number) => void }) {
   const [abierta, setAbierta] = useState(false);
+  // Conductor
   const [nombre, setNombre] = useState('');
+  const [apellido, setApellido] = useState('');
   const [telefono, setTelefono] = useState('');
+  const [dip, setDip] = useState('');
+  // Propietario
+  const [duenoConduce, setDuenoConduce] = useState(true);
+  const [pNombre, setPNombre] = useState('');
+  const [pApellido, setPApellido] = useState('');
+  const [pTelefono, setPTelefono] = useState('');
+  const [pDip, setPDip] = useState('');
+  // Vehículo
   const [matricula, setMatricula] = useState('');
   const [marca, setMarca] = useState('');
   const [numeroTaxi, setNumeroTaxi] = useState('');
-  const [carroceria, setCarroceria] = useState<'turismo' | '4x4'>('turismo');
+  const [carroceria, setCarroceria] = useState('turismo');
   const [aire, setAire] = useState(false);
   const [seguro, setSeguro] = useState(false);
   const [error, setError] = useState('');
@@ -499,8 +513,15 @@ function AltaDeTaxista({ alCreada }: { alCreada: (conductorId: number) => void }
     );
   }
 
-  const completo = nombre.trim() !== '' && telefono.trim().length >= 6
-    && matricula.trim() !== '' && marca.trim() !== '';
+  // Un DIP válido son nueve dígitos, ni uno más. Solo cifras al escribir.
+  const esDip = (v: string) => /^\d{9}$/.test(v.trim());
+  const conductorOk = nombre.trim() !== '' && apellido.trim() !== ''
+    && telefono.trim().length >= 6 && esDip(dip);
+  const propietarioOk = duenoConduce
+    || (pNombre.trim() !== '' && pApellido.trim() !== ''
+      && pTelefono.trim().length >= 6 && esDip(pDip));
+  const vehiculoOk = matricula.trim() !== '' && marca.trim() !== '';
+  const completo = conductorOk && propietarioOk && vehiculoOk;
 
   async function guardar() {
     setError('');
@@ -508,7 +529,16 @@ function AltaDeTaxista({ alCreada }: { alCreada: (conductorId: number) => void }
     try {
       const r = await api.darDeAltaTaxista({
         nombre: nombre.trim(),
+        apellido: apellido.trim(),
         telefono: telefono.trim(),
+        dip: dip.trim(),
+        duenoConduce,
+        propietario: duenoConduce ? undefined : {
+          nombre: pNombre.trim(),
+          apellido: pApellido.trim(),
+          telefono: pTelefono.trim(),
+          dip: pDip.trim(),
+        },
         matricula: matricula.trim(),
         marca: marca.trim(),
         carroceria,
@@ -533,19 +563,68 @@ function AltaDeTaxista({ alCreada }: { alCreada: (conductorId: number) => void }
         lo que demuestra que esa línea es suya.
       </p>
       {error && <p className="aviso">{error}</p>}
+
+      <h4 className="alta-titulo">Quién conduce</h4>
       <div className="fila">
         <input value={nombre} placeholder="Nombre" onChange={(e) => setNombre(e.target.value)} />
+        <input value={apellido} placeholder="Apellido" onChange={(e) => setApellido(e.target.value)} />
+      </div>
+      <div className="fila">
         <input
           value={telefono} inputMode="tel" placeholder="Teléfono"
           onChange={(e) => setTelefono(e.target.value)}
         />
+        <input
+          value={dip} inputMode="numeric" placeholder="DIP (9 dígitos)" maxLength={9}
+          onChange={(e) => setDip(e.target.value.replace(/\D/g, '').slice(0, 9))}
+        />
       </div>
+
+      {/* El dueño del coche. Casi siempre es el mismo que conduce; cuando no,
+          sus datos van aparte y se reutiliza por el DIP si ya tenía otro
+          coche (es la flota). */}
+      <label className="casilla">
+        <input
+          type="checkbox" checked={duenoConduce}
+          onChange={(e) => setDuenoConduce(e.target.checked)}
+        />
+        El dueño del coche es quien conduce
+      </label>
+      {!duenoConduce && (
+        <>
+          <h4 className="alta-titulo">De quién es el coche</h4>
+          <div className="fila">
+            <input value={pNombre} placeholder="Nombre del dueño" onChange={(e) => setPNombre(e.target.value)} />
+            <input value={pApellido} placeholder="Apellido del dueño" onChange={(e) => setPApellido(e.target.value)} />
+          </div>
+          <div className="fila">
+            <input
+              value={pTelefono} inputMode="tel" placeholder="Teléfono del dueño"
+              onChange={(e) => setPTelefono(e.target.value)}
+            />
+            <input
+              value={pDip} inputMode="numeric" placeholder="DIP del dueño (9 dígitos)" maxLength={9}
+              onChange={(e) => setPDip(e.target.value.replace(/\D/g, '').slice(0, 9))}
+            />
+          </div>
+        </>
+      )}
+
+      <h4 className="alta-titulo">El coche</h4>
       <div className="fila">
         <input
           value={matricula} placeholder="Matrícula"
           onChange={(e) => setMatricula(e.target.value)}
         />
         <input value={marca} placeholder="Marca" onChange={(e) => setMarca(e.target.value)} />
+        <select value={carroceria} onChange={(e) => setCarroceria(e.target.value)}>
+          <option value="turismo">Turismo</option>
+          <option value="4x4">4x4</option>
+          <option value="furgoneta">Furgoneta</option>
+          <option value="autobus">Autobús</option>
+        </select>
+      </div>
+      <div className="fila">
         {/* El número de flota (084). Vacío, le toca el siguiente; se rellena
             solo cuando el coche YA lleva uno pintado, y el servidor no deja
             dar ninguno por delante de la secuencia. */}
@@ -553,15 +632,6 @@ function AltaDeTaxista({ alCreada }: { alCreada: (conductorId: number) => void }
           value={numeroTaxi} placeholder="Nº de taxi (vacío: el siguiente)"
           onChange={(e) => setNumeroTaxi(e.target.value)}
         />
-        <select
-          value={carroceria}
-          onChange={(e) => setCarroceria(e.target.value as 'turismo' | '4x4')}
-        >
-          <option value="turismo">Turismo</option>
-          <option value="4x4">4x4</option>
-        </select>
-      </div>
-      <div className="fila">
         <label className="casilla">
           <input type="checkbox" checked={aire} onChange={(e) => setAire(e.target.checked)} />
           Aire acondicionado
@@ -756,15 +826,28 @@ function FichaConductor({
           {ficha.numero_taxi !== null && (
             <span className="numero-taxi">{ficha.numero_taxi}</span>
           )}
-          {ficha.nombre}
+          {ficha.nombre}{ficha.apellido && ` ${ficha.apellido}`}
         </h1>
         <button type="button" className="secundario" onClick={alVolver}>Volver</button>
       </div>
       <p className="nota">
-        {ficha.telefono}{ficha.correo && ` · ${ficha.correo}`}
-        {ficha.matricula && ` · ${ficha.matricula}`}{ficha.marca && ` · ${ficha.marca}`}
-        {ficha.carroceria && ` · ${ficha.carroceria}`}
+        {ficha.telefono}{ficha.dip && ` · DIP ${ficha.dip}`}
+        {ficha.correo && ` · ${ficha.correo}`}
       </p>
+      <p className="nota">
+        {ficha.matricula ?? 'sin matrícula'}{ficha.marca && ` · ${ficha.marca}`}
+        {ficha.carroceria && ` · ${ETIQUETA_CARROCERIA[ficha.carroceria] ?? ficha.carroceria}`}
+      </p>
+      {/* El dueño del coche (migración 087). Si es el mismo que conduce, se
+          dice, para no hacer leer dos veces los mismos datos. */}
+      {ficha.propietario !== null && (
+        <p className="nota">
+          {ficha.propietario.dip === ficha.dip
+            ? 'Dueño: el mismo que conduce.'
+            : `Dueño: ${ficha.propietario.nombre} ${ficha.propietario.apellido}`
+              + ` · ${ficha.propietario.telefono} · DIP ${ficha.propietario.dip}`}
+        </p>
+      )}
       <div className="fila">
         <label className="casilla">
           <input type="checkbox" checked={aireAcondicionado}
