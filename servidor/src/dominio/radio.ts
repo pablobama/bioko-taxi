@@ -37,6 +37,25 @@ export async function canalDe(_cliente: Lector, _conductorId: number): Promise<s
   return CANAL_UNICO;
 }
 
+// El canal de la Central (086): donde está todo el mundo. El día que `canalDe`
+// mire la zona, la Central tendrá que elegir canal — y esta función es el
+// sitio donde se decidirá.
+export function canalDeLaCentral(): string {
+  return CANAL_UNICO;
+}
+
+// Quién habla (086). La radio tiene dos voces posibles y ninguna anónima: un
+// conductor —con su dispositivo, porque el audio tiene que venir del mismo
+// aparato que pidió el turno— o la Central, cuya identidad es el uuid de su
+// aparato de operador (080).
+export type Hablante =
+  | { canal: string; conductorId: number; dispositivoId: number }
+  | { canal: string; uuidOperador: string };
+
+function esCentral(h: Hablante): h is { canal: string; uuidOperador: string } {
+  return 'uuidOperador' in h;
+}
+
 // «La isla» y no «la provincia»: Bioko Norte es Malabo y Baney, pero Luba y
 // Riaba están en Bioko Sur, y por provincia habría dos canales con el del sur
 // vacío. El gremio es el de la isla.
@@ -80,23 +99,34 @@ export type Palabra =
 // encima a otro.
 export async function pedirLaPalabra(
   cliente: Lector,
-  { canal, conductorId, dispositivoId }:
-    { canal: string; conductorId: number; dispositivoId: number },
+  hablante: Hablante,
   ahora = new Date(),
 ): Promise<Palabra> {
+  const { canal } = hablante;
   if (!await radioEncendida(cliente)) return { dada: false, motivo: 'apagada' };
   const limites = await limitesDeLaRadio(cliente);
 
-  // El tope por taxista va antes del turno, y no después: el tope del canal
-  // frena al gremio pero no frena al que se engancha al botón él solo.
-  const seguidos = await cliente.query(
-    `SELECT count(*)::int AS n,
-            extract(epoch from (min(creado_en) + interval '1 minute' - $3::timestamptz)) AS espera
-     FROM mensaje_voz
-     WHERE conductor_id = $1 AND canal = $2
-       AND creado_en > $3::timestamptz - interval '1 minute'`,
-    [conductorId, canal, ahora],
-  );
+  // El tope por hablante va antes del turno, y no después: el tope del canal
+  // frena al gremio pero no frena al que se engancha al botón él solo. A la
+  // Central se le aplica el mismo: una central que no suelta el canal es tan
+  // radio rota como un taxista enganchado.
+  const seguidos = esCentral(hablante)
+    ? await cliente.query(
+      `SELECT count(*)::int AS n,
+              extract(epoch from (min(creado_en) + interval '1 minute' - $2::timestamptz)) AS espera
+       FROM mensaje_voz
+       WHERE de_central AND canal = $1
+         AND creado_en > $2::timestamptz - interval '1 minute'`,
+      [canal, ahora],
+    )
+    : await cliente.query(
+      `SELECT count(*)::int AS n,
+              extract(epoch from (min(creado_en) + interval '1 minute' - $3::timestamptz)) AS espera
+       FROM mensaje_voz
+       WHERE conductor_id = $1 AND canal = $2
+         AND creado_en > $3::timestamptz - interval '1 minute'`,
+      [hablante.conductorId, canal, ahora],
+    );
   if (seguidos.rows[0].n >= limites.mensajesPorMinuto) {
     return {
       dada: false,
@@ -112,24 +142,29 @@ export async function pedirLaPalabra(
   // condición falla, no se actualiza nada y no vuelve ninguna fila. Atómico,
   // sin leer antes de escribir y sin carrera posible.
   const dado = await cliente.query(
-    `INSERT INTO turno_palabra (canal, conductor_id, dispositivo_id, pedido_en, caduca_en)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO turno_palabra
+       (canal, conductor_id, dispositivo_id, uuid_operador, pedido_en, caduca_en)
+     VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (canal) DO UPDATE
        SET conductor_id = excluded.conductor_id,
            dispositivo_id = excluded.dispositivo_id,
+           uuid_operador = excluded.uuid_operador,
            pedido_en = excluded.pedido_en,
            caduca_en = excluded.caduca_en
        WHERE turno_palabra.caduca_en <= excluded.pedido_en
      RETURNING caduca_en`,
-    [canal, conductorId, dispositivoId, ahora, caducaEn],
+    esCentral(hablante)
+      ? [canal, null, null, hablante.uuidOperador.toLowerCase(), ahora, caducaEn]
+      : [canal, hablante.conductorId, hablante.dispositivoId, null, ahora, caducaEn],
   );
 
   if (dado.rowCount === 0) {
     // Ocupado. Se dice QUIÉN habla y cuánto le queda: en una radio eso es la
     // diferencia entre esperar tranquilo y volver a apretar cinco veces.
     const quien = await cliente.query(
-      `SELECT c.nombre, extract(epoch from (t.caduca_en - $2::timestamptz)) AS quedan
-       FROM turno_palabra t JOIN conductor c ON c.id = t.conductor_id
+      `SELECT COALESCE(c.nombre, 'Central') AS nombre,
+              extract(epoch from (t.caduca_en - $2::timestamptz)) AS quedan
+       FROM turno_palabra t LEFT JOIN conductor c ON c.id = t.conductor_id
        WHERE t.canal = $1`,
       [canal, ahora],
     );
@@ -152,13 +187,21 @@ export async function pedirLaPalabra(
 // se marca vencida para que el canal quede libre ya.
 export async function soltarLaPalabra(
   cliente: Lector,
-  { canal, dispositivoId }: { canal: string; dispositivoId: number },
+  hablante: Hablante,
   ahora = new Date(),
 ): Promise<void> {
+  if (esCentral(hablante)) {
+    await cliente.query(
+      `UPDATE turno_palabra SET caduca_en = $3
+       WHERE canal = $1 AND uuid_operador = $2 AND caduca_en > $3`,
+      [hablante.canal, hablante.uuidOperador.toLowerCase(), ahora],
+    );
+    return;
+  }
   await cliente.query(
     `UPDATE turno_palabra SET caduca_en = $3
      WHERE canal = $1 AND dispositivo_id = $2 AND caduca_en > $3`,
-    [canal, dispositivoId, ahora],
+    [hablante.canal, hablante.dispositivoId, ahora],
   );
 }
 
@@ -167,15 +210,19 @@ export async function quienHabla(
   cliente: Lector,
   canal: string,
   ahora = new Date(),
-): Promise<{ conductorId: number; nombre: string } | null> {
+): Promise<{ conductorId: number | null; nombre: string } | null> {
   const res = await cliente.query(
-    `SELECT t.conductor_id, c.nombre FROM turno_palabra t
-     JOIN conductor c ON c.id = t.conductor_id
+    `SELECT t.conductor_id, COALESCE(c.nombre, 'Central') AS nombre
+     FROM turno_palabra t
+     LEFT JOIN conductor c ON c.id = t.conductor_id
      WHERE t.canal = $1 AND t.caduca_en > $2`,
     [canal, ahora],
   );
   if (res.rowCount === 0) return null;
-  return { conductorId: Number(res.rows[0].conductor_id), nombre: res.rows[0].nombre };
+  return {
+    conductorId: res.rows[0].conductor_id === null ? null : Number(res.rows[0].conductor_id),
+    nombre: res.rows[0].nombre,
+  };
 }
 
 export type Guardado =
@@ -191,12 +238,10 @@ export type Guardado =
 // —que no se le dio la palabra a otro mientras él hablaba— se cumple igual.
 export async function guardarMensaje(
   cliente: Lector,
-  { canal, conductorId, dispositivoId, audio, tipoMedio, duracionMs }: {
-    canal: string; conductorId: number; dispositivoId: number;
-    audio: Buffer; tipoMedio: string; duracionMs: number;
-  },
+  hablante: Hablante & { audio: Buffer; tipoMedio: string; duracionMs: number },
   ahora = new Date(),
 ): Promise<Guardado> {
+  const { canal, audio, tipoMedio, duracionMs } = hablante;
   if (!await radioEncendida(cliente)) return { guardado: false, motivo: 'apagada' };
   const limites = await limitesDeLaRadio(cliente);
 
@@ -208,32 +253,44 @@ export async function guardarMensaje(
   }
 
   const antiguedadMaxSeg = limites.segundosMax + limites.margenSeg * 2;
-  const suyo = await cliente.query(
-    `SELECT 1 FROM turno_palabra
-     WHERE canal = $1 AND dispositivo_id = $2
-       AND pedido_en > $3::timestamptz - make_interval(secs => $4)`,
-    [canal, dispositivoId, ahora, antiguedadMaxSeg],
-  );
+  // El audio tiene que venir del mismo aparato que pidió el turno: para un
+  // conductor es su dispositivo; para la Central, su uuid de operador.
+  const suyo = esCentral(hablante)
+    ? await cliente.query(
+      `SELECT 1 FROM turno_palabra
+       WHERE canal = $1 AND uuid_operador = $2
+         AND pedido_en > $3::timestamptz - make_interval(secs => $4)`,
+      [canal, hablante.uuidOperador.toLowerCase(), ahora, antiguedadMaxSeg],
+    )
+    : await cliente.query(
+      `SELECT 1 FROM turno_palabra
+       WHERE canal = $1 AND dispositivo_id = $2
+         AND pedido_en > $3::timestamptz - make_interval(secs => $4)`,
+      [canal, hablante.dispositivoId, ahora, antiguedadMaxSeg],
+    );
   if (suyo.rowCount === 0) return { guardado: false, motivo: 'sin_turno' };
 
   const insertado = await cliente.query(
-    `INSERT INTO mensaje_voz (canal, conductor_id, audio, tipo_medio, duracion_ms, creado_en)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-    [canal, conductorId, audio, tipoMedio, duracionMs, ahora],
+    `INSERT INTO mensaje_voz
+       (canal, conductor_id, de_central, audio, tipo_medio, duracion_ms, creado_en)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+    [
+      canal,
+      esCentral(hablante) ? null : hablante.conductorId,
+      esCentral(hablante),
+      audio, tipoMedio, duracionMs, ahora,
+    ],
   );
 
   // El canal queda libre en el mismo momento en que el mensaje existe: el que
   // habló ya terminó, y esperar a que caduque el plazo serían cinco segundos de
   // radio muerta después de cada frase.
-  await cliente.query(
-    `UPDATE turno_palabra SET caduca_en = $3 WHERE canal = $1 AND dispositivo_id = $2`,
-    [canal, dispositivoId, ahora],
-  );
+  await soltarLaPalabra(cliente, hablante, ahora);
 
   return {
     guardado: true,
     mensajeId: Number(insertado.rows[0].id),
-    oyentes: await oyentesDe(cliente, canal, conductorId),
+    oyentes: await oyentesDe(cliente, canal, esCentral(hablante) ? null : hablante.conductorId),
   };
 }
 
@@ -301,7 +358,9 @@ export async function oyentesPorConductor(
 
 export interface MensajeListado {
   id: number;
-  conductorId: number;
+  // null cuando habló la Central (086).
+  conductorId: number | null;
+  deCentral: boolean;
   nombre: string;
   matricula: string | null;
   duracionMs: number;
@@ -318,11 +377,13 @@ export async function ultimosMensajes(
   limite = 20,
 ): Promise<MensajeListado[]> {
   const res = await cliente.query(
-    `SELECT m.id, m.conductor_id, c.nombre, m.duracion_ms, m.creado_en,
+    `SELECT m.id, m.conductor_id, m.de_central,
+            COALESCE(c.nombre, 'Central') AS nombre,
+            m.duracion_ms, m.creado_en,
             octet_length(m.audio) AS bytes,
             (SELECT v.matricula FROM vehiculo v WHERE v.conductor_id = m.conductor_id
              ORDER BY v.id LIMIT 1) AS matricula
-     FROM mensaje_voz m JOIN conductor c ON c.id = m.conductor_id
+     FROM mensaje_voz m LEFT JOIN conductor c ON c.id = m.conductor_id
      WHERE m.canal = $1
      ORDER BY m.creado_en DESC
      LIMIT $2`,
@@ -330,7 +391,8 @@ export async function ultimosMensajes(
   );
   return res.rows.map((f) => ({
     id: Number(f.id),
-    conductorId: Number(f.conductor_id),
+    conductorId: f.conductor_id === null ? null : Number(f.conductor_id),
+    deCentral: Boolean(f.de_central),
     nombre: f.nombre,
     matricula: f.matricula ?? null,
     duracionMs: f.duracion_ms,

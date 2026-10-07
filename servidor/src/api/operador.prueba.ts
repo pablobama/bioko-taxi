@@ -934,6 +934,107 @@ test('número de taxi: apagado no reparte; encendido numera, y a mano solo por d
   }
 });
 
+// La radio de la Central (086), de punta a punta: escucha y emite, que es lo
+// que el operador pidió con exclamación. Lo que de verdad se comprueba:
+//   · el turno es UNO para todos — si la Central habla, el taxista espera, y
+//     la pantalla del taxista dice «Central», no «error»;
+//   · la voz de la Central queda firmada como tal (de_central, sin conductor);
+//   · y el canal es de ida y vuelta: lo del taxista le aparece a la Central.
+test('radio: la Central escucha, pide la palabra y emite con su nombre', async () => {
+  const uuidTaxi = randomUUID();
+  const alta = await app.inject({
+    method: 'POST', url: '/api/conductor/alta', headers: cabeceras(uuidTaxi),
+    payload: {
+      nombre: 'Taxista de la radio', telefono: telefonoUnico(),
+      matricula: `MB-${Date.now() % 100000}R`, marca: 'Toyota', carroceria: 'turismo',
+    },
+  });
+  assert.equal(alta.statusCode, 200, alta.body);
+
+  // La Central pide la palabra…
+  const turno = await app.inject({
+    method: 'POST', url: '/api/operador/radio/turno', headers: cabeceras(UUID_OPERADOR),
+    payload: {},
+  });
+  assert.equal(turno.statusCode, 200, turno.body);
+  assert.equal(turno.json().dada, true);
+
+  // …y el taxista que aprieta ve OCUPADO por «Central», no un error.
+  const ocupado = await app.inject({
+    method: 'POST', url: '/api/conductor/radio/turno', headers: cabeceras(uuidTaxi),
+    payload: {},
+  });
+  assert.equal(ocupado.statusCode, 409, ocupado.body);
+  assert.equal(ocupado.json().habla, 'Central');
+
+  // La Central emite. El audio es de mentira; lo que importa es la firma.
+  const emitido = await app.inject({
+    method: 'POST', url: '/api/operador/radio/mensaje', headers: {
+      ...cabeceras(UUID_OPERADOR),
+      'content-type': 'audio/webm',
+      'x-duracion-ms': '1200',
+    },
+    payload: Buffer.from('audio de mentira de la central'),
+  });
+  assert.equal(emitido.statusCode, 200, emitido.body);
+  const mensajeId = Number(emitido.json().mensajeId);
+
+  const firma = await pool.query(
+    'SELECT conductor_id, de_central FROM mensaje_voz WHERE id = $1',
+    [mensajeId],
+  );
+  assert.equal(firma.rows[0].conductor_id, null);
+  assert.equal(firma.rows[0].de_central, true);
+
+  // El taxista lo ve en su lista como «Central», y puede bajar el audio.
+  const suRadio = await app.inject({
+    method: 'GET', url: '/api/conductor/radio', headers: cabeceras(uuidTaxi),
+  });
+  assert.equal(suRadio.statusCode, 200, suRadio.body);
+  const visto = suRadio.json().mensajes.find((m: { id: number }) => m.id === mensajeId);
+  assert.equal(visto?.nombre, 'Central');
+  assert.equal(visto?.mio, false);
+  const bajada = await app.inject({
+    method: 'GET', url: `/api/conductor/radio/mensaje/${mensajeId}/audio`,
+    headers: cabeceras(uuidTaxi),
+  });
+  assert.equal(bajada.statusCode, 200);
+
+  // Y al revés: el canal quedó libre al emitir, el taxista habla y la
+  // Central lo ve con su nombre — y lo suyo propio como «mío».
+  const turnoTaxi = await app.inject({
+    method: 'POST', url: '/api/conductor/radio/turno', headers: cabeceras(uuidTaxi),
+    payload: {},
+  });
+  assert.equal(turnoTaxi.statusCode, 200, turnoTaxi.body);
+  const delTaxi = await app.inject({
+    method: 'POST', url: '/api/conductor/radio/mensaje', headers: {
+      ...cabeceras(uuidTaxi),
+      'content-type': 'audio/webm',
+      'x-duracion-ms': '900',
+    },
+    payload: Buffer.from('audio de mentira del taxista'),
+  });
+  assert.equal(delTaxi.statusCode, 200, delTaxi.body);
+
+  const laCentralVe = await app.inject({
+    method: 'GET', url: '/api/operador/radio', headers: cabeceras(UUID_OPERADOR),
+  });
+  assert.equal(laCentralVe.statusCode, 200, laCentralVe.body);
+  const mensajes = laCentralVe.json().mensajes as Array<{ id: number; nombre: string; mio: boolean }>;
+  const elDelTaxi = mensajes.find((m) => m.id === Number(delTaxi.json().mensajeId));
+  assert.equal(elDelTaxi?.nombre, 'Taxista de la radio');
+  assert.equal(elDelTaxi?.mio, false);
+  assert.equal(mensajes.find((m) => m.id === mensajeId)?.mio, true, 'lo de la Central es «mío» para la Central');
+
+  // Y la puerta es una puerta: un uuid cualquiera no entra a la radio del
+  // operador.
+  const intruso = await app.inject({
+    method: 'GET', url: '/api/operador/radio', headers: cabeceras(randomUUID()),
+  });
+  assert.equal(intruso.statusCode, 403);
+});
+
 test('alta por el operador: verificado, número por confirmar y sin robarle el aparato', async () => {
   const telefono = telefonoUnico();
   const res = await app.inject({

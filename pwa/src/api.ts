@@ -1539,8 +1539,12 @@ export const api = {
       keepalive: true,
     }),
 
-  // La radio del gremio (migración 075).
-  radio: () => pedirJson<EstadoRadio>('/api/conductor/radio'),
+  // La radio del gremio (migración 075). Con dos puertas desde la 086: la
+  // del taxista y la de la Central — mismas rutas, mismo contrato, distinto
+  // guardián. La puerta se pasa en cada llamada para que el gancho `useRadio`
+  // sirva tal cual en los dos paneles.
+  radio: (puerta: PuertaRadio = 'conductor') =>
+    pedirJson<EstadoRadio>(`${RUTA_RADIO[puerta]}`),
 
   // Apretar el botón. Sin reintentos a propósito: si la petición se pierde en la
   // red, repetirla llegaría tarde —el turno dura diez segundos— y podría pisarle
@@ -1550,10 +1554,10 @@ export const api = {
   // convertir en lo que la pantalla necesita. Sin esto saltaban al camino de los
   // fallos y el taxista leía «no se pudo pedir la palabra, inténtalo otra vez»
   // cada vez que otro estaba hablando.
-  pedirTurnoRadio: async (): Promise<RespuestaTurno> => {
+  pedirTurnoRadio: async (puerta: PuertaRadio = 'conductor'): Promise<RespuestaTurno> => {
     try {
       return await pedirJson<RespuestaTurno>(
-        '/api/conductor/radio/turno', { method: 'POST', body: '{}' },
+        `${RUTA_RADIO[puerta]}/turno`, { method: 'POST', body: '{}' },
       );
     } catch (error) {
       if (error instanceof ErrorDelServidor && (error.estado === 409 || error.estado === 404)) {
@@ -1565,14 +1569,14 @@ export const api = {
     }
   },
 
-  soltarTurnoRadio: () =>
-    pedirJson<{ soltado: boolean }>('/api/conductor/radio/turno', { method: 'DELETE' }),
+  soltarTurnoRadio: (puerta: PuertaRadio = 'conductor') =>
+    pedirJson<{ soltado: boolean }>(`${RUTA_RADIO[puerta]}/turno`, { method: 'DELETE' }),
 
   // El audio va como cuerpo binario, no en base64: los mismos diez segundos
   // pesarían un tercio más, y aquí eso es dinero del taxista.
-  mandarVozRadio: (audio: Blob, duracionMs: number) =>
+  mandarVozRadio: (audio: Blob, duracionMs: number, puerta: PuertaRadio = 'conductor') =>
     pedirJson<{ guardado: boolean; mensajeId: number; oyentes: number }>(
-      '/api/conductor/radio/mensaje',
+      `${RUTA_RADIO[puerta]}/mensaje`,
       {
         method: 'POST',
         body: audio,
@@ -1584,9 +1588,17 @@ export const api = {
     ),
 };
 
+// Por qué puerta se habla con la radio (086).
+export type PuertaRadio = 'conductor' | 'operador';
+const RUTA_RADIO: Record<PuertaRadio, string> = {
+  conductor: '/api/conductor/radio',
+  operador: '/api/operador/radio',
+};
+
 export interface MensajeRadio {
   id: number;
-  conductorId: number;
+  // null cuando habló la Central (086).
+  conductorId: number | null;
   nombre: string;
   matricula: string | null;
   duracionMs: number;
@@ -1599,7 +1611,7 @@ export interface EstadoRadio {
   encendida: boolean;
   canal: string;
   segundosMax: number;
-  habla: { conductorId: number; nombre: string } | null;
+  habla: { conductorId: number | null; nombre: string } | null;
   mensajes: MensajeRadio[];
 }
 
@@ -1612,9 +1624,12 @@ export type RespuestaTurno =
 // Baja el audio de un mensaje. Va aparte de `pedirJson` porque lo que vuelve no
 // es JSON, y con las cabeceras y no con el secreto en la URL: una URL se comparte
 // sin pensar, y esto es la voz de alguien.
-export async function bajarVozRadio(mensajeId: number): Promise<Blob | null> {
+export async function bajarVozRadio(
+  mensajeId: number,
+  puerta: PuertaRadio = 'conductor',
+): Promise<Blob | null> {
   await asegurarSecreto();
-  const respuesta = await fetch(`/api/conductor/radio/mensaje/${mensajeId}/audio`, {
+  const respuesta = await fetch(`${RUTA_RADIO[puerta]}/mensaje/${mensajeId}/audio`, {
     headers: {
       'x-dispositivo': uuidDispositivo(),
       ...(secretoDispositivo() !== null ? { 'x-secreto': secretoDispositivo()! } : {}),
@@ -1786,6 +1801,17 @@ function abrirFlujo(
     cerrado = true;
     fuente?.close();
   };
+}
+
+// Conexión viva de la Central (086): por aquí le llega la radio — quién
+// habla, los mensajes nuevos, el silencio.
+export function abrirEventosOperador(
+  alRecibir: (evento: EventoSse) => void,
+): () => void {
+  return abrirFlujo(
+    () => `/api/operador/eventos?dispositivo=${uuidDispositivo()}${sufijoSecreto()}`,
+    alRecibir,
+  );
 }
 
 // Conexión viva del taxista: las carreras llegan en el momento, sin esperar al

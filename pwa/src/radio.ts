@@ -17,7 +17,7 @@
 // paso siguiente; esto de aquí sirve con la aplicación delante.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, bajarVozRadio, type EstadoRadio, type MensajeRadio } from './api';
+import { type PuertaRadio, api, bajarVozRadio, type EstadoRadio, type MensajeRadio } from './api';
 import { esFalloDeMicrofono } from './llamada';
 import {
   permitirGrabar, reproducirVoz, sonarRadioAdelante, sonarRadioEntra,
@@ -229,7 +229,9 @@ export interface UsoRadio {
   alRecibirEvento: (tipo: string, datos: unknown) => void;
 }
 
-export function useRadio({ activa }: { activa: boolean }): UsoRadio {
+export function useRadio(
+  { activa, puerta = 'conductor' }: { activa: boolean; puerta?: PuertaRadio },
+): UsoRadio {
   const [estado, setEstado] = useState<EstadoBoton>('libre');
   // Se mira una vez: no cambia mientras la página está abierta.
   const [puedeGrabar, setPuedeGrabar] = useState<PuedeGrabar>(() => radioDisponible());
@@ -272,7 +274,7 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
 
   const cargar = useCallback(async () => {
     try {
-      const r: EstadoRadio = await api.radio();
+      const r: EstadoRadio = await api.radio(puerta);
       setEncendida(r.encendida);
       setSegundosMax(r.segundosMax);
       setMensajes(r.mensajes);
@@ -317,7 +319,7 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
     sonando.current = true;
     void (async () => {
       try {
-        const audio = await bajarVozRadio(siguiente);
+        const audio = await bajarVozRadio(siguiente, puerta);
         // `null` es lo normal pasadas dos horas: el mensaje se borró. No es un
         // fallo y no se le dice nada al taxista.
         if (audio !== null) {
@@ -347,7 +349,7 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
     setEstado('enviando');
     void (async () => {
       try {
-        const r = await api.mandarVozRadio(audio, duracionMs);
+        const r = await api.mandarVozRadio(audio, duracionMs, puerta);
         setOyentes(r.oyentes);
         setAviso(r.oyentes === 0
           ? 'No había nadie conectado: no te ha oído nadie.'
@@ -359,7 +361,7 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
         setAviso('No se pudo mandar. Vuelve a decirlo.');
         // El servidor libera el canal al GUARDAR el mensaje; si el mensaje no
         // llegó, el turno sigue siendo suyo y hay que devolverlo a mano.
-        void api.soltarTurnoRadio().catch(() => undefined);
+        void api.soltarTurnoRadio(puerta).catch(() => undefined);
       } finally {
         setEstado('libre');
         setHabla(null);
@@ -382,7 +384,7 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
       if (duracionMs < MINIMO_MS || audio.size === 0) {
         // Un toque no es un mensaje: se suelta el turno para que el canal no
         // quede pillado esos segundos.
-        void api.soltarTurnoRadio().catch(() => undefined);
+        void api.soltarTurnoRadio(puerta).catch(() => undefined);
         setEstado('libre');
         setHabla(null);
         setQuedan(0);
@@ -474,7 +476,7 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
         // distintos: la petición del turno, el permiso del micrófono o la
         // grabadora. Sin saber cuál, se arregla a ciegas.
         const [turno, media] = await Promise.all([
-          paso('turno', () => api.pedirTurnoRadio()),
+          paso('turno', () => api.pedirTurnoRadio(puerta)),
           paso('micro', () => navigator.mediaDevices.getUserMedia(RESTRICCIONES)),
         ]);
         flujo = media;
@@ -499,7 +501,7 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
         // se devuelve el turno.
         if (soltado.current) {
           flujo.getTracks().forEach((t) => t.stop());
-          void api.soltarTurnoRadio().catch(() => undefined);
+          void api.soltarTurnoRadio(puerta).catch(() => undefined);
           setEstado('libre');
           return;
         }
@@ -550,7 +552,7 @@ export function useRadio({ activa }: { activa: boolean }): UsoRadio {
         // fallar con el turno YA concedido. Si no se devuelve, el gremio se
         // queda sin radio hasta que caduque, y encima por alguien que ni
         // siquiera ha llegado a hablar.
-        void api.soltarTurnoRadio().catch(() => undefined);
+        void api.soltarTurnoRadio(puerta).catch(() => undefined);
         // Cada fallo pide algo distinto del taxista, así que se distinguen. Un
         // único «inténtalo otra vez» le manda a repetir lo que no va a
         // funcionar nunca, que es lo que pasaba.

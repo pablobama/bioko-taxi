@@ -18,8 +18,12 @@ import {
   type ViajeVivo,
   type ViajeOperador, type ViajeResumenOperador, type ZonaOperador,
 } from './api';
+import { abrirEventosOperador } from './api';
 import { ESTILO_CATEGORIA } from './categorias';
 import { metrosEntre } from './geo';
+import { crearT } from './i18n';
+import PanelRadio from './PanelRadio';
+import { useRadio } from './radio';
 import { ErrorDelServidor } from './conexion';
 import Mapa, { colorDeCalor } from './Mapa';
 
@@ -2933,6 +2937,22 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   alVolver?: () => void;
 } = {}) {
   const esAgente = modo === 'agente';
+  // La radio de la Central (086): el operador escucha y emite en el canal del
+  // gremio, con el mismo botón flotante que el taxista. Un agente de campo
+  // no: la radio del gremio no es parte del trabajo de mapa.
+  const radio = useRadio({ activa: !esAgente, puerta: 'operador' });
+  const recibirRadio = useRef<((tipo: string, datos: unknown) => void) | null>(null);
+  recibirRadio.current = radio.alRecibirEvento;
+  useEffect(() => {
+    if (esAgente) return;
+    return abrirEventosOperador((evento) => {
+      if (evento.tipo.startsWith('radio_')) {
+        recibirRadio.current?.(evento.tipo, evento.datos);
+      }
+    });
+  }, [esAgente]);
+  // El panel es solo en español; la radio comparte textos con la del taxista.
+  const tRadio = crearT('es');
   const visibles = esAgente
     ? SECCIONES.filter(([id]) => SECCIONES_AGENTE.includes(id))
     : SECCIONES;
@@ -3633,6 +3653,24 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
             {dockPlegado ? '⟨' : '⟩'}
           </button>
 
+      {!esAgente && (
+        <PanelRadio
+          estado={radio.estado}
+          encendida={radio.encendida}
+          puedeGrabar={radio.puedeGrabar}
+          habla={radio.habla}
+          quedan={radio.quedan}
+          segundosMax={radio.segundosMax}
+          mensajes={radio.mensajes}
+          aviso={radio.aviso}
+          oyentes={radio.oyentes}
+          t={tRadio}
+          alApretar={radio.apretar}
+          alSoltar={radio.soltar}
+          alVolverAOir={radio.volverAOir}
+        />
+      )}
+
           {hojaAbierta && (
             <div className={dockPlegado ? 'mesa-hoja mesa-hoja-ancha' : 'mesa-hoja'}>
               <header className="mesa-hoja-cabecera">
@@ -3668,6 +3706,23 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
         )}
         {contenido}
       </section>
+      {!esAgente && (
+        <PanelRadio
+          estado={radio.estado}
+          encendida={radio.encendida}
+          puedeGrabar={radio.puedeGrabar}
+          habla={radio.habla}
+          quedan={radio.quedan}
+          segundosMax={radio.segundosMax}
+          mensajes={radio.mensajes}
+          aviso={radio.aviso}
+          oyentes={radio.oyentes}
+          t={tRadio}
+          alApretar={radio.apretar}
+          alSoltar={radio.soltar}
+          alVolverAOir={radio.volverAOir}
+        />
+      )}
     </main>
   );
 }

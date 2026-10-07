@@ -158,7 +158,7 @@ test('soltar deja el canal libre en el acto', async () => {
 
   await pedirLaPalabra(pool, { canal, ...uno }, ahora);
   // Aprieta y se arrepiente. Nadie tiene que esperar quince segundos por eso.
-  await soltarLaPalabra(pool, { canal, dispositivoId: uno.dispositivoId }, ahora);
+  await soltarLaPalabra(pool, { canal, ...uno }, ahora);
 
   assert.equal(await quienHabla(pool, canal, ahora), null);
   const segundo = await pedirLaPalabra(pool, { canal, ...otro }, ahora);

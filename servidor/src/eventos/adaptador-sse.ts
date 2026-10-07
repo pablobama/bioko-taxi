@@ -115,6 +115,45 @@ export class ConexionesSse {
     }
     return conjunto.size;
   }
+
+  // --- Los operadores (086) -------------------------------------------------
+  //
+  // Aparte de los dispositivos a propósito: el operador no tiene fila en
+  // `dispositivo` —es una lista propia desde la 080— y meterlo en el mismo
+  // mapa con claves inventadas sería sembrar colisiones. Lo usa la radio:
+  // la Central escucha el canal en vivo desde su panel.
+  private readonly porOperador = new Map<string, Set<Conexion>>();
+
+  suscribirOperador(uuid: string, envio: EnvioSse): () => void {
+    const clave = uuid.toLowerCase();
+    let conjunto = this.porOperador.get(clave);
+    if (!conjunto) {
+      conjunto = new Set();
+      this.porOperador.set(clave, conjunto);
+    }
+    const conexion: Conexion = { envio, mirandoHasta: Date.now() + MIRANDO_VALE_MS };
+    conjunto.add(conexion);
+    return () => {
+      conjunto.delete(conexion);
+      if (conjunto.size === 0) {
+        this.porOperador.delete(clave);
+      }
+    };
+  }
+
+  // A todos los operadores conectados, menos (si se pasa) el que habla: oírse
+  // a uno mismo con medio segundo de retraso es un eco, no una radio.
+  entregarAOperadores(carga: string, exceptoUuid: string | null = null): number {
+    let entregados = 0;
+    for (const [uuid, conjunto] of this.porOperador) {
+      if (exceptoUuid !== null && uuid === exceptoUuid.toLowerCase()) continue;
+      for (const c of conjunto) {
+        c.envio(carga);
+        entregados += 1;
+      }
+    }
+    return entregados;
+  }
 }
 
 export class AdaptadorSse implements Adaptador {
