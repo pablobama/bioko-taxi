@@ -2850,6 +2850,29 @@ button.importe.elegido-importe {
   border-color: var(--ambar);
 }
 
+.mesa-chip-recorrido {
+  gap: 6px;
+  align-items: center;
+}
+
+.recorrido-per,
+.recorrido-quitar {
+  border: none;
+  background: none;
+  color: var(--humo);
+  font-family: inherit;
+  font-size: 0.74rem;
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 6px;
+}
+
+.recorrido-per.activo {
+  background: var(--ambar);
+  color: #1c1c21;
+  font-weight: 700;
+}
+
 .mesa-chip-aviso b {
   color: var(--ambar-claro);
 }

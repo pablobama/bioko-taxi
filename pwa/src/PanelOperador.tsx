@@ -3518,6 +3518,26 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   // Un Map y no una sola: comparar dos viajes es verlos JUNTOS.
   const [trazas, setTrazas] = useState<Map<number, Array<Array<{ lat: number; lng: number }>>>>(new Map());
   const [avisoTraza, setAvisoTraza] = useState('');
+  // El recorrido de UN taxista sobre el mapa del despacho (pedido el 08/10):
+  // se abre desde su ficha y trae su propio filtro de tiempo —Hoy, Semana,
+  // Mes— y un botón para quitarlo, en vez de un mapa pequeño dentro de la
+  // ficha.
+  const [recorridoMapa, setRecorridoMapa] = useState<{
+    conductorId: number; periodo: PeriodoRecorrido;
+    tramos: Array<Array<{ lat: number; lng: number }>>;
+  } | null>(null);
+
+  async function verRecorridoConductor(id: number, periodo: PeriodoRecorrido = 'dia') {
+    try {
+      const r = await api.recorridoConductor(id, periodo);
+      setRecorridoMapa({ conductorId: id, periodo, tramos: r.tramos });
+      setAvisoTraza(r.tramos.length === 0
+        ? 'Ese taxista no tiene recorrido en ese periodo.' : '');
+      setHojaAbierta(false);
+    } catch (e) {
+      setAvisoTraza(e instanceof Error ? e.message : 'No se pudo cargar el recorrido.');
+    }
+  }
 
   async function verViajeEnMapa(id: number) {
     try {
@@ -3639,6 +3659,7 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                 alVolver={() => setFichaConductor(null)}
                 alCambiarEstado={cambiarEstadoConductor}
                 ocupado={ocupadoId !== null}
+                alVerRecorrido={enConsola ? (cid) => verRecorridoConductor(cid) : undefined}
               />
             )
             : (
@@ -3705,6 +3726,7 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                 alVolver={() => setFichaConductor(null)}
                 alCambiarEstado={cambiarEstadoConductor}
                 ocupado={ocupadoId !== null}
+                alVerRecorrido={enConsola ? (cid) => verRecorridoConductor(cid) : undefined}
               />
             )
             : (
@@ -3909,7 +3931,13 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
               ]}
               alTocarTaxi={(id) => setFoco({ tipo: 'taxi', id })}
               alTocarEspera={(id, viva) => setFoco({ tipo: viva ? 'viva' : 'apagada', id })}
-              recorrido={trazas.size > 0 ? [...trazas.values()].flat() : undefined}
+              recorrido={(() => {
+                const dibujos = [
+                  ...(trazas.size > 0 ? [...trazas.values()].flat() : []),
+                  ...(recorridoMapa?.tramos ?? []),
+                ];
+                return dibujos.length > 0 ? dibujos : undefined;
+              })()}
             />
             {taxisVivos !== null && taxisEnMapa.length === 0 && (
               <p className="mesa-mapa-vacio">
@@ -3961,6 +3989,26 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                 <b>{trazas.size}</b>
                 <small>{trazas.size === 1 ? 'viaje dibujado · quitar' : 'viajes dibujados · quitar'}</small>
               </button>
+            )}
+            {recorridoMapa !== null && (
+              <span className="mesa-chip mesa-chip-recorrido">
+                <small>Recorrido</small>
+                {(['dia', 'semana', 'mes'] as const).map((per) => (
+                  <button
+                    key={per} type="button"
+                    className={per === recorridoMapa.periodo ? 'recorrido-per activo' : 'recorrido-per'}
+                    onClick={() => verRecorridoConductor(recorridoMapa.conductorId, per)}
+                  >
+                    {per === 'dia' ? 'Hoy' : per === 'semana' ? 'Semana' : 'Mes'}
+                  </button>
+                ))}
+                <button
+                  type="button" className="recorrido-quitar"
+                  onClick={() => setRecorridoMapa(null)}
+                >
+                  quitar ✕
+                </button>
+              </span>
             )}
             {avisoTraza !== '' && (
               <button type="button" className="mesa-chip" onClick={() => setAvisoTraza('')}>
