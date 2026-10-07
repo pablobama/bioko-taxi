@@ -1318,6 +1318,15 @@ function RecorridoConductor({ id }: { id: number }) {
   );
 }
 
+// La ficha del pasajero, en carpetas como la del taxista. Un pasajero tiene
+// menos que un taxista —ni coche, ni dueño, ni servicio— así que son dos: sus
+// datos con el resumen de su actividad, y sus viajes. Las acciones van juntas
+// en un desplegable, igual que en la del taxista.
+type CarpetaPasajero = 'pasajero' | 'viajes';
+const CARPETAS_PASAJERO: Array<[CarpetaPasajero, string]> = [
+  ['pasajero', 'Pasajero'], ['viajes', 'Viajes'],
+];
+
 function FichaPasajero({
   dispositivoId, alVolver,
 }: {
@@ -1327,6 +1336,8 @@ function FichaPasajero({
   const [ficha, setFicha] = useState<FichaPasajeroOperador | null>(null);
   const [error, setError] = useState('');
   const [ocupado, setOcupado] = useState(false);
+  const [carpeta, setCarpeta] = useState<CarpetaPasajero>('pasajero');
+  const [accionesAbiertas, setAccionesAbiertas] = useState(false);
 
   function cargar() {
     api.fichaPasajeroOperador(dispositivoId).then(setFicha).catch((e) => setError(e.message));
@@ -1354,53 +1365,97 @@ function FichaPasajero({
         <h1>{ficha.nombre ?? ficha.telefono ?? 'Pasajero'}</h1>
         <button type="button" className="secundario" onClick={alVolver}>Volver</button>
       </div>
-      <p className="nota">
-        {ficha.telefono ?? 'sin teléfono'}{ficha.correo && ` · ${ficha.correo}`}
-        {' · '}en la plataforma desde {fecha(ficha.creado_en)}
-      </p>
-      {ficha.bloqueado_en && (
-        <p className="aviso">Bloqueado desde {fecha(ficha.bloqueado_en)} por incidencias repetidas.</p>
-      )}
-      <div className="rejilla">
-        <Dato valor={ficha.viajes.completados} etiqueta="Viajes completados" />
-        <Dato valor={ficha.viajes.pedidos} etiqueta="Veces que pidió" />
-        <Dato valor={ficha.viajes.cancelados} etiqueta="Cancelados por él" />
-        <Dato valor={`${ficha.strikes}`} etiqueta="Strikes" />
-      </div>
-      {(ficha.strikes > 0 || ficha.bloqueado_en) && (
-        <button type="button" className="principal" disabled={ocupado} onClick={desbloquear}>
-          Perdonar strikes y desbloquear
+
+      {/* Las acciones, todas juntas en un desplegable. */}
+      <div className="fila ficha-acciones">
+        <button
+          type="button" className="secundario"
+          onClick={() => setAccionesAbiertas((v) => !v)}
+        >
+          Acciones {accionesAbiertas ? '▾' : '▸'}
         </button>
+      </div>
+      {accionesAbiertas && (
+        <div className="fila ficha-menu-acciones">
+          {(ficha.strikes > 0 || ficha.bloqueado_en) && (
+            <button type="button" className="principal" disabled={ocupado} onClick={desbloquear}>
+              Perdonar strikes y desbloquear
+            </button>
+          )}
+          {/* Papel de campo para un pasajero (migración 072): sitúa barrios,
+              corrige sitios y aprueba los que propone la gente. No toca dinero,
+              ni verificaciones, ni incidencias — lo mismo que un taxista
+              agente. Se quita igual de fácil, y lo que toque queda apuntado
+              (migración 067). */}
+          <button
+            type="button"
+            className="secundario"
+            disabled={ocupado}
+            onClick={async () => {
+              setOcupado(true);
+              try {
+                await api.nombrarAgentePasajero(dispositivoId, !ficha.es_agente);
+                cargar();
+              } catch (e) {
+                setError(e instanceof Error ? e.message : 'No se pudo cambiar el papel.');
+              } finally {
+                setOcupado(false);
+              }
+            }}
+          >
+            {ficha.es_agente ? 'Quitar el papel de agente de campo' : 'Nombrar agente de campo'}
+          </button>
+          <ValeDeEntrada telefono={ficha.telefono} />
+          <CambiarTelefono
+            actual={ficha.telefono}
+            alCambiar={(t) => api.cambiarTelefonoPasajero(dispositivoId, t).then(cargar)}
+          />
+        </div>
       )}
-      {/* Papel de campo para un pasajero (migración 072): sitúa barrios,
-          corrige sitios y aprueba los que propone la gente. No toca dinero, ni
-          verificaciones, ni incidencias — lo mismo que un taxista agente. Se
-          quita igual de fácil, y lo que toque queda apuntado (migración 067). */}
-      <button
-        type="button"
-        className="secundario"
-        disabled={ocupado}
-        onClick={async () => {
-          setOcupado(true);
-          try {
-            await api.nombrarAgentePasajero(dispositivoId, !ficha.es_agente);
-            cargar();
-          } catch (e) {
-            setError(e instanceof Error ? e.message : 'No se pudo cambiar el papel.');
-          } finally {
-            setOcupado(false);
-          }
-        }}
-      >
-        {ficha.es_agente ? 'Quitar el papel de agente de campo' : 'Nombrar agente de campo'}
-      </button>
-      <ValeDeEntrada telefono={ficha.telefono} />
-      <CambiarTelefono
-        actual={ficha.telefono}
-        alCambiar={(t) => api.cambiarTelefonoPasajero(dispositivoId, t).then(cargar)}
-      />
-      <p className="nota">Últimos viajes</p>
-      <ListaViajes viajes={ficha.ultimosViajes} />
+
+      {/* Las carpetas: cada dato donde toca, no todo en una lista larga. */}
+      <div className="selector-idioma">
+        {CARPETAS_PASAJERO.map(([clave, etiqueta]) => (
+          <button
+            key={clave} type="button"
+            className={clave === carpeta ? 'idioma-activo' : undefined}
+            onClick={() => setCarpeta(clave)}
+          >
+            {etiqueta}
+          </button>
+        ))}
+      </div>
+
+      {carpeta === 'pasajero' && (
+        <div className="ficha-carpeta">
+          <p className="nota">
+            {ficha.telefono ?? 'sin teléfono'}{ficha.correo && ` · ${ficha.correo}`}
+            {ficha.edad !== null && ` · ${ficha.edad} años`}
+            {ficha.genero && ` · ${ficha.genero}`}
+          </p>
+          <p className="nota">
+            En la plataforma desde {fecha(ficha.creado_en)}
+            {ficha.es_agente && ' · es agente de campo'}
+          </p>
+          {ficha.bloqueado_en && (
+            <p className="aviso">Bloqueado desde {fecha(ficha.bloqueado_en)} por incidencias repetidas.</p>
+          )}
+          <div className="rejilla">
+            <Dato valor={ficha.viajes.completados} etiqueta="Viajes completados" />
+            <Dato valor={ficha.viajes.pedidos} etiqueta="Veces que pidió" />
+            <Dato valor={ficha.viajes.cancelados} etiqueta="Cancelados por él" />
+            <Dato valor={ficha.viajes.ausencias} etiqueta="No se presentó" />
+            <Dato valor={`${ficha.strikes}`} etiqueta="Strikes" />
+          </div>
+        </div>
+      )}
+
+      {carpeta === 'viajes' && (
+        <div className="ficha-carpeta">
+          <p className="nota">Últimos viajes</p>
+          <ListaViajes viajes={ficha.ultimosViajes} />
+        </div>
+      )}
     </>
   );
 }
