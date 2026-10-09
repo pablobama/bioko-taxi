@@ -2058,6 +2058,9 @@ test('el recorrido: lo ve el operador, no un agente de campo, y sale por tramos'
   assert.equal(cuerpo.puntos, 4);
   assert.equal(cuerpo.tramos.length, 2, 'las cinco horas de hueco no se unen con una recta');
   assert.ok(cuerpo.metros > 300, `esperaba unos cientos de metros y salieron ${cuerpo.metros}`);
+  // Los clientes llevados en el periodo (09/10): este taxista no completó
+  // ninguna carrera, así que cero, pero el campo viaja siempre.
+  assert.equal(cuerpo.clientesLlevados, 0, 'sin carreras completadas, cero clientes');
 
   // Un periodo que no existe se rechaza, en vez de caer en el de por defecto
   // y devolver un recorrido de otro plazo sin decirlo.

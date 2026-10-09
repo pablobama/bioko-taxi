@@ -4092,6 +4092,11 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   const [recorridoMapa, setRecorridoMapa] = useState<{
     conductorId: number; periodo: PeriodoRecorrido;
     tramos: Array<Array<{ lat: number; lng: number }>>;
+    // El resumen del periodo, para las cuadrículas superpuestas sobre el mapa.
+    resumen: {
+      metros: number; segundosEnServicio: number;
+      velocidadMediaKmh: number | null; clientesLlevados: number;
+    };
   } | null>(null);
   // UNA carrera, enfocada en el mapa del despacho (08/10): al pulsarla en los
   // registros, el plano se queda solo con ese viaje —su recorrido, y los
@@ -4106,7 +4111,15 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   async function verRecorridoConductor(id: number, periodo: PeriodoRecorrido = 'dia') {
     try {
       const r = await api.recorridoConductor(id, periodo);
-      setRecorridoMapa({ conductorId: id, periodo, tramos: r.tramos });
+      setRecorridoMapa({
+        conductorId: id, periodo, tramos: r.tramos,
+        resumen: {
+          metros: r.metros,
+          segundosEnServicio: r.segundosEnServicio,
+          velocidadMediaKmh: r.velocidadMediaKmh,
+          clientesLlevados: r.clientesLlevados,
+        },
+      });
       setAvisoTraza(r.tramos.length === 0
         ? 'Ese taxista no tiene recorrido en ese periodo.' : '');
       setHojaAbierta(false);
@@ -4593,6 +4606,30 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                   ? 'Ningún taxi en servicio ahora mismo.'
                   : `${taxisVivos.length} en servicio, ninguno ha mandado su posición todavía.`}
               </p>
+            )}
+            {/* Las cifras del recorrido, en cuadrículas superpuestas sobre el
+                mapa (09/10): el dibujo dice por dónde anduvo; esto, cuánto
+                cundió —velocidad media, tiempo, kilómetros y a cuánta gente
+                llevó—. */}
+            {recorridoMapa !== null && (
+              <div className="recorrido-cuadricula">
+                <div className="recorrido-celda">
+                  <b>{recorridoMapa.resumen.velocidadMediaKmh === null ? '—' : recorridoMapa.resumen.velocidadMediaKmh.toFixed(1)}</b>
+                  <small>km/h de media</small>
+                </div>
+                <div className="recorrido-celda">
+                  <b>{duracion(recorridoMapa.resumen.segundosEnServicio)}</b>
+                  <small>en servicio</small>
+                </div>
+                <div className="recorrido-celda">
+                  <b>{(recorridoMapa.resumen.metros / 1000).toFixed(1)}</b>
+                  <small>km recorridos</small>
+                </div>
+                <div className="recorrido-celda">
+                  <b>{recorridoMapa.resumen.clientesLlevados}</b>
+                  <small>{recorridoMapa.resumen.clientesLlevados === 1 ? 'cliente llevado' : 'clientes llevados'}</small>
+                </div>
+              </div>
             )}
           </div>
 

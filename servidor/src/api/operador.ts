@@ -1363,12 +1363,24 @@ export function registrarRutasOperador(
     const desde = inicioDelDiaEnMalabo(dias, hasta);
     const recorrido = await recorridoDe(pool, id, desde, hasta);
     const actividad = await actividadDe(pool, id, desde, hasta);
+    // Cuántos clientes llevó en el periodo: carreras que acabaron en
+    // COMPLETADO, contadas por cuándo se pidieron (en una isla de veinte
+    // minutos, la carrera empieza y acaba el mismo día). Es el dato que cierra
+    // el recorrido —no solo por dónde anduvo, sino a cuánta gente llevó—.
+    const llevados = await pool.query(
+      `SELECT count(*)::int AS n
+       FROM solicitud s
+       WHERE s.conductor_id = $1 AND s.estado = 'COMPLETADO'
+         AND s.creada_en BETWEEN $2 AND $3`,
+      [id, desde, hasta],
+    );
     return {
       periodo: periodo ?? 'dia',
       desde: recorrido.desde.toISOString(),
       hasta: recorrido.hasta.toISOString(),
       puntos: recorrido.puntos,
       metros: recorrido.metros,
+      clientesLlevados: llevados.rows[0].n as number,
       // Tiempo en servicio del periodo. Sale del registro de estados y no del
       // rastro: el rastro tiene agujeros y le quitaría horas trabajadas.
       segundosEnServicio: actividad.segundosEnServicio,

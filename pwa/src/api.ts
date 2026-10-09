@@ -695,6 +695,8 @@ export interface RecorridoOperador {
   // Puntos que hay de verdad, antes de aligerar para dibujarlos.
   puntos: number;
   metros: number;
+  // Cuántos clientes llevó en el periodo: carreras completadas.
+  clientesLlevados: number;
   // Tiempo en servicio del periodo. Sale del registro de estados y no del
   // rastro: el rastro tiene agujeros y le quitaría horas trabajadas.
   segundosEnServicio: number;

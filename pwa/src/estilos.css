@@ -2873,6 +2873,50 @@ button.importe.elegido-importe {
   font-weight: 700;
 }
 
+/* Las cifras del recorrido, superpuestas sobre el mapa: velocidad media,
+   tiempo, kilómetros y clientes llevados. Translúcidas y en una esquina, para
+   no tapar el dibujo. */
+/* Selector más específico que `.mesa-mapa > div` (que estira el plano al
+   100 %): si no, esa regla también estiraría la cuadrícula a pantalla
+   completa. */
+.mesa-mapa > .recorrido-cuadricula {
+  position: absolute;
+  /* Por debajo de la barra de chips, que vive en lo alto del plano. */
+  top: 66px;
+  left: 12px;
+  width: max-content;
+  height: max-content;
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  gap: 8px;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.recorrido-celda {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 12px;
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  background: rgba(16, 16, 20, 0.78);
+}
+
+.recorrido-celda b {
+  font-size: 1.3rem;
+  font-weight: 800;
+  line-height: 1.1;
+  color: var(--ambar);
+}
+
+.recorrido-celda small {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--humo);
+}
+
 .mesa-chip-aviso b {
   color: var(--ambar-claro);
 }
