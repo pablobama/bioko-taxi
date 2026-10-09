@@ -722,6 +722,11 @@ export interface SalidaRecorrido {
 export interface ViajeOperador {
   id: number;
   estado: string;
+  // Para enlazar con las fichas (08/10): el taxista y el dispositivo del
+  // cliente. Nulos si la carrera no llegó a tener taxi, o si quien la pidió
+  // fue el operador por teléfono sin dispositivo de cliente detrás.
+  conductor_id: number | null;
+  dispositivo_id: number | null;
   creada_en: string;
   cerrada_en: string | null;
   // Cuándo subió el cliente y cuándo bajó (06/10). Nulos si la carrera no

@@ -1955,6 +1955,10 @@ export function registrarRutasOperador(
     const buscado = q?.trim() || null;
     const filas = await pool.query(
       `SELECT s.id::int AS id, s.estado, s.creada_en, s.telefono_cliente,
+              -- Para enlazar la carrera con sus fichas (08/10): el taxista y el
+              -- cliente que la pidió. El dispositivo del cliente es la clave de
+              -- su ficha de pasajero.
+              s.conductor_id, s.dispositivo_cliente_id AS dispositivo_id,
               -- Lo que el pasajero dijo que pagó, si lo dijo (migración 066).
               -- Vive en su propia tabla y cuelga del viaje, no de la solicitud.
               (SELECT pd.importe_xaf FROM viaje vi

@@ -2722,7 +2722,11 @@ const ESTADOS_VIAJE = [
   'CLIENTE_AUSENTE', 'NO_PRESENTADO', 'INCIDENCIA',
 ] as const;
 
-function Viajes({ alVerEnMapa }: { alVerEnMapa?: (viaje: ViajeOperador) => void }) {
+function Viajes({ alVerEnMapa, alVerFichaConductor, alVerFichaPasajero }: {
+  alVerEnMapa?: (viaje: ViajeOperador) => void;
+  alVerFichaConductor?: (id: number) => void;
+  alVerFichaPasajero?: (dispositivoId: number) => void;
+}) {
   const [viajes, setViajes] = useState<ViajeOperador[] | null>(null);
   const [estado, setEstado] = useState<string>('todos');
   const [busqueda, setBusqueda] = useState('');
@@ -2815,6 +2819,23 @@ function Viajes({ alVerEnMapa }: { alVerEnMapa?: (viaje: ViajeOperador) => void 
                         <b>Precio</b>{' '}
                         {v.precio_xaf === null ? '—' : `${v.precio_xaf.toLocaleString('es')} XAF`}
                       </span>
+                      {/* Enlaces a las fichas de quienes hicieron la carrera. */}
+                      {alVerFichaConductor !== undefined && v.conductor_id !== null && (
+                        <button
+                          type="button" className="tabla-enlace"
+                          onClick={(e) => { e.stopPropagation(); alVerFichaConductor(v.conductor_id!); }}
+                        >
+                          Ficha del taxista →
+                        </button>
+                      )}
+                      {alVerFichaPasajero !== undefined && v.dispositivo_id !== null && (
+                        <button
+                          type="button" className="tabla-enlace"
+                          onClick={(e) => { e.stopPropagation(); alVerFichaPasajero(v.dispositivo_id!); }}
+                        >
+                          Ficha del cliente →
+                        </button>
+                      )}
                       {alVerEnMapa !== undefined && (
                         <button
                           type="button" className="secundario"
@@ -2935,7 +2956,9 @@ const TIPOS_REGISTRO = [
 
 // El registro de todos los vehículos (migración 087): el coche, de quién es y
 // quién lo conduce, en una tabla que se recorre comparando.
-function RegistroVehiculos() {
+function RegistroVehiculos({ alVerFichaConductor }: {
+  alVerFichaConductor?: (id: number) => void;
+}) {
   const [lista, setLista] = useState<VehiculoRegistro[] | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -2953,8 +2976,18 @@ function RegistroVehiculos() {
           <td className="tabla-clave">{v.matricula}</td>
           <td>{v.carroceria ? (ETIQUETA_CARROCERIA[v.carroceria] ?? v.carroceria) : '—'}</td>
           <td>{v.marca ?? '—'}{v.color ? ` · ${v.color}` : ''}</td>
-          <td>{v.conductor}{v.conductor_apellido ? ` ${v.conductor_apellido}` : ''}
-            <span className="tabla-tenue"> · {v.conductor_telefono}</span></td>
+          <td>
+            {/* El taxista enlaza con su ficha (08/10): desde el coche se llega
+                a quién lo conduce sin ir a buscarlo a Gente. */}
+            {alVerFichaConductor !== undefined ? (
+              <button type="button" className="tabla-enlace" onClick={() => alVerFichaConductor(v.conductor_id)}>
+                {v.conductor}{v.conductor_apellido ? ` ${v.conductor_apellido}` : ''}
+              </button>
+            ) : (
+              <>{v.conductor}{v.conductor_apellido ? ` ${v.conductor_apellido}` : ''}</>
+            )}
+            <span className="tabla-tenue"> · {v.conductor_telefono}</span>
+          </td>
           <td>{v.dueno === null ? '—' : `${v.dueno} ${v.dueno_apellido ?? ''}`.trim()}</td>
           <td className="tabla-tenue">
             {[v.aire_acondicionado ? 'aire' : null, v.seguro ? 'seguro' : null,
@@ -2992,7 +3025,11 @@ function RegistroPropietarios() {
   );
 }
 
-function Registros({ alVerViaje }: { alVerViaje?: (viaje: ViajeOperador) => void }) {
+function Registros({ alVerViaje, alVerFichaConductor, alVerFichaPasajero }: {
+  alVerViaje?: (viaje: ViajeOperador) => void;
+  alVerFichaConductor?: (id: number) => void;
+  alVerFichaPasajero?: (dispositivoId: number) => void;
+}) {
   const [tipo, setTipo] = useState<(typeof TIPOS_REGISTRO)[number][0]>('carreras');
   return (
     <>
@@ -3007,8 +3044,14 @@ function Registros({ alVerViaje }: { alVerViaje?: (viaje: ViajeOperador) => void
           </button>
         ))}
       </div>
-      {tipo === 'carreras' && <Viajes alVerEnMapa={alVerViaje} />}
-      {tipo === 'vehiculos' && <RegistroVehiculos />}
+      {tipo === 'carreras' && (
+        <Viajes
+          alVerEnMapa={alVerViaje}
+          alVerFichaConductor={alVerFichaConductor}
+          alVerFichaPasajero={alVerFichaPasajero}
+        />
+      )}
+      {tipo === 'vehiculos' && <RegistroVehiculos alVerFichaConductor={alVerFichaConductor} />}
       {tipo === 'propietarios' && <RegistroPropietarios />}
       {tipo === 'flota' && <TaxisPorZona />}
       {tipo === 'cambios' && <Cambios />}
@@ -3847,6 +3890,25 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
       setAvisoTraza(e instanceof Error ? e.message : 'No se pudo cargar la carrera.');
     }
   }
+
+  // Saltar a una ficha desde los registros (08/10): el taxista o el cliente de
+  // una carrera, o el taxista de un vehículo, abren su ficha en Gente. En la
+  // consola la hoja se queda abierta sobre Gente; en la vista estrecha cambia
+  // de sección.
+  function abrirFichaConductor(id: number) {
+    setEnGente('conductores');
+    setFichaPasajero(null);
+    setFichaConductor(id);
+    setSeccion('gente');
+    setHojaAbierta(true);
+  }
+  function abrirFichaPasajero(dispositivoId: number) {
+    setEnGente('pasajeros');
+    setFichaConductor(null);
+    setFichaPasajero(dispositivoId);
+    setSeccion('gente');
+    setHojaAbierta(true);
+  }
   // Los barrios situados, para que el encuadre arranque en Malabo y no en la
   // isla entera. Se piden una vez: los barrios no se mueven a lo largo del día.
   const [ciudad, setCiudad] = useState<Array<{ lat: number; lng: number }>>([]);
@@ -4114,7 +4176,11 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
         )}
 
         {seccion === 'registros' && (
-          <Registros alVerViaje={enConsola ? verViajeEnMapa : undefined} />
+          <Registros
+            alVerViaje={enConsola ? verViajeEnMapa : undefined}
+            alVerFichaConductor={abrirFichaConductor}
+            alVerFichaPasajero={abrirFichaPasajero}
+          />
         )}
 
         {/* Distritos, barrios y lugares eran tres entradas de once para la
