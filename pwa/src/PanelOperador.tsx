@@ -13,7 +13,7 @@ import {
   type FichaConductorOperador, type FichaPasajeroOperador, type IncidenciaOperador,
   type ParametroOperador, type PasajeroOperador, type PeriodoRecorrido,
   type RecargaOperador, type RecorridoOperador, type ReferenciaOperador,
-  type PropietarioRegistro, type SaludOperador, type SinOfertaViva, type SolicitudCentral,
+  type PropietarioFicha, type PropietarioRegistro, type SaludOperador, type SinOfertaViva, type SolicitudCentral,
   type TaxiVivo, type TransicionOperador, type VehiculoRegistro,
   type ViajeVivo,
   type ViajeOperador, type ViajeResumenOperador, type ZonaOperador,
@@ -909,6 +909,198 @@ function EditarDatosTaxista({ ficha, alGuardado, alCancelar }: {
   );
 }
 
+// La tarjeta de identidad: una foto (si la hay) al lado de los datos bien
+// puestos. La misma para el taxista, el dueño y el vehículo, para que las tres
+// pestañas se lean igual. Un dato que falta se enseña con dignidad —en gris y
+// con su nombre— en vez de dejar un hueco: una ficha a medias sigue pareciendo
+// una ficha.
+function TarjetaIdentidad({ foto, titulo, insignia, datos }: {
+  foto?: React.ReactNode;
+  titulo: React.ReactNode;
+  insignia?: React.ReactNode;
+  datos: Array<{ k: string; v: React.ReactNode; falta?: boolean }>;
+}) {
+  return (
+    <div className="tarjeta-identidad">
+      {foto !== undefined && foto !== null && (
+        <div className="tarjeta-foto">{foto}</div>
+      )}
+      <div className="tarjeta-cuerpo">
+        <div className="tarjeta-cabeza">
+          <h2 className="tarjeta-titulo">{titulo}</h2>
+          {insignia}
+        </div>
+        <dl className="tarjeta-datos">
+          {datos.map(({ k, v, falta }) => (
+            <div className="tarjeta-dato" key={k}>
+              <dt>{k}</dt>
+              <dd className={falta ? 'tarjeta-falta' : undefined}>{v}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </div>
+  );
+}
+
+// Editar el vehículo en su pestaña (08/10): color, plazas, aire y seguro
+// siempre; matrícula, marca y tipo solo si el coche no está validado —una vez
+// la central lo validó, describen OTRO coche, así que se bloquean, igual que en
+// el alta del propio taxista—.
+const TIPOS_VEHICULO = Object.entries(ETIQUETA_CARROCERIA);
+
+function EditarVehiculo({ ficha, alGuardado, alCancelar }: {
+  ficha: FichaConductorOperador;
+  alGuardado: () => void;
+  alCancelar: () => void;
+}) {
+  const validado = ficha.estado_verificacion === 'verificado';
+  const [matricula, setMatricula] = useState(ficha.matricula ?? '');
+  const [marca, setMarca] = useState(ficha.marca ?? '');
+  const [carroceria, setCarroceria] = useState(ficha.carroceria ?? 'turismo');
+  const [color, setColor] = useState(ficha.color ?? '');
+  const [plazas, setPlazas] = useState(ficha.plazas !== null ? String(ficha.plazas) : '');
+  const [aire, setAire] = useState(ficha.aire_acondicionado);
+  const [seguro, setSeguro] = useState(ficha.seguro);
+  const [error, setError] = useState('');
+  const [ocupado, setOcupado] = useState(false);
+
+  const matriculaValida = validado || matricula.trim() !== '';
+
+  async function guardar() {
+    setError('');
+    setOcupado(true);
+    try {
+      const datos: Parameters<typeof api.editarVehiculoOperador>[1] = {
+        aireAcondicionado: aire,
+        seguro,
+        color: color.trim() || null,
+        plazas: plazas.trim() === '' ? null : Number(plazas),
+      };
+      if (!validado) {
+        datos.matricula = matricula.trim();
+        datos.marca = marca.trim() || undefined;
+        datos.carroceria = carroceria;
+      }
+      await api.editarVehiculoOperador(ficha.id, datos);
+      alGuardado();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo guardar.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  return (
+    <div className="ficha-editar">
+      {error !== '' && <p className="aviso">{error}</p>}
+      {validado && (
+        <p className="nota">
+          El coche lo validó la central. La matrícula, la marca y el tipo ya no
+          se cambian aquí; el color, las plazas y los extras, sí.
+        </p>
+      )}
+      <div className="fila">
+        <input
+          value={matricula} placeholder="Matrícula" disabled={validado}
+          onChange={(e) => setMatricula(e.target.value.toUpperCase())}
+        />
+        <input
+          value={marca} placeholder="Marca" disabled={validado}
+          onChange={(e) => setMarca(e.target.value)}
+        />
+      </div>
+      <div className="fila">
+        <select value={carroceria} disabled={validado} onChange={(e) => setCarroceria(e.target.value)}>
+          {TIPOS_VEHICULO.map(([clave, etiqueta]) => (
+            <option key={clave} value={clave}>{etiqueta}</option>
+          ))}
+        </select>
+        <input value={color} placeholder="Color" onChange={(e) => setColor(e.target.value)} />
+        <input
+          value={plazas} inputMode="numeric" placeholder="Plazas (1-4)" maxLength={1}
+          onChange={(e) => setPlazas(e.target.value.replace(/\D/g, '').slice(0, 1))}
+        />
+      </div>
+      <div className="fila">
+        <label className="casilla">
+          <input type="checkbox" checked={aire} onChange={(e) => setAire(e.target.checked)} />
+          Aire acondicionado
+        </label>
+        <label className="casilla">
+          <input type="checkbox" checked={seguro} onChange={(e) => setSeguro(e.target.checked)} />
+          Seguro
+        </label>
+      </div>
+      <div className="fila">
+        <button type="button" className="principal" disabled={!matriculaValida || ocupado} onClick={guardar}>
+          Guardar
+        </button>
+        <button type="button" className="secundario" onClick={alCancelar}>Cancelar</button>
+      </div>
+    </div>
+  );
+}
+
+// Editar los datos del dueño del coche en su pestaña (08/10). El DIP es
+// obligatorio (es su identidad); el teléfono, el nombre y el apellido también.
+function EditarDueno({ propietario, alGuardado, alCancelar }: {
+  propietario: PropietarioFicha;
+  alGuardado: () => void;
+  alCancelar: () => void;
+}) {
+  const [nombre, setNombre] = useState(propietario.nombre);
+  const [apellido, setApellido] = useState(propietario.apellido);
+  const [telefono, setTelefono] = useState(propietario.telefono);
+  const [dip, setDip] = useState(propietario.dip);
+  const [error, setError] = useState('');
+  const [ocupado, setOcupado] = useState(false);
+
+  const completo = nombre.trim() !== '' && apellido.trim() !== ''
+    && telefono.trim() !== '' && /^\d{9}$/.test(dip.trim());
+
+  async function guardar() {
+    setError('');
+    setOcupado(true);
+    try {
+      await api.editarPropietario(propietario.id, {
+        nombre: nombre.trim(),
+        apellido: apellido.trim(),
+        telefono: telefono.trim(),
+        dip: dip.trim(),
+      });
+      alGuardado();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo guardar.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  return (
+    <div className="ficha-editar">
+      {error !== '' && <p className="aviso">{error}</p>}
+      <div className="fila">
+        <input value={nombre} placeholder="Nombre" onChange={(e) => setNombre(e.target.value)} />
+        <input value={apellido} placeholder="Apellido" onChange={(e) => setApellido(e.target.value)} />
+      </div>
+      <div className="fila">
+        <input value={telefono} inputMode="tel" placeholder="Teléfono (+240…)" onChange={(e) => setTelefono(e.target.value)} />
+        <input
+          value={dip} inputMode="numeric" placeholder="DIP (9 dígitos)" maxLength={9}
+          onChange={(e) => setDip(e.target.value.replace(/\D/g, '').slice(0, 9))}
+        />
+      </div>
+      <div className="fila">
+        <button type="button" className="principal" disabled={!completo || ocupado} onClick={guardar}>
+          Guardar datos del dueño
+        </button>
+        <button type="button" className="secundario" onClick={alCancelar}>Cancelar</button>
+      </div>
+    </div>
+  );
+}
+
 type CarpetaFicha = 'taxista' | 'dueno' | 'vehiculo' | 'servicio';
 const CARPETAS_FICHA: Array<[CarpetaFicha, string]> = [
   ['taxista', 'Taxista'], ['dueno', 'Dueño'], ['vehiculo', 'Vehículo'], ['servicio', 'Servicio'],
@@ -927,38 +1119,29 @@ function FichaConductor({
   const [ficha, setFicha] = useState<FichaConductorOperador | null>(null);
   const [error, setError] = useState('');
   const [carpeta, setCarpeta] = useState<CarpetaFicha>('taxista');
-  const [editando, setEditando] = useState(false);
+  // Qué pestaña se está editando (o ninguna). Editar es «donde estás»: cada
+  // pestaña abre su propio formulario en su sitio, no uno común arriba.
+  const [editando, setEditando] = useState<CarpetaFicha | null>(null);
   const [accionesAbiertas, setAccionesAbiertas] = useState(false);
-  const [aireAcondicionado, setAireAcondicionado] = useState(false);
-  const [seguro, setSeguro] = useState(false);
-  const [guardandoVehiculo, setGuardandoVehiculo] = useState(false);
 
   function cargar() {
-    api.fichaConductorOperador(id).then((f) => {
-      setFicha(f);
-      setAireAcondicionado(f.aire_acondicionado);
-      setSeguro(f.seguro);
-    }).catch((e) => setError(e.message));
+    api.fichaConductorOperador(id).then(setFicha).catch((e) => setError(e.message));
   }
   useEffect(cargar, [id]);
-
-  async function guardarVehiculo() {
-    setGuardandoVehiculo(true);
-    try {
-      await api.editarVehiculoOperador(id, { aireAcondicionado, seguro });
-      cargar();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setGuardandoVehiculo(false);
-    }
-  }
 
   if (error) return <><p className="aviso">{error}</p><button type="button" className="secundario" onClick={alVolver}>Volver</button></>;
   if (!ficha) return <p className="nota">Cargando…</p>;
 
   const o = ficha.ofertas;
-  const esDuenoElConductor = ficha.propietario !== null && ficha.propietario.dip === ficha.dip;
+  const prop = ficha.propietario;
+  const esDuenoElConductor = prop !== null && prop.dip === ficha.dip;
+  const dejarDeEditar = () => setEditando(null);
+  const trasGuardar = () => { dejarDeEditar(); cargar(); };
+  const insigniaEstado = (
+    <span className={`insignia insignia-${ficha.estado_verificacion}`}>
+      {ETIQUETA_ESTADO[ficha.estado_verificacion] ?? ficha.estado_verificacion}
+    </span>
+  );
 
   return (
     <>
@@ -972,12 +1155,10 @@ function FichaConductor({
         <button type="button" className="secundario" onClick={alVolver}>Volver</button>
       </div>
 
-      {/* Las acciones, siempre a mano: editar los datos y un desplegable con
-          lo que cambia el estado del taxista. */}
+      {/* Las acciones: un desplegable con lo que cambia el estado del taxista,
+          y el salto al recorrido. Editar ya no vive aquí: cada pestaña trae su
+          propio botón de editar, donde están los datos. */}
       <div className="fila ficha-acciones">
-        <button type="button" className="secundario" onClick={() => setEditando((v) => !v)}>
-          {editando ? 'Dejar de editar' : 'Editar datos'}
-        </button>
         <button
           type="button" className="secundario"
           onClick={() => setAccionesAbiertas((v) => !v)}
@@ -1021,21 +1202,13 @@ function FichaConductor({
         </div>
       )}
 
-      {editando && (
-        <EditarDatosTaxista
-          ficha={ficha}
-          alGuardado={() => { setEditando(false); cargar(); }}
-          alCancelar={() => setEditando(false)}
-        />
-      )}
-
       {/* Las carpetas: cada dato donde toca, no todo en una lista larga. */}
       <div className="selector-idioma">
         {CARPETAS_FICHA.map(([clave, etiqueta]) => (
           <button
             key={clave} type="button"
             className={clave === carpeta ? 'idioma-activo' : undefined}
-            onClick={() => setCarpeta(clave)}
+            onClick={() => { setCarpeta(clave); dejarDeEditar(); }}
           >
             {etiqueta}
           </button>
@@ -1044,15 +1217,32 @@ function FichaConductor({
 
       {carpeta === 'taxista' && (
         <div className="ficha-carpeta">
-          <FotoTaxista id={ficha.id} tieneFoto={ficha.tiene_foto} alCambiar={cargar} />
-          <p className="nota">
-            {ficha.telefono}{ficha.dip && ` · DIP ${ficha.dip}`}
-            {ficha.correo && ` · ${ficha.correo}`}
-          </p>
-          <p className="nota">
-            Estado: <strong>{ETIQUETA_ESTADO[ficha.estado_verificacion] ?? ficha.estado_verificacion}</strong>
-            {' · '}Presencia: <strong>{ficha.presencia ?? '—'}</strong>
-          </p>
+          {editando === 'taxista' ? (
+            <>
+              <FotoTaxista id={ficha.id} tieneFoto={ficha.tiene_foto} alCambiar={cargar} />
+              <EditarDatosTaxista ficha={ficha} alGuardado={trasGuardar} alCancelar={dejarDeEditar} />
+            </>
+          ) : (
+            <>
+              <TarjetaIdentidad
+                foto={<FotoTaxista id={ficha.id} tieneFoto={ficha.tiene_foto} alCambiar={cargar} />}
+                titulo={<>
+                  {ficha.numero_taxi !== null && <span className="numero-taxi">{ficha.numero_taxi}</span>}
+                  {ficha.nombre}{ficha.apellido && ` ${ficha.apellido}`}
+                </>}
+                insignia={insigniaEstado}
+                datos={[
+                  { k: 'DIP', v: ficha.dip ?? 'Sin DIP', falta: !ficha.dip },
+                  { k: 'Teléfono', v: ficha.telefono },
+                  { k: 'Correo', v: ficha.correo ?? 'Sin correo', falta: !ficha.correo },
+                  { k: 'Presencia', v: ficha.presencia ?? 'Desconocida', falta: !ficha.presencia },
+                ]}
+              />
+              <button type="button" className="secundario ficha-editar-boton" onClick={() => setEditando('taxista')}>
+                Editar datos
+              </button>
+            </>
+          )}
           <div className="rejilla">
             <Dato valor={`${ficha.saldo_xaf.toLocaleString('es')} XAF`} etiqueta="Saldo del monedero" />
             <Dato
@@ -1069,15 +1259,30 @@ function FichaConductor({
 
       {carpeta === 'dueno' && (
         <div className="ficha-carpeta">
-          {ficha.propietario === null ? (
+          {prop === null ? (
             <p className="nota">Sin dueño registrado todavía. Se añade al dar de alta el coche.</p>
-          ) : esDuenoElConductor ? (
-            <p className="nota">El dueño del coche es el mismo que conduce.</p>
+          ) : editando === 'dueno' ? (
+            <EditarDueno propietario={prop} alGuardado={trasGuardar} alCancelar={dejarDeEditar} />
           ) : (
             <>
-              <p className="nota"><strong>{ficha.propietario.nombre} {ficha.propietario.apellido}</strong></p>
-              <p className="nota">{ficha.propietario.telefono} · DIP {ficha.propietario.dip}</p>
-              <p className="nota">El dueño no conduce: no lleva foto.</p>
+              <TarjetaIdentidad
+                foto={<div className="tarjeta-glifo" aria-hidden="true">{esDuenoElConductor ? '🧑‍✈️' : '👤'}</div>}
+                titulo={`${prop.nombre} ${prop.apellido}`.trim()}
+                insignia={esDuenoElConductor
+                  ? <span className="insignia insignia-suave">Conduce</span> : undefined}
+                datos={[
+                  { k: 'DIP', v: prop.dip },
+                  { k: 'Teléfono', v: prop.telefono },
+                ]}
+              />
+              <p className="nota">
+                {esDuenoElConductor
+                  ? 'El dueño del coche es el mismo que lo conduce.'
+                  : 'El dueño no conduce: no lleva foto.'}
+              </p>
+              <button type="button" className="secundario ficha-editar-boton" onClick={() => setEditando('dueno')}>
+                Editar datos del dueño
+              </button>
             </>
           )}
         </div>
@@ -1085,27 +1290,30 @@ function FichaConductor({
 
       {carpeta === 'vehiculo' && (
         <div className="ficha-carpeta">
-          <p className="nota">
-            {ficha.matricula ?? 'sin matrícula'}{ficha.marca && ` · ${ficha.marca}`}
-            {ficha.carroceria && ` · ${ETIQUETA_CARROCERIA[ficha.carroceria] ?? ficha.carroceria}`}
-            {ficha.color && ` · ${ficha.color}`}
-          </p>
-          <p className="nota">Plazas: {ficha.plazas ?? '—'}</p>
-          <div className="fila">
-            <label className="casilla">
-              <input type="checkbox" checked={aireAcondicionado}
-                onChange={(e) => setAireAcondicionado(e.target.checked)} />
-              Aire acondicionado
-            </label>
-            <label className="casilla">
-              <input type="checkbox" checked={seguro}
-                onChange={(e) => setSeguro(e.target.checked)} />
-              Seguro
-            </label>
-            <button type="button" className="secundario" disabled={guardandoVehiculo} onClick={guardarVehiculo}>
-              {guardandoVehiculo ? 'Guardando…' : 'Guardar'}
-            </button>
-          </div>
+          {editando === 'vehiculo' ? (
+            <EditarVehiculo ficha={ficha} alGuardado={trasGuardar} alCancelar={dejarDeEditar} />
+          ) : (
+            <>
+              <TarjetaIdentidad
+                foto={<div className="tarjeta-glifo" aria-hidden="true">🚕</div>}
+                titulo={ficha.matricula ?? 'Sin matrícula'}
+                datos={[
+                  { k: 'Marca', v: ficha.marca ?? 'Sin marca', falta: !ficha.marca },
+                  { k: 'Tipo', v: ficha.carroceria ? (ETIQUETA_CARROCERIA[ficha.carroceria] ?? ficha.carroceria) : 'Sin tipo', falta: !ficha.carroceria },
+                  { k: 'Color', v: ficha.color ?? 'Sin color', falta: !ficha.color },
+                  { k: 'Plazas', v: ficha.plazas ?? '—', falta: ficha.plazas === null },
+                  {
+                    k: 'Extras',
+                    v: [ficha.aire_acondicionado ? 'aire' : null, ficha.seguro ? 'seguro' : null].filter(Boolean).join(' · ') || 'Ninguno',
+                    falta: !ficha.aire_acondicionado && !ficha.seguro,
+                  },
+                ]}
+              />
+              <button type="button" className="secundario ficha-editar-boton" onClick={() => setEditando('vehiculo')}>
+                Editar vehículo
+              </button>
+            </>
+          )}
         </div>
       )}
 

@@ -3055,6 +3055,142 @@ button.importe.elegido-importe {
   vertical-align: 3px;
 }
 
+/* La tarjeta de identidad: la foto (o un glifo) a la izquierda y los datos
+   bien puestos a la derecha. La misma para taxista, dueño y vehículo. */
+.tarjeta-identidad {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 14px;
+  border: 1px solid var(--borde);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.tarjeta-foto {
+  flex: 0 0 auto;
+}
+
+/* El glifo ocupa el mismo hueco que la foto, para que las tres tarjetas se
+   lean iguales aunque el dueño y el coche no tengan retrato. */
+.tarjeta-glifo {
+  width: 96px;
+  height: 96px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.6rem;
+  background: var(--tarjeta);
+  border: 1px solid var(--borde);
+}
+
+.tarjeta-cuerpo {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tarjeta-cabeza {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.tarjeta-titulo {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--hueso);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+/* Clave y valor en una rejilla que se adapta: en ancho, dos columnas; en un
+   móvil, una. La clave en gris pequeña encima del valor. */
+.tarjeta-datos {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px 18px;
+}
+
+.tarjeta-dato {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.tarjeta-dato dt {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--humo);
+}
+
+.tarjeta-dato dd {
+  margin: 0;
+  font-size: 0.98rem;
+  color: var(--hueso);
+  overflow-wrap: anywhere;
+}
+
+/* Un dato que falta: se dice, en gris, en vez de dejar un hueco. */
+.tarjeta-falta {
+  color: var(--humo);
+  font-style: italic;
+}
+
+/* La insignia de estado, junto al nombre. */
+.insignia {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--humo);
+}
+
+.insignia-verificado {
+  background: rgba(126, 224, 129, 0.16);
+  color: #7ee081;
+}
+
+.insignia-pendiente {
+  background: rgba(255, 176, 32, 0.16);
+  color: var(--ambar-claro);
+}
+
+.insignia-suspendido {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--humo);
+}
+
+.insignia-bloqueado {
+  background: rgba(255, 107, 107, 0.16);
+  color: #ff8d8d;
+}
+
+.insignia-suave {
+  background: rgba(255, 176, 32, 0.12);
+  color: var(--ambar-claro);
+}
+
+/* El botón de editar de cada pestaña, alineado a la izquierda bajo su tarjeta. */
+.ficha-editar-boton {
+  align-self: flex-start;
+}
+
+/* El formulario de edición dentro de una pestaña. */
+.ficha-editar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 /* Las filas que se despliegan (06/10): la carrera de arriba es la línea que
    se compara; lo de dentro es lo que se consulta de UNA. */
 .tabla-desplegable {

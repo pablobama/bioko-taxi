@@ -1209,6 +1209,85 @@ test('alta con propietario: dueño aparte, flota por DIP, y DIP/carrocería vali
   assert.match(unoB.json().error, /DIP/);
 });
 
+// Editar en la ficha (08/10): los datos del dueño en su pestaña, y el
+// vehículo en la suya con el candado del coche validado.
+test('editar: el dueño y su DIP, y el vehículo con la matrícula bloqueada si está validado', async () => {
+  const telefono = telefonoUnico();
+  const dipDueno = dipUnico();
+  const alta = await app.inject({
+    method: 'POST', url: '/api/operador/conductores', headers: cabeceras(UUID_OPERADOR),
+    payload: {
+      nombre: 'Jefa', apellido: 'Gómez', telefono, dip: dipUnico(), duenoConduce: false,
+      propietario: { nombre: 'Don', apellido: 'Dueño', telefono: telefonoUnico(), dip: dipDueno },
+      matricula: `MB-${telefono.slice(-5)}E`, marca: 'Kia', carroceria: 'turismo',
+    },
+  });
+  assert.equal(alta.statusCode, 200, alta.body);
+  const conductorId = Number(alta.json().conductorId);
+
+  // Nace verificado (alta por el operador), así que el coche está validado.
+  const ficha = await app.inject({
+    method: 'GET', url: `/api/operador/conductores/${conductorId}`, headers: cabeceras(UUID_OPERADOR),
+  });
+  assert.equal(ficha.json().estado_verificacion, 'verificado');
+  const propietarioId = Number(ficha.json().propietario.id);
+
+  // Editar el dueño: nombre, teléfono y DIP nuevos, y se guardan.
+  const dipNuevo = dipUnico();
+  const editado = await app.inject({
+    method: 'POST', url: `/api/operador/propietarios/${propietarioId}/datos`, headers: cabeceras(UUID_OPERADOR),
+    payload: { nombre: 'Doña', apellido: 'Jefa', telefono: telefonoUnico(), dip: dipNuevo },
+  });
+  assert.equal(editado.statusCode, 200, editado.body);
+  const trasEditar = await pool.query(
+    'SELECT nombre, dip FROM propietario WHERE id = $1', [propietarioId],
+  );
+  assert.equal(trasEditar.rows[0].nombre, 'Doña');
+  assert.equal(trasEditar.rows[0].dip, dipNuevo);
+
+  // El DIP de OTRO propietario: 409, no se funden dos dueños.
+  const otroDip = dipUnico();
+  await app.inject({
+    method: 'POST', url: '/api/operador/conductores', headers: cabeceras(UUID_OPERADOR),
+    payload: {
+      nombre: 'Otra', apellido: 'Jefa', telefono: telefonoUnico(), dip: dipUnico(), duenoConduce: false,
+      propietario: { nombre: 'Otro', apellido: 'Dueño', telefono: telefonoUnico(), dip: otroDip },
+      matricula: `MB-${telefonoUnico().slice(-5)}F`, marca: 'Kia', carroceria: 'turismo',
+    },
+  });
+  const choca = await app.inject({
+    method: 'POST', url: `/api/operador/propietarios/${propietarioId}/datos`, headers: cabeceras(UUID_OPERADOR),
+    payload: { nombre: 'Doña', apellido: 'Jefa', telefono: telefonoUnico(), dip: otroDip },
+  });
+  assert.equal(choca.statusCode, 409, choca.body);
+  assert.match(choca.json().error, /DIP/);
+
+  // El vehículo: color y plazas se tocan aunque esté validado.
+  const vehiculo = await app.inject({
+    method: 'POST', url: `/api/operador/conductores/${conductorId}/vehiculo`, headers: cabeceras(UUID_OPERADOR),
+    payload: { aireAcondicionado: true, seguro: false, color: 'Azul', plazas: 4 },
+  });
+  assert.equal(vehiculo.statusCode, 200, vehiculo.body);
+  assert.equal(vehiculo.json().color, 'Azul');
+  assert.equal(vehiculo.json().plazas, 4);
+  assert.equal(vehiculo.json().aire_acondicionado, true);
+
+  // Plazas fuera del rango del taxi compartido (1-4): 400 claro, no un 500
+  // contra el CHECK de la base.
+  const plazasMal = await app.inject({
+    method: 'POST', url: `/api/operador/conductores/${conductorId}/vehiculo`, headers: cabeceras(UUID_OPERADOR),
+    payload: { aireAcondicionado: true, seguro: false, plazas: 7 },
+  });
+  assert.equal(plazasMal.statusCode, 400, plazasMal.body);
+
+  // La matrícula NO, mientras esté validado: 409.
+  const matriculaBloqueada = await app.inject({
+    method: 'POST', url: `/api/operador/conductores/${conductorId}/vehiculo`, headers: cabeceras(UUID_OPERADOR),
+    payload: { aireAcondicionado: true, seguro: false, matricula: 'MB-00000Z' },
+  });
+  assert.equal(matriculaBloqueada.statusCode, 409, matriculaBloqueada.body);
+});
+
 test('oferta dirigida: llega al taxi de otra zona, firmada, y sin duplicar', async () => {
   const { zonaId, origenId, destinoId } = await crearZonaConReferencias();
   const otraZona = await crearZonaConReferencias();

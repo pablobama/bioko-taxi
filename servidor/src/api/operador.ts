@@ -28,7 +28,8 @@ import {
 } from '../dominio/operadores.js';
 import { asignarNumeroManual, asignarNumeroSiguiente } from '../dominio/numeros-taxi.js';
 import {
-  dipValido, propietarioDeVehiculo, registrarOReutilizarPropietario,
+  dipValido, dipDeOtroPropietario, editarPropietario,
+  propietarioDeVehiculo, registrarOReutilizarPropietario,
 } from '../dominio/propietarios.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
 import { emitirVale } from '../dominio/vales.js';
@@ -600,6 +601,39 @@ export function registrarRutasOperador(
     return cambiarTelefono(req, 'conductor', id, crudo);
   });
 
+  // Editar los datos del dueño del coche desde su pestaña en la ficha (08/10).
+  // El DIP es su identidad: nueve dígitos, y no el de otro propietario.
+  app.post('/api/operador/propietarios/:id/datos', async (req) => {
+    await exigirOperador(req);
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(id)) throw errorHttp(400, 'Id de propietario no válido.');
+    const cuerpo = (req.body ?? {}) as {
+      nombre?: string; apellido?: string; telefono?: string; dip?: string;
+    };
+    const nombre = cuerpo.nombre?.trim();
+    const apellido = cuerpo.apellido?.trim();
+    const telefono = normalizarTelefono(cuerpo.telefono?.trim());
+    if (!nombre || !apellido) {
+      throw errorHttp(400, 'El nombre y el apellido del dueño son obligatorios.');
+    }
+    if (telefono === null) {
+      throw errorHttp(400, 'El teléfono del dueño no se entiende.');
+    }
+    const dip = dipValido(cuerpo.dip);
+    if (dip === null) {
+      throw errorHttp(400, 'El DIP del dueño tiene que ser nueve dígitos.');
+    }
+    const ajeno = await dipDeOtroPropietario(pool, dip, id);
+    if (ajeno !== null) {
+      throw errorHttp(409, `Ese DIP ya es de otro dueño (${ajeno}).`);
+    }
+    const guardado = await enTransaccion(pool, (cliente) => editarPropietario(
+      cliente, id, { nombre, apellido, telefono, dip },
+    ));
+    if (!guardado) throw errorHttp(404, 'No existe ese propietario.');
+    return { guardado: true };
+  });
+
   // Del pasajero se recibe el id del DISPOSITIVO, que es con lo que trabaja su
   // ficha; la fila del perfil cuelga de él.
   app.post('/api/operador/pasajeros/:id/telefono', async (req) => {
@@ -1005,18 +1039,74 @@ export function registrarRutasOperador(
   app.post('/api/operador/conductores/:id/vehiculo', async (req) => {
     await exigirOperador(req);
     const id = Number((req.params as { id: string }).id);
-    const { aireAcondicionado, seguro } = (req.body ?? {}) as {
-      aireAcondicionado?: boolean; seguro?: boolean;
-    };
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
-    if (typeof aireAcondicionado !== 'boolean' || typeof seguro !== 'boolean') {
+    const cuerpo = (req.body ?? {}) as {
+      aireAcondicionado?: boolean; seguro?: boolean;
+      color?: string; plazas?: number;
+      matricula?: string; marca?: string; carroceria?: string;
+    };
+    if (typeof cuerpo.aireAcondicionado !== 'boolean' || typeof cuerpo.seguro !== 'boolean') {
       throw errorHttp(400, 'Faltan aireAcondicionado y seguro (true/false).');
     }
+    // El color y las plazas se pueden tocar siempre; la matrícula, la marca y
+    // el tipo solo mientras el coche NO esté validado —una vez la central dio
+    // el visto bueno, cambiarlos sería describir otro coche (como en el alta
+    // del propio taxista, sesion.ts)—. Se mira el estado y se decide aquí.
+    const estado = await pool.query(
+      'SELECT estado_verificacion FROM conductor WHERE id = $1', [id],
+    );
+    if (estado.rowCount === 0) throw errorHttp(404, 'No existe ese conductor.');
+    const validado = estado.rows[0].estado_verificacion === 'verificado';
+
+    const color = cuerpo.color?.trim() || null;
+    let plazas: number | null = null;
+    if (cuerpo.plazas !== undefined && cuerpo.plazas !== null) {
+      // El taxi compartido (migración 013) cuenta plazas de 1 a 4; la base lo
+      // exige con un CHECK. Se valida aquí para dar un 400 claro en vez de que
+      // reviente contra la restricción.
+      if (!Number.isInteger(cuerpo.plazas) || cuerpo.plazas < 1 || cuerpo.plazas > 4) {
+        throw errorHttp(400, 'Las plazas tienen que ser un número entre 1 y 4.');
+      }
+      plazas = cuerpo.plazas;
+    }
+
+    // Identidad del coche: solo si llega y solo si aún se puede.
+    let matricula: string | null = null;
+    let marca: string | null = null;
+    let carroceria: string | null = null;
+    const tocaIdentidad = cuerpo.matricula !== undefined
+      || cuerpo.marca !== undefined || cuerpo.carroceria !== undefined;
+    if (tocaIdentidad) {
+      if (validado) {
+        throw errorHttp(409, 'El coche está validado: la matrícula, la marca y el '
+          + 'tipo ya no se cambian desde aquí.');
+      }
+      matricula = cuerpo.matricula?.trim() || null;
+      if (!matricula) throw errorHttp(400, 'La matrícula no puede quedar vacía.');
+      marca = cuerpo.marca?.trim() || null;
+      carroceria = cuerpo.carroceria?.trim() || null;
+      if (carroceria !== null && !CARROCERIAS_VEHICULO.includes(carroceria)) {
+        throw errorHttp(400, `Tipo de vehículo no válido. Opciones: ${CARROCERIAS_VEHICULO.join(', ')}.`);
+      }
+    }
+
+    // El color y las plazas se fijan directo —el formulario de edición manda
+    // siempre su valor actual, así que vaciarlos es querer vaciarlos—; la
+    // matrícula, la marca y el tipo con COALESCE, que solo cambian cuando se
+    // tocó la identidad y entonces viajan con valor.
     const res = await pool.query(
-      `UPDATE vehiculo SET aire_acondicionado = $2, seguro = $3
+      `UPDATE vehiculo SET
+         aire_acondicionado = $2, seguro = $3,
+         color = $4,
+         plazas = $5,
+         matricula = COALESCE($6, matricula),
+         marca = COALESCE($7, marca),
+         carroceria = COALESCE($8, carroceria)
        WHERE conductor_id = $1
-       RETURNING conductor_id, aire_acondicionado, seguro`,
-      [id, aireAcondicionado, seguro],
+       RETURNING conductor_id, aire_acondicionado, seguro, color, plazas,
+                 matricula, marca, carroceria`,
+      [id, cuerpo.aireAcondicionado, cuerpo.seguro, color, plazas,
+        matricula, marca, carroceria],
     );
     if (res.rowCount === 0) throw errorHttp(404, 'Este conductor no tiene vehículo dado de alta.');
     return res.rows[0];

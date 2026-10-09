@@ -46,6 +46,39 @@ export async function registrarOReutilizarPropietario(
   return Number(res.rows[0].id);
 }
 
+// Editar los datos de un propietario ya registrado (08/10). El DIP sigue
+// siendo su identidad, así que cambiarlo por el de otro propietario se
+// rechaza —lo decide quien llama mirando `dipAjeno`— y el resto (nombre,
+// apellido, teléfono) es lo último que dijo quien lo registró.
+export async function editarPropietario(
+  cliente: Lector,
+  id: number,
+  datos: DatosPropietario,
+): Promise<boolean> {
+  const res = await cliente.query(
+    `UPDATE propietario
+     SET nombre = $2, apellido = $3, telefono = $4, dip = $5
+     WHERE id = $1`,
+    [id, datos.nombre, datos.apellido, datos.telefono, datos.dip],
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
+// ¿Ese DIP ya es de OTRO propietario? Para no fundir dos dueños distintos en
+// uno al teclear mal un documento.
+export async function dipDeOtroPropietario(
+  cliente: Lector,
+  dip: string,
+  exceptoId: number,
+): Promise<string | null> {
+  const res = await cliente.query(
+    'SELECT nombre, apellido FROM propietario WHERE dip = $1 AND id <> $2',
+    [dip, exceptoId],
+  );
+  if ((res.rowCount ?? 0) === 0) return null;
+  return `${res.rows[0].nombre} ${res.rows[0].apellido}`.trim();
+}
+
 export interface PropietarioListado {
   id: number;
   nombre: string;

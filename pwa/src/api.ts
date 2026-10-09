@@ -1519,11 +1519,32 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ agente }), reintentos: 1 },
     ),
 
-  editarVehiculoOperador: (conductorId: number, datos: { aireAcondicionado: boolean; seguro: boolean }) =>
-    pedirJson<{ conductor_id: number; aire_acondicionado: boolean; seguro: boolean }>(
+  // Editar el vehículo (08/10): aire y seguro siempre; color y plazas también;
+  // matrícula, marca y tipo solo si el coche aún no está validado —el servidor
+  // lo rechaza con 409 si lo está—. Los campos de identidad son opcionales:
+  // solo se mandan cuando el coche no está validado.
+  editarVehiculoOperador: (conductorId: number, datos: {
+    aireAcondicionado: boolean; seguro: boolean;
+    color?: string | null; plazas?: number | null;
+    matricula?: string; marca?: string; carroceria?: string;
+  }) =>
+    pedirJson<{
+      conductor_id: number; aire_acondicionado: boolean; seguro: boolean;
+      color: string | null; plazas: number | null;
+      matricula: string | null; marca: string | null; carroceria: string | null;
+    }>(
       `/api/operador/conductores/${conductorId}/vehiculo`,
       { method: 'POST', body: JSON.stringify(datos), reintentos: 1 },
     ),
+
+  // Editar los datos del dueño del coche (08/10). El DIP es su identidad: el
+  // servidor rechaza con 409 el DIP de otro propietario.
+  editarPropietario: (id: number, datos: {
+    nombre: string; apellido: string; telefono: string; dip: string;
+  }) =>
+    pedirJson<{ guardado: boolean }>(`/api/operador/propietarios/${id}/datos`, {
+      method: 'POST', body: JSON.stringify(datos),
+    }),
 
   recorridoConductor: (conductorId: number, periodo: PeriodoRecorrido) =>
     pedirJson<RecorridoOperador>(
