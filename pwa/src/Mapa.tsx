@@ -52,6 +52,14 @@ export interface PropiedadesMapa {
   puntos: PuntoMapa[];
   origen?: Marca | null;
   destino?: Marca | null;
+  // Etiquetas sobre los extremos, para cuando el operador mira UNA carrera en
+  // el despacho (08/10): la hora y el barrio de salida y de llegada, escritos
+  // al lado del marcador. En el flujo del pasajero no se pasan —ahí el sitio
+  // ya se sabe y el texto encima estorbaría—.
+  etiquetasExtremos?: {
+    origen?: { titulo: string; sub?: string };
+    destino?: { titulo: string; sub?: string };
+  } | null;
   // Si `origen` es la posición EN VIVO del pasajero y no el punto donde pidió
   // el taxi (P46-01). Cambia cómo se pinta: un punto que se está moviendo
   // ahora mismo tiene que verse distinto de una chincheta clavada hace diez
@@ -167,7 +175,7 @@ export default function Mapa({
   puntos, origen, destino, taxi, taxis, alTocarTaxi, esperas, alTocarEspera,
   ciudad, mira = false, alMoverCentro,
   buscando, encuadre = 'persona', paradas, recorrido,
-  origenEnVivo = false,
+  origenEnVivo = false, etiquetasExtremos = null,
   maxPasadas = 1, rumbo = null, rumboCoche = null, yo = null, alCalcularRuta,
 }: PropiedadesMapa) {
   const contenedor = useRef<HTMLDivElement>(null);
@@ -761,10 +769,22 @@ export default function Mapa({
           {/* Destino: cuadrado blanco. */}
           {destino && (() => {
             const xy = pantalla(destino.lat, destino.lng);
+            const et = etiquetasExtremos?.destino;
             return (
               <g transform={`translate(${xy[0].toFixed(1)},${xy[1].toFixed(1)})`}>
                 <rect x={-9} y={-9} width={18} height={18} rx={3} fill="#0a0a0b" />
                 <rect x={-6} y={-6} width={12} height={12} rx={2} fill="#f7f5f2" />
+                {et && (
+                  <text
+                    x={13} y={-1} fontSize={11} fontWeight={700} fill="#ff9a9a"
+                    stroke="#0a0a0b" strokeWidth={3} paintOrder="stroke"
+                  >
+                    {et.titulo}
+                    {et.sub && (
+                      <tspan x={13} dy={13} fontSize={10} fontWeight={400} fill="#f1dcdc">{et.sub}</tspan>
+                    )}
+                  </text>
+                )}
               </g>
             );
           })()}
@@ -796,6 +816,7 @@ export default function Mapa({
               posición es la de ahora mismo y no la de cuando pidió. */}
           {origen && (() => {
             const xy = pantalla(origen.lat, origen.lng);
+            const et = etiquetasExtremos?.origen;
             return (
               <g transform={`translate(${xy[0].toFixed(1)},${xy[1].toFixed(1)})`}>
                 {(buscando || origenEnVivo) && (
@@ -803,6 +824,17 @@ export default function Mapa({
                 )}
                 <Cara radio={9.5} />
                 <circle r={13} fill="none" stroke="#ffb020" strokeWidth={1.5} opacity={0.5} />
+                {et && (
+                  <text
+                    x={14} y={-1} fontSize={11} fontWeight={700} fill="#8fe6a0"
+                    stroke="#0a0a0b" strokeWidth={3} paintOrder="stroke"
+                  >
+                    {et.titulo}
+                    {et.sub && (
+                      <tspan x={14} dy={13} fontSize={10} fontWeight={400} fill="#d7f0dd">{et.sub}</tspan>
+                    )}
+                  </text>
+                )}
               </g>
             );
           })()}

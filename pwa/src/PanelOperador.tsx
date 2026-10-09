@@ -25,7 +25,7 @@ import { crearT } from './i18n';
 import PanelRadio from './PanelRadio';
 import { useRadio } from './radio';
 import { ErrorDelServidor } from './conexion';
-import Mapa, { colorDeCalor } from './Mapa';
+import Mapa, { colorDeCalor, type Marca } from './Mapa';
 
 // Las categorías que la base acepta (CHECK de la migración 021). Se sacan de
 // donde ya estaban —el mismo sitio que dibuja los pictogramas del mapa— para
@@ -2722,7 +2722,7 @@ const ESTADOS_VIAJE = [
   'CLIENTE_AUSENTE', 'NO_PRESENTADO', 'INCIDENCIA',
 ] as const;
 
-function Viajes({ alVerEnMapa }: { alVerEnMapa?: (id: number) => void }) {
+function Viajes({ alVerEnMapa }: { alVerEnMapa?: (viaje: ViajeOperador) => void }) {
   const [viajes, setViajes] = useState<ViajeOperador[] | null>(null);
   const [estado, setEstado] = useState<string>('todos');
   const [busqueda, setBusqueda] = useState('');
@@ -2762,6 +2762,9 @@ function Viajes({ alVerEnMapa }: { alVerEnMapa?: (id: number) => void }) {
         ))}
       </div>
       {error && <p className="aviso">{error}</p>}
+      {alVerEnMapa !== undefined && viajes !== null && viajes.length > 0 && (
+        <p className="nota">Pulsa una carrera para verla en el mapa; «detalles» para el teléfono y el precio.</p>
+      )}
       {viajes?.length === 0 && <p className="nota">Ninguna carrera con ese filtro.</p>}
       {/* Cuatro columnas arriba y el resto DENTRO (06/10, pedido con estas
           palabras): la tabla se recorre comparando horas y rutas, y ocho
@@ -2771,14 +2774,28 @@ function Viajes({ alVerEnMapa }: { alVerEnMapa?: (id: number) => void }) {
         <Tabla cabeceras={['Cuándo', 'Emitido', 'Origen → Destino', 'Taxi', '']}>
           {viajes.map((v) => (
             <Fragment key={v.id}>
-              <tr className="tabla-desplegable" onClick={() => alternar(v.id)}>
+              {/* La fila entera lleva la carrera al mapa del despacho (pedido
+                  el 08/10). El teléfono y el precio, que no se comparan de un
+                  vistazo, salen con «detalles», sin salir del listado. Fuera
+                  de la consola —sin mapa— la fila despliega los detalles. */}
+              <tr
+                className="tabla-desplegable"
+                onClick={() => (alVerEnMapa ? alVerEnMapa(v) : alternar(v.id))}
+              >
                 <td className="tabla-tenue">{cuando(v.creada_en)}</td>
                 {/* Solo la hora: el día ya lo dice «Cuándo», y una carrera no
                     cruza la medianoche en una isla de veinte minutos. */}
                 <td className="tabla-tenue">{v.emitido_en === null ? '—' : soloHora(v.emitido_en)}</td>
                 <td>{v.origen} → {v.destino}</td>
                 <td>{v.matricula ?? v.conductor ?? '—'}</td>
-                <td className="tabla-tenue">{abiertos.has(v.id) ? '▾' : '▸'}</td>
+                <td className="tabla-tenue">
+                  <button
+                    type="button" className="tabla-enlace"
+                    onClick={(e) => { e.stopPropagation(); alternar(v.id); }}
+                  >
+                    {abiertos.has(v.id) ? 'detalles ▾' : 'detalles ▸'}
+                  </button>
+                </td>
               </tr>
               {abiertos.has(v.id) && (
                 <tr className="tabla-detalle">
@@ -2798,10 +2815,10 @@ function Viajes({ alVerEnMapa }: { alVerEnMapa?: (id: number) => void }) {
                         <b>Precio</b>{' '}
                         {v.precio_xaf === null ? '—' : `${v.precio_xaf.toLocaleString('es')} XAF`}
                       </span>
-                      {alVerEnMapa !== undefined && (v.conductor !== null || v.matricula !== null) && (
+                      {alVerEnMapa !== undefined && (
                         <button
                           type="button" className="secundario"
-                          onClick={(e) => { e.stopPropagation(); alVerEnMapa(v.id); }}
+                          onClick={(e) => { e.stopPropagation(); alVerEnMapa(v); }}
                         >
                           Ver en el mapa
                         </button>
@@ -2975,7 +2992,7 @@ function RegistroPropietarios() {
   );
 }
 
-function Registros({ alVerViaje }: { alVerViaje?: (id: number) => void }) {
+function Registros({ alVerViaje }: { alVerViaje?: (viaje: ViajeOperador) => void }) {
   const [tipo, setTipo] = useState<(typeof TIPOS_REGISTRO)[number][0]>('carreras');
   return (
     <>
@@ -3789,6 +3806,15 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
     conductorId: number; periodo: PeriodoRecorrido;
     tramos: Array<Array<{ lat: number; lng: number }>>;
   } | null>(null);
+  // UNA carrera, enfocada en el mapa del despacho (08/10): al pulsarla en los
+  // registros, el plano se queda solo con ese viaje —su recorrido, y los
+  // extremos con la hora y el barrio de salida y de llegada—, sin la flota
+  // viva que, mezclada, lo volvería ilegible. Un chip la quita.
+  const [viajeEnMapa, setViajeEnMapa] = useState<{
+    viaje: ViajeOperador;
+    origen: Marca; destino: Marca;
+    tramos: Array<Array<{ lat: number; lng: number }>>;
+  } | null>(null);
 
   async function verRecorridoConductor(id: number, periodo: PeriodoRecorrido = 'dia') {
     try {
@@ -3802,18 +3828,23 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
     }
   }
 
-  async function verViajeEnMapa(id: number) {
+  async function verViajeEnMapa(viaje: ViajeOperador) {
     try {
-      const t = await api.trazaViaje(id);
-      if (t.tramos.length === 0) {
-        setAvisoTraza('Esa carrera no tiene traza guardada: o no llegó a tener taxi, o su rastro no se grabó.');
-        return;
-      }
-      setAvisoTraza('');
-      setTrazas((antes) => new Map(antes).set(id, t.tramos));
+      const t = await api.trazaViaje(viaje.id);
+      // Los extremos salen siempre, aunque no haya rastro: dónde empezó y
+      // acabó la carrera dice algo aunque no sepamos por dónde fue.
+      setViajeEnMapa({
+        viaje,
+        origen: { lat: t.origen.lat, lng: t.origen.lng, nombre: t.origen.nombre },
+        destino: { lat: t.destino.lat, lng: t.destino.lng, nombre: t.destino.nombre },
+        tramos: t.tramos,
+      });
+      setAvisoTraza(t.tramos.length === 0
+        ? 'Esa carrera no tiene recorrido guardado: o no llegó a tener taxi, o su rastro no se grabó. Se ven los extremos.'
+        : '');
       setHojaAbierta(false);
     } catch (e) {
-      setAvisoTraza(e instanceof Error ? e.message : 'No se pudo cargar la traza.');
+      setAvisoTraza(e instanceof Error ? e.message : 'No se pudo cargar la carrera.');
     }
   }
   // Los barrios situados, para que el encuadre arranque en Malabo y no en la
@@ -4175,6 +4206,30 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
             {/* Sin referencias: en una pantalla con treinta taxis, los cientos
                 de puntos del gazetteer convierten el plano en una sopa y lo
                 que se viene a mirar aquí es dónde están los coches. */}
+            {viajeEnMapa !== null ? (
+              // Enfocado en UNA carrera: su recorrido y sus extremos, sin la
+              // flota viva que lo taparía. Los extremos llevan la hora y el
+              // barrio de salida y de llegada.
+              <Mapa
+                puntos={[]}
+                encuadre="viaje"
+                ciudad={ciudad}
+                origen={viajeEnMapa.origen}
+                destino={viajeEnMapa.destino}
+                etiquetasExtremos={{
+                  origen: {
+                    titulo: `Salida ${soloHora(viajeEnMapa.viaje.emitido_en ?? viajeEnMapa.viaje.creada_en)}`,
+                    sub: viajeEnMapa.viaje.zona_recogida,
+                  },
+                  destino: {
+                    titulo: viajeEnMapa.viaje.bajada_en !== null
+                      ? `Llegada ${soloHora(viajeEnMapa.viaje.bajada_en)}` : 'Destino',
+                    sub: viajeEnMapa.viaje.zona_bajada,
+                  },
+                }}
+                recorrido={viajeEnMapa.tramos.length > 0 ? viajeEnMapa.tramos : undefined}
+              />
+            ) : (
             <Mapa
               puntos={[]}
               taxis={taxisEnMapa}
@@ -4202,7 +4257,8 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                 return dibujos.length > 0 ? dibujos : undefined;
               })()}
             />
-            {taxisVivos !== null && taxisEnMapa.length === 0 && (
+            )}
+            {viajeEnMapa === null && taxisVivos !== null && taxisEnMapa.length === 0 && (
               <p className="mesa-mapa-vacio">
                 {taxisVivos.length === 0
                   ? 'Ningún taxi en servicio ahora mismo.'
@@ -4270,6 +4326,19 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                   onClick={() => setRecorridoMapa(null)}
                 >
                   quitar ✕
+                </button>
+              </span>
+            )}
+            {viajeEnMapa !== null && (
+              <span className="mesa-chip mesa-chip-recorrido">
+                <small>
+                  {viajeEnMapa.viaje.zona_recogida} → {viajeEnMapa.viaje.zona_bajada}
+                </small>
+                <button
+                  type="button" className="recorrido-quitar"
+                  onClick={() => { setViajeEnMapa(null); setAvisoTraza(''); }}
+                >
+                  volver a la flota ✕
                 </button>
               </span>
             )}
