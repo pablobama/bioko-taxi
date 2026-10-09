@@ -2876,20 +2876,88 @@ button.importe.elegido-importe {
 /* Las cifras del recorrido, superpuestas sobre el mapa: velocidad media,
    tiempo, kilómetros y clientes llevados. Translúcidas y en una esquina, para
    no tapar el dibujo. */
-/* Selector más específico que `.mesa-mapa > div` (que estira el plano al
-   100 %): si no, esa regla también estiraría la cuadrícula a pantalla
-   completa. */
-.mesa-mapa > .recorrido-cuadricula {
+/* El panel superpuesto, arriba a la izquierda: apila el buscador de taxis y
+   las cifras del recorrido. Selector más específico que `.mesa-mapa > div`
+   (que estira el plano al 100 %), o esa regla lo estiraría a pantalla
+   completa. Por debajo de la barra de chips, que vive en lo alto del plano. */
+.mesa-mapa > .mesa-superpuesto {
   position: absolute;
-  /* Por debajo de la barra de chips, que vive en lo alto del plano. */
   top: 66px;
   left: 12px;
   width: max-content;
   height: max-content;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 6;
+}
+
+.mesa-buscar-taxi {
+  width: 264px;
+}
+
+.mesa-buscar-taxi input {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(16, 16, 20, 0.9);
+}
+
+.mesa-buscar-resultados {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  background: rgba(16, 16, 20, 0.92);
+}
+
+.mesa-buscar-fila {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--hueso);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mesa-buscar-fila:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mesa-buscar-mat {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.mesa-buscar-mat b {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--ambar);
+  color: #1c1c21;
+  font-size: 0.72em;
+  font-weight: 800;
+}
+
+.mesa-buscar-fila small {
+  color: var(--humo);
+  font-size: 0.72rem;
+}
+
+.recorrido-cuadricula {
   display: grid;
   grid-template-columns: repeat(2, max-content);
   gap: 8px;
-  z-index: 6;
   pointer-events: none;
 }
 

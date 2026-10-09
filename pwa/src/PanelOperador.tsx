@@ -4081,6 +4081,10 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   const [sinOfertaVivas, setSinOfertaVivas] = useState<SinOfertaViva[] | null>(null);
   // Lo que está tocado en el mapa: un taxi, una espera viva o una apagada.
   const [foco, setFoco] = useState<{ tipo: 'taxi' | 'viva' | 'apagada'; id: number } | null>(null);
+  // Buscar un taxi en servicio por su matrícula, desde el propio despacho
+  // (09/10): se va filtrando la flota viva según se escribe, y al elegir uno
+  // se abre su tarjeta con los datos.
+  const [busquedaTaxi, setBusquedaTaxi] = useState('');
   // Las carreras dibujadas sobre el plano (06/10): id → tramos de su traza.
   // Un Map y no una sola: comparar dos viajes es verlos JUNTOS.
   const [trazas, setTrazas] = useState<Map<number, Array<Array<{ lat: number; lng: number }>>>>(new Map());
@@ -4610,31 +4614,76 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                   : `${taxisVivos.length} en servicio, ninguno ha mandado su posición todavía.`}
               </p>
             )}
-            {/* Las cifras del recorrido, en cuadrículas superpuestas sobre el
-                mapa (09/10): el dibujo dice por dónde anduvo; esto, cómo se
-                movió CIRCULANDO —la velocidad y el tiempo al volante
-                descuentan las esperas—, los kilómetros y a cuánta gente
-                llevó. */}
-            {recorridoMapa !== null && (
-              <div className="recorrido-cuadricula">
-                <div className="recorrido-celda">
-                  <b>{recorridoMapa.resumen.velocidadAlVolanteKmh === null ? '—' : recorridoMapa.resumen.velocidadAlVolanteKmh.toFixed(1)}</b>
-                  <small>km/h al volante</small>
-                </div>
-                <div className="recorrido-celda">
-                  <b>{duracion(recorridoMapa.resumen.segundosEnMovimiento)}</b>
-                  <small>al volante</small>
-                </div>
-                <div className="recorrido-celda">
-                  <b>{(recorridoMapa.resumen.metros / 1000).toFixed(1)}</b>
-                  <small>km recorridos</small>
-                </div>
-                <div className="recorrido-celda">
-                  <b>{recorridoMapa.resumen.clientesLlevados}</b>
-                  <small>{recorridoMapa.resumen.clientesLlevados === 1 ? 'cliente llevado' : 'clientes llevados'}</small>
-                </div>
+            {/* Lo superpuesto al plano, apilado arriba a la izquierda: el
+                buscador de taxis por matrícula (siempre) y las cifras del
+                recorrido (cuando se está mirando uno). Juntos en un contenedor
+                para que nunca se pisen. */}
+            <div className="mesa-superpuesto">
+              {/* Buscar un taxi por matrícula desde el despacho: se va
+                  filtrando la flota viva al escribir, y al elegir uno se abre
+                  su tarjeta con los datos. */}
+              <div className="mesa-buscar-taxi">
+                <input
+                  type="search" value={busquedaTaxi}
+                  placeholder="Buscar un taxi por matrícula…"
+                  onChange={(e) => setBusquedaTaxi(e.target.value)}
+                />
+                {busquedaTaxi.trim() !== '' && (() => {
+                  const q = busquedaTaxi.trim().toLowerCase();
+                  const coincidencias = (taxisVivos ?? []).filter((t) => (
+                    (t.matricula ?? '').toLowerCase().includes(q)
+                    || (t.numero_taxi ?? '').toLowerCase().includes(q)
+                    || t.nombre.toLowerCase().includes(q)
+                  )).slice(0, 8);
+                  return (
+                    <div className="mesa-buscar-resultados">
+                      {coincidencias.length === 0 ? (
+                        <p className="nota">Ningún taxi en servicio con esa matrícula.</p>
+                      ) : coincidencias.map((t) => (
+                        <button
+                          key={t.conductor_id} type="button" className="mesa-buscar-fila"
+                          onClick={() => { setFoco({ tipo: 'taxi', id: t.conductor_id }); setBusquedaTaxi(''); }}
+                        >
+                          <span className="mesa-buscar-mat">
+                            {t.numero_taxi !== null && <b>{t.numero_taxi}</b>}
+                            {t.matricula ?? 'sin matrícula'}
+                          </span>
+                          <small>
+                            {t.nombre} · {t.estado === 'DISPONIBLE' ? 'libre' : 'con pasajero'}
+                            {t.zona !== null && ` · ${t.zona}`}
+                          </small>
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
-            )}
+
+              {/* Las cifras del recorrido: el dibujo dice por dónde anduvo;
+                  esto, cómo se movió CIRCULANDO —la velocidad y el tiempo al
+                  volante descuentan las esperas—, los kilómetros y a cuánta
+                  gente llevó. */}
+              {recorridoMapa !== null && (
+                <div className="recorrido-cuadricula">
+                  <div className="recorrido-celda">
+                    <b>{recorridoMapa.resumen.velocidadAlVolanteKmh === null ? '—' : recorridoMapa.resumen.velocidadAlVolanteKmh.toFixed(1)}</b>
+                    <small>km/h al volante</small>
+                  </div>
+                  <div className="recorrido-celda">
+                    <b>{duracion(recorridoMapa.resumen.segundosEnMovimiento)}</b>
+                    <small>al volante</small>
+                  </div>
+                  <div className="recorrido-celda">
+                    <b>{(recorridoMapa.resumen.metros / 1000).toFixed(1)}</b>
+                    <small>km recorridos</small>
+                  </div>
+                  <div className="recorrido-celda">
+                    <b>{recorridoMapa.resumen.clientesLlevados}</b>
+                    <small>{recorridoMapa.resumen.clientesLlevados === 1 ? 'cliente llevado' : 'clientes llevados'}</small>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Las cifras son BOTONES: cada número abre lo que cuenta. Un
