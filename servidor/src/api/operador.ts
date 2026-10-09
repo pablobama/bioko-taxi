@@ -751,9 +751,12 @@ export function registrarRutasOperador(
     const cuerpo = (req.body ?? {}) as {
       // El conductor: la cuenta operativa. Nombre, apellido, teléfono y DIP.
       nombre?: string; apellido?: string; telefono?: string; dip?: string;
-      // El propietario. Si `duenoConduce`, es la misma persona que el
-      // conductor y no hace falta repetir sus datos.
+      // El propietario. Tres caminos: `duenoConduce` (es el propio conductor),
+      // `propietarioId` (uno ya registrado, elegido de la lista) o los datos
+      // de uno nuevo. Elegir uno existente es lo que arma la flota: varios
+      // coches, con varios taxistas, bajo el mismo dueño.
       duenoConduce?: boolean;
+      propietarioId?: number;
       propietario?: {
         nombre?: string; apellido?: string; telefono?: string; dip?: string;
       };
@@ -793,25 +796,37 @@ export function registrarRutasOperador(
       plazasAlta = cuerpo.plazas;
     }
 
-    // El propietario: o es el propio conductor (duenoConduce), o se validan sus
-    // datos aparte. Su identidad es el DIP (migración 087).
-    const prop = cuerpo.duenoConduce
-      ? { nombre, apellido, telefono, dip }
-      : (() => {
-        const p = cuerpo.propietario ?? {};
-        const pNombre = p.nombre?.trim();
-        const pApellido = p.apellido?.trim();
-        const pTelefono = normalizarTelefono(p.telefono?.trim());
-        const pDip = dipValido(p.dip);
-        if (!pNombre || !pApellido || !pTelefono) {
-          throw errorHttp(400, 'Faltan datos del propietario: nombre, apellido y teléfono. '
-            + '¿O es el mismo que conduce? Marca «el dueño también conduce».');
-        }
-        if (pDip === null) {
-          throw errorHttp(400, 'El DIP del propietario tiene que ser nueve dígitos.');
-        }
-        return { nombre: pNombre, apellido: pApellido, telefono: pTelefono, dip: pDip };
-      })();
+    // El propietario, por uno de tres caminos. Su identidad es el DIP
+    // (migración 087). Se decide aquí qué hacer; el id se resuelve dentro de la
+    // transacción.
+    //   · duenoConduce      → se registra/reutiliza con los datos del conductor.
+    //   · propietarioId      → uno ya registrado, elegido de la lista.
+    //   · propietario {...}  → uno nuevo, tecleado.
+    let propDatos: { nombre: string; apellido: string; telefono: string; dip: string } | null = null;
+    let propExistenteId: number | null = null;
+    if (cuerpo.duenoConduce) {
+      propDatos = { nombre, apellido, telefono, dip };
+    } else if (cuerpo.propietarioId !== undefined && cuerpo.propietarioId !== null) {
+      if (!Number.isInteger(cuerpo.propietarioId)) {
+        throw errorHttp(400, 'Id de propietario no válido.');
+      }
+      propExistenteId = cuerpo.propietarioId;
+    } else {
+      const p = cuerpo.propietario ?? {};
+      const pNombre = p.nombre?.trim();
+      const pApellido = p.apellido?.trim();
+      const pTelefono = normalizarTelefono(p.telefono?.trim());
+      const pDip = dipValido(p.dip);
+      if (!pNombre || !pApellido || !pTelefono) {
+        throw errorHttp(400, 'Faltan datos del propietario: nombre, apellido y teléfono. '
+          + '¿O es el mismo que conduce? Marca «el dueño también conduce». '
+          + '¿O ya está registrado? Elígelo de la lista.');
+      }
+      if (pDip === null) {
+        throw errorHttp(400, 'El DIP del propietario tiene que ser nueve dígitos.');
+      }
+      propDatos = { nombre: pNombre, apellido: pApellido, telefono: pTelefono, dip: pDip };
+    }
 
     const resultado = await enTransaccion(pool, async (cliente) => {
       const yaConductor = await cliente.query(
@@ -840,8 +855,18 @@ export function registrarRutasOperador(
         throw errorHttp(409, `La matrícula ${matricula} ya está registrada por otro conductor.`);
       }
 
-      // El propietario primero: se reutiliza por DIP si ya tenía otro coche.
-      const propietarioId = await registrarOReutilizarPropietario(cliente, prop);
+      // El propietario primero. Si se eligió uno existente, se comprueba que
+      // sigue ahí; si no, se registra o se reutiliza por DIP.
+      let propietarioId: number;
+      if (propExistenteId !== null) {
+        const existe = await cliente.query(
+          'SELECT 1 FROM propietario WHERE id = $1', [propExistenteId],
+        );
+        if (existe.rowCount === 0) throw errorHttp(404, 'Ese dueño ya no existe.');
+        propietarioId = propExistenteId;
+      } else {
+        propietarioId = await registrarOReutilizarPropietario(cliente, propDatos!);
+      }
 
       const creado = await cliente.query(
         `INSERT INTO conductor (telefono, nombre, apellido, dip, estado_verificacion)

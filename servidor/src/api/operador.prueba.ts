@@ -1368,6 +1368,53 @@ test('hacer dueño al taxista: su coche pasa a su nombre', async () => {
   assert.equal(await dipDueno(), dipConductor, 'ahora el dueño es el propio taxista');
 });
 
+// La flota (09/10): elegir un dueño YA registrado en el alta le cuelga otro
+// coche, con otro taxista. Así un dueño acumula varios coches y conductores.
+test('flota: un dueño existente recibe otro coche con otro taxista', async () => {
+  function altaCon(extra: Record<string, unknown>) {
+    const telefono = telefonoUnico();
+    return app.inject({
+      method: 'POST', url: '/api/operador/conductores', headers: cabeceras(UUID_OPERADOR),
+      payload: {
+        nombre: 'Taxista', apellido: 'Flota', telefono, dip: dipUnico(),
+        matricula: `MB-${telefono.slice(-5)}${Math.floor(Math.random() * 9)}`,
+        marca: 'Toyota', carroceria: 'turismo',
+        ...extra,
+      },
+    });
+  }
+
+  // Primer coche, dueño nuevo.
+  const dipDueno = dipUnico();
+  const primera = await altaCon({
+    duenoConduce: false,
+    propietario: { nombre: 'Don', apellido: 'Flota', telefono: telefonoUnico(), dip: dipDueno },
+  });
+  assert.equal(primera.statusCode, 200, primera.body);
+  const idA = Number(primera.json().conductorId);
+  const propId = Number((await pool.query(
+    `SELECT p.id FROM vehiculo v JOIN propietario p ON p.id = v.propietario_id
+     WHERE v.conductor_id = $1`, [idA],
+  )).rows[0].id);
+
+  // Segundo coche: MISMO dueño elegido por id, OTRO taxista.
+  const segunda = await altaCon({ duenoConduce: false, propietarioId: propId });
+  assert.equal(segunda.statusCode, 200, segunda.body);
+  const idB = Number(segunda.json().conductorId);
+  assert.notEqual(idA, idB);
+
+  const flota = await pool.query(
+    `SELECT count(*)::int AS coches, count(DISTINCT conductor_id)::int AS conductores
+     FROM vehiculo WHERE propietario_id = $1`, [propId],
+  );
+  assert.equal(flota.rows[0].coches, 2, 'dos coches del mismo dueño');
+  assert.equal(flota.rows[0].conductores, 2, 'dos taxistas distintos');
+
+  // Un dueño que no existe: 404.
+  const malo = await altaCon({ duenoConduce: false, propietarioId: 999_999_999 });
+  assert.equal(malo.statusCode, 404, malo.body);
+});
+
 test('oferta dirigida: llega al taxi de otra zona, firmada, y sin duplicar', async () => {
   const { zonaId, origenId, destinoId } = await crearZonaConReferencias();
   const otraZona = await crearZonaConReferencias();

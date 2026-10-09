@@ -1322,8 +1322,10 @@ export const api = {
   darDeAltaTaxista: (datos: {
     // El conductor: nombre, apellido, teléfono y DIP (migración 087).
     nombre: string; apellido: string; telefono: string; dip: string;
-    // El propietario: o el mismo que conduce, o sus datos aparte.
+    // El propietario: el mismo que conduce (duenoConduce), uno ya registrado
+    // (propietarioId) o uno nuevo (propietario).
     duenoConduce: boolean;
+    propietarioId?: number;
     propietario?: { nombre: string; apellido: string; telefono: string; dip: string };
     matricula: string; marca: string;
     carroceria: string; color?: string; plazas?: number;

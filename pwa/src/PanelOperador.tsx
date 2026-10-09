@@ -489,15 +489,26 @@ function FilaIncidencia({
 // confirmar — lo confirma el taxista con el código, o con el vale, la primera
 // vez que entra. Sin eso, dar de alta sería regalar la cuenta de un número a
 // quien lo dicte primero.
-function AltaDeTaxista({ alCreada }: { alCreada: (conductorId: number) => void }) {
-  const [abierta, setAbierta] = useState(false);
+function AltaDeTaxista({ alCreada, duenoFijado, abiertaInicial = false, alCerrar }: {
+  alCreada: (conductorId: number) => void;
+  // Con un dueño fijado (desde su ficha, para añadirle otro coche), el alta
+  // no pregunta por el dueño: ese coche es suyo y se registra otro taxista.
+  duenoFijado?: { id: number; nombre: string; apellido: string };
+  abiertaInicial?: boolean;
+  // Avisa a quien lo monta de que se cerró, para que recoja su botón.
+  alCerrar?: () => void;
+}) {
+  const [abierta, setAbierta] = useState(abiertaInicial);
   // Conductor
   const [nombre, setNombre] = useState('');
   const [apellido, setApellido] = useState('');
   const [telefono, setTelefono] = useState('');
   const [dip, setDip] = useState('');
-  // Propietario
-  const [duenoConduce, setDuenoConduce] = useState(true);
+  // Propietario: el que conduce, uno ya registrado (elegido), o uno nuevo.
+  const [duenoConduce, setDuenoConduce] = useState(duenoFijado === undefined);
+  const [modoDueno, setModoDueno] = useState<'existente' | 'nuevo'>('existente');
+  const [propietarioElegido, setPropietarioElegido] = useState<number | ''>(duenoFijado?.id ?? '');
+  const [propietarios, setPropietarios] = useState<PropietarioRegistro[] | null>(null);
   const [pNombre, setPNombre] = useState('');
   const [pApellido, setPApellido] = useState('');
   const [pTelefono, setPTelefono] = useState('');
@@ -514,6 +525,15 @@ function AltaDeTaxista({ alCreada }: { alCreada: (conductorId: number) => void }
   const [error, setError] = useState('');
   const [ocupado, setOcupado] = useState(false);
 
+  // La lista de dueños para elegir uno ya registrado. Se pide al abrir el alta,
+  // salvo que el dueño ya venga fijado (entonces no hay nada que elegir).
+  useEffect(() => {
+    if (!abierta || duenoFijado !== undefined || propietarios !== null) return;
+    api.propietariosOperador()
+      .then((r) => setPropietarios(r.propietarios))
+      .catch(() => setPropietarios([]));
+  }, [abierta, duenoFijado, propietarios]);
+
   if (!abierta) {
     return (
       <button type="button" className="secundario" onClick={() => setAbierta(true)}>
@@ -526,11 +546,29 @@ function AltaDeTaxista({ alCreada }: { alCreada: (conductorId: number) => void }
   const esDip = (v: string) => /^\d{9}$/.test(v.trim());
   const conductorOk = nombre.trim() !== '' && apellido.trim() !== ''
     && telefono.trim().length >= 6 && esDip(dip);
-  const propietarioOk = duenoConduce
-    || (pNombre.trim() !== '' && pApellido.trim() !== ''
-      && pTelefono.trim().length >= 6 && esDip(pDip));
+  const nuevoDuenoOk = pNombre.trim() !== '' && pApellido.trim() !== ''
+    && pTelefono.trim().length >= 6 && esDip(pDip);
+  const propietarioOk = duenoFijado !== undefined || duenoConduce
+    || (modoDueno === 'existente' ? propietarioElegido !== '' : nuevoDuenoOk);
   const vehiculoOk = matricula.trim() !== '' && marca.trim() !== '';
   const completo = conductorOk && propietarioOk && vehiculoOk;
+
+  // La parte del dueño, por uno de los tres caminos.
+  function datosDelDueno(): {
+    duenoConduce: boolean; propietarioId?: number;
+    propietario?: { nombre: string; apellido: string; telefono: string; dip: string };
+  } {
+    if (duenoFijado !== undefined) return { duenoConduce: false, propietarioId: duenoFijado.id };
+    if (duenoConduce) return { duenoConduce: true };
+    if (modoDueno === 'existente') return { duenoConduce: false, propietarioId: Number(propietarioElegido) };
+    return {
+      duenoConduce: false,
+      propietario: {
+        nombre: pNombre.trim(), apellido: pApellido.trim(),
+        telefono: pTelefono.trim(), dip: pDip.trim(),
+      },
+    };
+  }
 
   async function guardar() {
     setError('');
@@ -541,13 +579,7 @@ function AltaDeTaxista({ alCreada }: { alCreada: (conductorId: number) => void }
         apellido: apellido.trim(),
         telefono: telefono.trim(),
         dip: dip.trim(),
-        duenoConduce,
-        propietario: duenoConduce ? undefined : {
-          nombre: pNombre.trim(),
-          apellido: pApellido.trim(),
-          telefono: pTelefono.trim(),
-          dip: pDip.trim(),
-        },
+        ...datosDelDueno(),
         matricula: matricula.trim(),
         marca: marca.trim(),
         carroceria,
@@ -592,32 +624,77 @@ function AltaDeTaxista({ alCreada }: { alCreada: (conductorId: number) => void }
       </div>
 
       {/* El dueño del coche. Casi siempre es el mismo que conduce; cuando no,
-          sus datos van aparte y se reutiliza por el DIP si ya tenía otro
-          coche (es la flota). */}
-      <label className="casilla">
-        <input
-          type="checkbox" checked={duenoConduce}
-          onChange={(e) => setDuenoConduce(e.target.checked)}
-        />
-        El dueño del coche es quien conduce
-      </label>
-      {!duenoConduce && (
+          se ELIGE uno ya registrado —así se arma la flota de un dueño— o se
+          teclea uno nuevo. Con el dueño fijado (añadir coche desde su ficha),
+          no se pregunta. */}
+      {duenoFijado !== undefined ? (
+        <p className="nota">
+          El coche será de <strong>{duenoFijado.nombre} {duenoFijado.apellido}</strong>, conducido por el taxista de arriba.
+        </p>
+      ) : (
         <>
-          <h4 className="alta-titulo">De quién es el coche</h4>
-          <div className="fila">
-            <input value={pNombre} placeholder="Nombre del dueño" onChange={(e) => setPNombre(e.target.value)} />
-            <input value={pApellido} placeholder="Apellido del dueño" onChange={(e) => setPApellido(e.target.value)} />
-          </div>
-          <div className="fila">
+          <label className="casilla">
             <input
-              value={pTelefono} inputMode="tel" placeholder="Teléfono del dueño"
-              onChange={(e) => setPTelefono(e.target.value)}
+              type="checkbox" checked={duenoConduce}
+              onChange={(e) => setDuenoConduce(e.target.checked)}
             />
-            <input
-              value={pDip} inputMode="numeric" placeholder="DIP del dueño (9 dígitos)" maxLength={9}
-              onChange={(e) => setPDip(e.target.value.replace(/\D/g, '').slice(0, 9))}
-            />
-          </div>
+            El dueño del coche es quien conduce
+          </label>
+          {!duenoConduce && (
+            <>
+              <h4 className="alta-titulo">De quién es el coche</h4>
+              <div className="selector-idioma">
+                <button
+                  type="button" className={modoDueno === 'existente' ? 'idioma-activo' : undefined}
+                  onClick={() => setModoDueno('existente')}
+                >
+                  Ya registrado
+                </button>
+                <button
+                  type="button" className={modoDueno === 'nuevo' ? 'idioma-activo' : undefined}
+                  onClick={() => setModoDueno('nuevo')}
+                >
+                  Dueño nuevo
+                </button>
+              </div>
+              {modoDueno === 'existente' ? (
+                (propietarios?.length ?? 0) === 0 ? (
+                  <p className="nota">
+                    {propietarios === null ? 'Cargando dueños…' : 'No hay dueños registrados todavía. Elige «Dueño nuevo».'}
+                  </p>
+                ) : (
+                  <select
+                    value={propietarioElegido}
+                    onChange={(e) => setPropietarioElegido(e.target.value ? Number(e.target.value) : '')}
+                  >
+                    <option value="">Elige un dueño…</option>
+                    {(propietarios ?? []).map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.nombre} {p.apellido} · DIP {p.dip} · {p.coches} coche{p.coches === 1 ? '' : 's'}
+                      </option>
+                    ))}
+                  </select>
+                )
+              ) : (
+                <>
+                  <div className="fila">
+                    <input value={pNombre} placeholder="Nombre del dueño" onChange={(e) => setPNombre(e.target.value)} />
+                    <input value={pApellido} placeholder="Apellido del dueño" onChange={(e) => setPApellido(e.target.value)} />
+                  </div>
+                  <div className="fila">
+                    <input
+                      value={pTelefono} inputMode="tel" placeholder="Teléfono del dueño"
+                      onChange={(e) => setPTelefono(e.target.value)}
+                    />
+                    <input
+                      value={pDip} inputMode="numeric" placeholder="DIP del dueño (9 dígitos)" maxLength={9}
+                      onChange={(e) => setPDip(e.target.value.replace(/\D/g, '').slice(0, 9))}
+                    />
+                  </div>
+                </>
+              )}
+            </>
+          )}
         </>
       )}
 
@@ -669,7 +746,7 @@ function AltaDeTaxista({ alCreada }: { alCreada: (conductorId: number) => void }
         >
           Darlo de alta
         </button>
-        <button type="button" className="secundario" onClick={() => setAbierta(false)}>
+        <button type="button" className="secundario" onClick={() => { setAbierta(false); alCerrar?.(); }}>
           Dejarlo
         </button>
       </div>
@@ -3116,9 +3193,11 @@ function FichaPropietario({ id, alVolver, alVerFichaConductor }: {
 }) {
   const [ficha, setFicha] = useState<FichaPropietarioOperador | null>(null);
   const [error, setError] = useState('');
-  useEffect(() => {
+  const [anadiendo, setAnadiendo] = useState(false);
+  function cargar() {
     api.fichaPropietarioOperador(id).then(setFicha).catch((e) => setError(e.message));
-  }, [id]);
+  }
+  useEffect(cargar, [id]);
   if (error) return <><p className="aviso">{error}</p><button type="button" className="secundario" onClick={alVolver}>Volver</button></>;
   if (!ficha) return <p className="nota">Cargando…</p>;
   const p = ficha.propietario;
@@ -3163,6 +3242,20 @@ function FichaPropietario({ id, alVolver, alVerFichaConductor }: {
             </tr>
           ))}
         </Tabla>
+      )}
+      {/* Ampliar la flota: otro coche de este mismo dueño, con otro taxista.
+          El dueño ya va fijado, así que el alta no vuelve a preguntarlo. */}
+      {anadiendo ? (
+        <AltaDeTaxista
+          abiertaInicial
+          duenoFijado={{ id: p.id, nombre: p.nombre, apellido: p.apellido }}
+          alCreada={() => { setAnadiendo(false); cargar(); }}
+          alCerrar={() => setAnadiendo(false)}
+        />
+      ) : (
+        <button type="button" className="principal ficha-editar-boton" onClick={() => setAnadiendo(true)}>
+          ➕ Añadir otro coche a este dueño
+        </button>
       )}
     </>
   );
