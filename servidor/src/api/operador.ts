@@ -46,6 +46,15 @@ const PATRON_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 const ESTADOS_VALIDOS = ['pendiente', 'verificado', 'suspendido', 'bloqueado'];
 // Los tipos de vehículo (migración 087). Informativos: describen el coche.
 const CARROCERIAS_VEHICULO = ['turismo', '4x4', 'furgoneta', 'autobus'];
+
+// El tope de plazas POR TIPO (migración 089). La base aguanta hasta 60; esto
+// es la regla de negocio: un turismo no lleva más de 4 pasajeros, una
+// furgoneta llega a una quincena y un autobús urbano a varias decenas.
+const MAX_PLAZAS: Record<string, number> = {
+  turismo: 4, '4x4': 4, furgoneta: 16, autobus: 60,
+};
+const topePlazas = (carroceria: string | null | undefined): number =>
+  MAX_PLAZAS[carroceria ?? ''] ?? 4;
 const ESTADOS_RECARGA_VALIDOS = ['pendiente', 'confirmada', 'rechazada', 'caducada'];
 
 // Las mismas del CHECK de la migración 021. Se validan aquí para poder decir
@@ -634,6 +643,41 @@ export function registrarRutasOperador(
     return { guardado: true };
   });
 
+  // Hacer dueño del coche al propio taxista (09/10): el caso más común —el
+  // taxista es el dueño— con un botón, sin reteclear sus datos. Se registra (o
+  // se reutiliza por DIP) un propietario con la identidad del conductor y se le
+  // cuelga su coche. Necesita que el taxista tenga DIP y apellido: son la
+  // identidad del propietario (migración 087).
+  app.post('/api/operador/conductores/:id/dueno-es-el-conductor', async (req) => {
+    await exigirOperador(req);
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
+    return enTransaccion(pool, async (cliente) => {
+      const c = await cliente.query(
+        'SELECT nombre, apellido, telefono, dip FROM conductor WHERE id = $1',
+        [id],
+      );
+      if (c.rowCount === 0) throw errorHttp(404, 'No existe ese conductor.');
+      const { nombre, apellido, telefono, dip } = c.rows[0];
+      if (!dip) {
+        throw errorHttp(400, 'Este taxista no tiene DIP todavía. Añádeselo primero: '
+          + 'el dueño se identifica por su documento.');
+      }
+      if (!apellido) {
+        throw errorHttp(400, 'Este taxista no tiene apellido todavía. Añádeselo primero.');
+      }
+      const propietarioId = await registrarOReutilizarPropietario(
+        cliente, { nombre, apellido, telefono, dip },
+      );
+      const v = await cliente.query(
+        'UPDATE vehiculo SET propietario_id = $2 WHERE conductor_id = $1',
+        [id, propietarioId],
+      );
+      if (v.rowCount === 0) throw errorHttp(404, 'Este conductor no tiene vehículo.');
+      return { hecho: true };
+    });
+  });
+
   // Del pasajero se recibe el id del DISPOSITIVO, que es con lo que trabaja su
   // ficha; la fila del perfil cuelga de él.
   app.post('/api/operador/pasajeros/:id/telefono', async (req) => {
@@ -715,6 +759,7 @@ export function registrarRutasOperador(
       };
       // El vehículo.
       matricula?: string; marca?: string; carroceria?: string; color?: string;
+      plazas?: number;
       aireAcondicionado?: boolean; seguro?: boolean;
       // El número que el coche ya lleva pintado, si lo lleva. Vacío: el
       // siguiente de la secuencia (migración 084).
@@ -736,6 +781,16 @@ export function registrarRutasOperador(
     }
     if (!CARROCERIAS_VEHICULO.includes(carroceria)) {
       throw errorHttp(400, `Carrocería no válida. Opciones: ${CARROCERIAS_VEHICULO.join(', ')}.`);
+    }
+    // Las plazas (migración 089): opcionales en el alta —si no vienen, la base
+    // pone 4—, con el tope del tipo de coche.
+    let plazasAlta: number | null = null;
+    if (cuerpo.plazas !== undefined && cuerpo.plazas !== null) {
+      const tope = topePlazas(carroceria);
+      if (!Number.isInteger(cuerpo.plazas) || cuerpo.plazas < 1 || cuerpo.plazas > tope) {
+        throw errorHttp(400, `Las plazas tienen que ser un número entre 1 y ${tope} para este tipo de vehículo.`);
+      }
+      plazasAlta = cuerpo.plazas;
     }
 
     // El propietario: o es el propio conductor (duenoConduce), o se validan sus
@@ -802,11 +857,12 @@ export function registrarRutasOperador(
         : await asignarNumeroSiguiente(cliente, conductorId);
       await cliente.query(
         `INSERT INTO vehiculo
-           (conductor_id, propietario_id, matricula, marca, carroceria, color, aire_acondicionado, seguro)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+           (conductor_id, propietario_id, matricula, marca, carroceria, color, plazas, aire_acondicionado, seguro)
+         VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, 4), $8, $9)`,
         [
           conductorId, propietarioId, matricula, marca, carroceria,
-          cuerpo.color?.trim() || null, cuerpo.aireAcondicionado ?? false, cuerpo.seguro ?? false,
+          cuerpo.color?.trim() || null, plazasAlta,
+          cuerpo.aireAcondicionado ?? false, cuerpo.seguro ?? false,
         ],
       );
       await cliente.query(
@@ -862,6 +918,31 @@ export function registrarRutasOperador(
        LIMIT 500`,
     );
     return { propietarios: res.rows };
+  });
+
+  // La ficha de UN propietario (09/10): sus datos y TODA su flota —cada coche
+  // con el taxista que lo conduce—. Es la vista «entrar por el dueño»: un
+  // dueño puede tener varios coches y, por tanto, varios conductores, y por el
+  // conductor solo se ve uno.
+  app.get('/api/operador/propietarios/:id', async (req) => {
+    await exigirOperador(req);
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(id)) throw errorHttp(400, 'Id de propietario no válido.');
+    const p = await pool.query(
+      'SELECT id::int AS id, nombre, apellido, telefono, dip, creado_en FROM propietario WHERE id = $1',
+      [id],
+    );
+    if (p.rowCount === 0) throw errorHttp(404, 'No existe ese propietario.');
+    const v = await pool.query(
+      `SELECT v.matricula, v.marca, v.carroceria, v.color, v.plazas,
+              c.id::int AS conductor_id, c.nombre AS conductor, c.apellido AS conductor_apellido,
+              c.numero_taxi, c.estado_verificacion
+       FROM vehiculo v JOIN conductor c ON c.id = v.conductor_id
+       WHERE v.propietario_id = $1
+       ORDER BY c.numero_taxi NULLS LAST, v.matricula`,
+      [id],
+    );
+    return { propietario: p.rows[0], vehiculos: v.rows };
   });
 
   app.get('/api/operador/conductores', async (req) => {
@@ -1052,23 +1133,18 @@ export function registrarRutasOperador(
     // el tipo solo mientras el coche NO esté validado —una vez la central dio
     // el visto bueno, cambiarlos sería describir otro coche (como en el alta
     // del propio taxista, sesion.ts)—. Se mira el estado y se decide aquí.
-    const estado = await pool.query(
-      'SELECT estado_verificacion FROM conductor WHERE id = $1', [id],
+    // Estado del conductor (para el candado del coche validado) y tipo actual
+    // del coche (para el tope de plazas de su tipo).
+    const actual = await pool.query(
+      `SELECT c.estado_verificacion, v.carroceria
+       FROM conductor c LEFT JOIN vehiculo v ON v.conductor_id = c.id
+       WHERE c.id = $1`,
+      [id],
     );
-    if (estado.rowCount === 0) throw errorHttp(404, 'No existe ese conductor.');
-    const validado = estado.rows[0].estado_verificacion === 'verificado';
+    if (actual.rowCount === 0) throw errorHttp(404, 'No existe ese conductor.');
+    const validado = actual.rows[0].estado_verificacion === 'verificado';
 
     const color = cuerpo.color?.trim() || null;
-    let plazas: number | null = null;
-    if (cuerpo.plazas !== undefined && cuerpo.plazas !== null) {
-      // El taxi compartido (migración 013) cuenta plazas de 1 a 4; la base lo
-      // exige con un CHECK. Se valida aquí para dar un 400 claro en vez de que
-      // reviente contra la restricción.
-      if (!Number.isInteger(cuerpo.plazas) || cuerpo.plazas < 1 || cuerpo.plazas > 4) {
-        throw errorHttp(400, 'Las plazas tienen que ser un número entre 1 y 4.');
-      }
-      plazas = cuerpo.plazas;
-    }
 
     // Identidad del coche: solo si llega y solo si aún se puede.
     let matricula: string | null = null;
@@ -1090,6 +1166,18 @@ export function registrarRutasOperador(
       }
     }
 
+    // Las plazas, con el tope del tipo que va a tener el coche (migración 089):
+    // el nuevo si se está cambiando, o el que ya tiene.
+    const tipoEfectivo = carroceria ?? actual.rows[0].carroceria;
+    let plazas: number | null = null;
+    if (cuerpo.plazas !== undefined && cuerpo.plazas !== null) {
+      const tope = topePlazas(tipoEfectivo);
+      if (!Number.isInteger(cuerpo.plazas) || cuerpo.plazas < 1 || cuerpo.plazas > tope) {
+        throw errorHttp(400, `Las plazas tienen que ser un número entre 1 y ${tope} para este tipo de vehículo.`);
+      }
+      plazas = cuerpo.plazas;
+    }
+
     // El color y las plazas se fijan directo —el formulario de edición manda
     // siempre su valor actual, así que vaciarlos es querer vaciarlos—; la
     // matrícula, la marca y el tipo con COALESCE, que solo cambian cuando se
@@ -1098,7 +1186,7 @@ export function registrarRutasOperador(
       `UPDATE vehiculo SET
          aire_acondicionado = $2, seguro = $3,
          color = $4,
-         plazas = $5,
+         plazas = COALESCE($5, plazas),
          matricula = COALESCE($6, matricula),
          marca = COALESCE($7, marca),
          carroceria = COALESCE($8, carroceria)

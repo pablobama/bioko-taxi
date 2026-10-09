@@ -1288,6 +1288,86 @@ test('editar: el dueño y su DIP, y el vehículo con la matrícula bloqueada si 
   assert.equal(matriculaBloqueada.statusCode, 409, matriculaBloqueada.body);
 });
 
+// Las plazas por tipo (migración 089): una furgoneta admite más de 4; un
+// turismo, no.
+test('plazas: la furgoneta pasa de 4, el turismo no', async () => {
+  function alta(carroceria: string, plazas: number | undefined) {
+    const telefono = telefonoUnico();
+    return app.inject({
+      method: 'POST', url: '/api/operador/conductores', headers: cabeceras(UUID_OPERADOR),
+      payload: {
+        nombre: 'Chófer', apellido: 'Bus', telefono, dip: dipUnico(), duenoConduce: true,
+        matricula: `MB-${telefono.slice(-5)}V`, marca: 'Toyota', carroceria, plazas,
+      },
+    });
+  }
+
+  // Furgoneta con 12 plazas: entra, y la base las guarda.
+  const furgo = await alta('furgoneta', 12);
+  assert.equal(furgo.statusCode, 200, furgo.body);
+  const idFurgo = Number(furgo.json().conductorId);
+  const plazasFurgo = await pool.query(
+    'SELECT plazas FROM vehiculo WHERE conductor_id = $1', [idFurgo],
+  );
+  assert.equal(plazasFurgo.rows[0].plazas, 12);
+
+  // Turismo con 12: fuera, el tope del turismo es 4.
+  const turismo = await alta('turismo', 12);
+  assert.equal(turismo.statusCode, 400, turismo.body);
+
+  // Sin plazas: la base pone 4.
+  const porDefecto = await alta('turismo', undefined);
+  assert.equal(porDefecto.statusCode, 200, porDefecto.body);
+  const idDef = Number(porDefecto.json().conductorId);
+  const plazasDef = await pool.query(
+    'SELECT plazas FROM vehiculo WHERE conductor_id = $1', [idDef],
+  );
+  assert.equal(plazasDef.rows[0].plazas, 4);
+
+  // Editar la furgoneta a 16 (su tope): entra; a 17, fuera.
+  const a16 = await app.inject({
+    method: 'POST', url: `/api/operador/conductores/${idFurgo}/vehiculo`, headers: cabeceras(UUID_OPERADOR),
+    payload: { aireAcondicionado: false, seguro: false, plazas: 16 },
+  });
+  assert.equal(a16.statusCode, 200, a16.body);
+  assert.equal(a16.json().plazas, 16);
+  const a17 = await app.inject({
+    method: 'POST', url: `/api/operador/conductores/${idFurgo}/vehiculo`, headers: cabeceras(UUID_OPERADOR),
+    payload: { aireAcondicionado: false, seguro: false, plazas: 17 },
+  });
+  assert.equal(a17.statusCode, 400, a17.body);
+});
+
+// Hacer dueño al taxista (09/10): su coche, registrado a nombre de otro, pasa
+// a su propio nombre con un botón.
+test('hacer dueño al taxista: su coche pasa a su nombre', async () => {
+  const dipConductor = dipUnico();
+  const telefono = telefonoUnico();
+  const alta = await app.inject({
+    method: 'POST', url: '/api/operador/conductores', headers: cabeceras(UUID_OPERADOR),
+    payload: {
+      nombre: 'Chófer', apellido: 'Empleado', telefono, dip: dipConductor, duenoConduce: false,
+      propietario: { nombre: 'Otro', apellido: 'Dueño', telefono: telefonoUnico(), dip: dipUnico() },
+      matricula: `MB-${telefono.slice(-5)}H`, marca: 'Toyota', carroceria: 'turismo',
+    },
+  });
+  assert.equal(alta.statusCode, 200, alta.body);
+  const id = Number(alta.json().conductorId);
+
+  const dipDueno = async () => (await pool.query(
+    `SELECT p.dip FROM vehiculo v JOIN propietario p ON p.id = v.propietario_id
+     WHERE v.conductor_id = $1`, [id],
+  )).rows[0].dip;
+  assert.notEqual(await dipDueno(), dipConductor, 'empieza a nombre de otro');
+
+  const r = await app.inject({
+    method: 'POST', url: `/api/operador/conductores/${id}/dueno-es-el-conductor`,
+    headers: cabeceras(UUID_OPERADOR), payload: {},
+  });
+  assert.equal(r.statusCode, 200, r.body);
+  assert.equal(await dipDueno(), dipConductor, 'ahora el dueño es el propio taxista');
+});
+
 test('oferta dirigida: llega al taxi de otra zona, firmada, y sin duplicar', async () => {
   const { zonaId, origenId, destinoId } = await crearZonaConReferencias();
   const otraZona = await crearZonaConReferencias();

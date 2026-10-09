@@ -276,6 +276,21 @@ export interface PropietarioRegistro {
   matriculas: string[];
 }
 
+// La ficha de un propietario: sus datos y toda su flota (09/10), cada coche
+// con el taxista que lo conduce.
+export interface FichaPropietarioOperador {
+  propietario: {
+    id: number; nombre: string; apellido: string; telefono: string;
+    dip: string; creado_en: string;
+  };
+  vehiculos: Array<{
+    matricula: string; marca: string | null; carroceria: string | null;
+    color: string | null; plazas: number | null;
+    conductor_id: number; conductor: string; conductor_apellido: string | null;
+    numero_taxi: string | null; estado_verificacion: string;
+  }>;
+}
+
 export interface TaxiVivo {
   conductor_id: number;
   nombre: string;
@@ -1311,7 +1326,8 @@ export const api = {
     duenoConduce: boolean;
     propietario?: { nombre: string; apellido: string; telefono: string; dip: string };
     matricula: string; marca: string;
-    carroceria: string; color?: string; aireAcondicionado?: boolean; seguro?: boolean;
+    carroceria: string; color?: string; plazas?: number;
+    aireAcondicionado?: boolean; seguro?: boolean;
     // El número que el coche ya lleva pintado; vacío, el siguiente (084).
     numeroTaxi?: string;
   }) =>
@@ -1386,6 +1402,11 @@ export const api = {
     pedirJson<{ vehiculos: VehiculoRegistro[] }>('/api/operador/vehiculos'),
   propietariosOperador: () =>
     pedirJson<{ propietarios: PropietarioRegistro[] }>('/api/operador/propietarios'),
+
+  // La ficha de un propietario: sus datos y toda su flota (09/10). Entrar por
+  // el dueño para ver sus varios coches y conductores.
+  fichaPropietarioOperador: (id: number) =>
+    pedirJson<FichaPropietarioOperador>(`/api/operador/propietarios/${id}`),
 
   vivoOperador: () =>
     pedirJson<{
@@ -1549,6 +1570,14 @@ export const api = {
   }) =>
     pedirJson<{ guardado: boolean }>(`/api/operador/propietarios/${id}/datos`, {
       method: 'POST', body: JSON.stringify(datos),
+    }),
+
+  // Hacer dueño del coche al propio taxista (09/10): usa su identidad (nombre,
+  // apellido, teléfono, DIP) como propietario. Necesita que tenga DIP y
+  // apellido ya guardados.
+  hacerDuenoAlConductor: (conductorId: number) =>
+    pedirJson<{ hecho: boolean }>(`/api/operador/conductores/${conductorId}/dueno-es-el-conductor`, {
+      method: 'POST', body: '{}',
     }),
 
   recorridoConductor: (conductorId: number, periodo: PeriodoRecorrido) =>

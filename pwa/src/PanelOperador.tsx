@@ -10,7 +10,7 @@ import {
   api,
   type AccesoOperador, type AparatoOperador,
   type BandaOperador, type CambioOperador, type ConductorOperador, type EstadisticasOperador,
-  type FichaConductorOperador, type FichaPasajeroOperador, type IncidenciaOperador,
+  type FichaConductorOperador, type FichaPasajeroOperador, type FichaPropietarioOperador, type IncidenciaOperador,
   type ParametroOperador, type PasajeroOperador, type PeriodoRecorrido,
   type RecargaOperador, type RecorridoOperador, type ReferenciaOperador,
   type PropietarioFicha, type PropietarioRegistro, type SaludOperador, type SinOfertaViva, type SolicitudCentral,
@@ -38,6 +38,13 @@ const CATEGORIAS = Object.keys(ESTILO_CATEGORIA).filter((c) => c !== 'zona').sor
 const ETIQUETA_CARROCERIA: Record<string, string> = {
   turismo: 'Turismo', '4x4': '4x4', furgoneta: 'Furgoneta', autobus: 'Autobús',
 };
+
+// El tope de plazas por tipo (migración 089). Lo decide el servidor; esto es
+// solo para la pista y el maxLength del formulario.
+const MAX_PLAZAS_UI: Record<string, number> = {
+  turismo: 4, '4x4': 4, furgoneta: 16, autobus: 60,
+};
+const topePlazasUI = (carroceria: string): number => MAX_PLAZAS_UI[carroceria] ?? 4;
 
 const ETIQUETA_ESTADO: Record<string, string> = {
   pendiente: 'Pendiente',
@@ -500,6 +507,8 @@ function AltaDeTaxista({ alCreada }: { alCreada: (conductorId: number) => void }
   const [marca, setMarca] = useState('');
   const [numeroTaxi, setNumeroTaxi] = useState('');
   const [carroceria, setCarroceria] = useState('turismo');
+  const [color, setColor] = useState('');
+  const [plazas, setPlazas] = useState('');
   const [aire, setAire] = useState(false);
   const [seguro, setSeguro] = useState(false);
   const [error, setError] = useState('');
@@ -542,6 +551,8 @@ function AltaDeTaxista({ alCreada }: { alCreada: (conductorId: number) => void }
         matricula: matricula.trim(),
         marca: marca.trim(),
         carroceria,
+        color: color.trim() || undefined,
+        plazas: plazas.trim() === '' ? undefined : Number(plazas),
         aireAcondicionado: aire,
         seguro,
         numeroTaxi: numeroTaxi.trim() || undefined,
@@ -623,6 +634,16 @@ function AltaDeTaxista({ alCreada }: { alCreada: (conductorId: number) => void }
           <option value="furgoneta">Furgoneta</option>
           <option value="autobus">Autobús</option>
         </select>
+      </div>
+      <div className="fila">
+        <input value={color} placeholder="Color (opcional)" onChange={(e) => setColor(e.target.value)} />
+        {/* Las plazas (089): vacío, la base pone 4. Para furgoneta y autobús
+            conviene ponerlas, que 4 se les queda corto. */}
+        <input
+          value={plazas} inputMode="numeric" placeholder={`Plazas (vacío: 4, máx ${topePlazasUI(carroceria)})`}
+          maxLength={2}
+          onChange={(e) => setPlazas(e.target.value.replace(/\D/g, '').slice(0, 2))}
+        />
       </div>
       <div className="fila">
         {/* El número de flota (084). Vacío, le toca el siguiente; se rellena
@@ -866,6 +887,12 @@ function EditarDatosTaxista({ ficha, alGuardado, alCancelar }: {
 
   const completo = nombre.trim() !== '' && apellido.trim() !== ''
     && (dip.trim() === '' || /^\d{9}$/.test(dip.trim()));
+  // Hacer dueño al taxista necesita su identidad completa: el propietario se
+  // registra con nombre, apellido y DIP (migración 087).
+  const puedeSerDueno = nombre.trim() !== '' && apellido.trim() !== ''
+    && /^\d{9}$/.test(dip.trim());
+  const yaEsDueno = ficha.propietario !== null
+    && ficha.dip !== null && ficha.propietario.dip === ficha.dip;
 
   async function guardar() {
     setError('');
@@ -880,6 +907,27 @@ function EditarDatosTaxista({ ficha, alGuardado, alCancelar }: {
       alGuardado();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo guardar.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  // Guarda primero lo que hay en pantalla —para que el dueño use estos datos— y
+  // luego hace dueño del coche al taxista.
+  async function hacerDueno() {
+    setError('');
+    setOcupado(true);
+    try {
+      await api.editarDatosConductor(ficha.id, {
+        nombre: nombre.trim(),
+        apellido: apellido.trim(),
+        dip: dip.trim() || undefined,
+        correo: correo.trim() || undefined,
+      });
+      await api.hacerDuenoAlConductor(ficha.id);
+      alGuardado();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo hacer dueño al taxista.');
     } finally {
       setOcupado(false);
     }
@@ -905,6 +953,21 @@ function EditarDatosTaxista({ ficha, alGuardado, alCancelar }: {
         </button>
         <button type="button" className="secundario" onClick={alCancelar}>Cancelar</button>
       </div>
+      {/* El caso más común: el taxista es el dueño del coche. Un botón, en vez
+          de ir a la pestaña del dueño a reteclear sus datos. */}
+      {!yaEsDueno && (
+        <>
+          <button
+            type="button" className="secundario"
+            disabled={!puedeSerDueno || ocupado} onClick={hacerDueno}
+          >
+            Este taxista es el dueño del coche
+          </button>
+          {!puedeSerDueno && (
+            <p className="nota">Para hacerlo dueño hace falta su nombre, apellido y DIP.</p>
+          )}
+        </>
+      )}
     </>
   );
 }
@@ -1018,8 +1081,8 @@ function EditarVehiculo({ ficha, alGuardado, alCancelar }: {
         </select>
         <input value={color} placeholder="Color" onChange={(e) => setColor(e.target.value)} />
         <input
-          value={plazas} inputMode="numeric" placeholder="Plazas (1-4)" maxLength={1}
-          onChange={(e) => setPlazas(e.target.value.replace(/\D/g, '').slice(0, 1))}
+          value={plazas} inputMode="numeric" placeholder={`Plazas (1-${topePlazasUI(carroceria)})`} maxLength={2}
+          onChange={(e) => setPlazas(e.target.value.replace(/\D/g, '').slice(0, 2))}
         />
       </div>
       <div className="fila">
@@ -1107,7 +1170,7 @@ const CARPETAS_FICHA: Array<[CarpetaFicha, string]> = [
 ];
 
 function FichaConductor({
-  id, alVolver, alCambiarEstado, ocupado, alVerRecorrido,
+  id, alVolver, alCambiarEstado, ocupado, alVerRecorrido, alVerFichaPropietario,
 }: {
   id: number;
   alVolver: () => void;
@@ -1115,6 +1178,8 @@ function FichaConductor({
   ocupado: boolean;
   // Lleva el recorrido del taxista al mapa del despacho. Solo en la mesa.
   alVerRecorrido?: (id: number) => void;
+  // Abre la ficha del dueño del coche (su flota entera).
+  alVerFichaPropietario?: (id: number) => void;
 }) {
   const [ficha, setFicha] = useState<FichaConductorOperador | null>(null);
   const [error, setError] = useState('');
@@ -1280,9 +1345,16 @@ function FichaConductor({
                   ? 'El dueño del coche es el mismo que lo conduce.'
                   : 'El dueño no conduce: no lleva foto.'}
               </p>
-              <button type="button" className="secundario ficha-editar-boton" onClick={() => setEditando('dueno')}>
-                Editar datos del dueño
-              </button>
+              <div className="fila ficha-acciones">
+                <button type="button" className="secundario ficha-editar-boton" onClick={() => setEditando('dueno')}>
+                  Editar datos del dueño
+                </button>
+                {alVerFichaPropietario !== undefined && (
+                  <button type="button" className="secundario" onClick={() => alVerFichaPropietario(prop.id)}>
+                    Ver la flota de este dueño →
+                  </button>
+                )}
+              </div>
             </>
           )}
         </div>
@@ -3000,7 +3072,7 @@ function RegistroVehiculos({ alVerFichaConductor }: {
 }
 
 // El registro de propietarios (migración 087): cada dueño con su flota.
-function RegistroPropietarios() {
+function RegistroPropietarios({ alAbrir }: { alAbrir?: (id: number) => void }) {
   const [lista, setLista] = useState<PropietarioRegistro[] | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -3011,24 +3083,98 @@ function RegistroPropietarios() {
   if (lista === null) return <p className="nota">Cargando…</p>;
   if (lista.length === 0) return <p className="nota">Ningún propietario todavía.</p>;
   return (
-    <Tabla cabeceras={['Nombre', 'Teléfono', 'DIP', 'Coches', 'Matrículas']}>
-      {lista.map((p) => (
-        <tr key={p.id}>
-          <td>{p.nombre} {p.apellido}</td>
-          <td className="tabla-tenue">{p.telefono}</td>
-          <td className="tabla-clave">{p.dip}</td>
-          <td className="tabla-numero">{p.coches}</td>
-          <td className="tabla-tenue">{p.matriculas.join(', ') || '—'}</td>
-        </tr>
-      ))}
-    </Tabla>
+    <>
+      {alAbrir !== undefined && (
+        <p className="nota">Pulsa un dueño para ver toda su flota y sus taxistas.</p>
+      )}
+      <Tabla cabeceras={['Nombre', 'Teléfono', 'DIP', 'Coches', 'Matrículas']}>
+        {lista.map((p) => (
+          <tr
+            key={p.id}
+            className={alAbrir !== undefined ? 'tabla-desplegable' : undefined}
+            onClick={alAbrir !== undefined ? () => alAbrir(p.id) : undefined}
+          >
+            <td>{p.nombre} {p.apellido}</td>
+            <td className="tabla-tenue">{p.telefono}</td>
+            <td className="tabla-clave">{p.dip}</td>
+            <td className="tabla-numero">{p.coches}</td>
+            <td className="tabla-tenue">{p.matriculas.join(', ') || '—'}</td>
+          </tr>
+        ))}
+      </Tabla>
+    </>
   );
 }
 
-function Registros({ alVerViaje, alVerFichaConductor, alVerFichaPasajero }: {
+// La ficha del propietario (09/10): sus datos y TODA su flota, cada coche con
+// el taxista que lo conduce. Es «entrar por el dueño»: por el conductor solo se
+// ve un coche; aquí se ven todos, y cada taxista enlaza con su ficha.
+function FichaPropietario({ id, alVolver, alVerFichaConductor }: {
+  id: number;
+  alVolver: () => void;
+  alVerFichaConductor?: (id: number) => void;
+}) {
+  const [ficha, setFicha] = useState<FichaPropietarioOperador | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.fichaPropietarioOperador(id).then(setFicha).catch((e) => setError(e.message));
+  }, [id]);
+  if (error) return <><p className="aviso">{error}</p><button type="button" className="secundario" onClick={alVolver}>Volver</button></>;
+  if (!ficha) return <p className="nota">Cargando…</p>;
+  const p = ficha.propietario;
+  return (
+    <>
+      <div className="cabecera">
+        <h1>{p.nombre} {p.apellido}</h1>
+        <button type="button" className="secundario" onClick={alVolver}>Volver</button>
+      </div>
+      <TarjetaIdentidad
+        foto={<div className="tarjeta-glifo" aria-hidden="true">👤</div>}
+        titulo={`${p.nombre} ${p.apellido}`.trim()}
+        datos={[
+          { k: 'DIP', v: p.dip },
+          { k: 'Teléfono', v: p.telefono },
+          { k: 'Coches', v: ficha.vehiculos.length },
+        ]}
+      />
+      <p className="nota">Su flota ({ficha.vehiculos.length})</p>
+      {ficha.vehiculos.length === 0 ? (
+        <p className="nota">No tiene coches registrados ahora mismo.</p>
+      ) : (
+        <Tabla cabeceras={['Nº', 'Matrícula', 'Tipo', 'Conductor', 'Estado']}>
+          {ficha.vehiculos.map((v) => (
+            <tr key={v.matricula}>
+              <td className="tabla-clave">{v.numero_taxi ?? '—'}</td>
+              <td className="tabla-clave">{v.matricula}</td>
+              <td>
+                {v.carroceria ? (ETIQUETA_CARROCERIA[v.carroceria] ?? v.carroceria) : '—'}
+                {v.plazas ? ` · ${v.plazas} pl.` : ''}
+              </td>
+              <td>
+                {alVerFichaConductor !== undefined ? (
+                  <button type="button" className="tabla-enlace" onClick={() => alVerFichaConductor(v.conductor_id)}>
+                    {v.conductor}{v.conductor_apellido ? ` ${v.conductor_apellido}` : ''}
+                  </button>
+                ) : (
+                  <>{v.conductor}{v.conductor_apellido ? ` ${v.conductor_apellido}` : ''}</>
+                )}
+              </td>
+              <td className="tabla-tenue">{ETIQUETA_ESTADO[v.estado_verificacion] ?? v.estado_verificacion}</td>
+            </tr>
+          ))}
+        </Tabla>
+      )}
+    </>
+  );
+}
+
+function Registros({
+  alVerViaje, alVerFichaConductor, alVerFichaPasajero, alVerFichaPropietario,
+}: {
   alVerViaje?: (viaje: ViajeOperador) => void;
   alVerFichaConductor?: (id: number) => void;
   alVerFichaPasajero?: (dispositivoId: number) => void;
+  alVerFichaPropietario?: (id: number) => void;
 }) {
   const [tipo, setTipo] = useState<(typeof TIPOS_REGISTRO)[number][0]>('carreras');
   return (
@@ -3052,7 +3198,7 @@ function Registros({ alVerViaje, alVerFichaConductor, alVerFichaPasajero }: {
         />
       )}
       {tipo === 'vehiculos' && <RegistroVehiculos alVerFichaConductor={alVerFichaConductor} />}
-      {tipo === 'propietarios' && <RegistroPropietarios />}
+      {tipo === 'propietarios' && <RegistroPropietarios alAbrir={alVerFichaPropietario} />}
       {tipo === 'flota' && <TaxisPorZona />}
       {tipo === 'cambios' && <Cambios />}
     </>
@@ -3662,6 +3808,11 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   const [busquedaPasajero, setBusquedaPasajero] = useState('');
   const [fichaPasajero, setFichaPasajero] = useState<number | null>(null);
 
+  // El propietario abierto en los registros (09/10): entrar por el dueño para
+  // ver su flota. Vive aquí porque se abre tanto desde el registro de
+  // propietarios como desde la pestaña Dueño de la ficha de un taxista.
+  const [fichaPropietario, setFichaPropietario] = useState<number | null>(null);
+
   // Incidencias y pagos PENDIENTES: son la bandeja. Lo resuelto vive aparte
   // y se pide solo si alguien abre el archivo.
   const [incidencias, setIncidencias] = useState<IncidenciaOperador[] | null>(null);
@@ -3909,6 +4060,11 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
     setSeccion('gente');
     setHojaAbierta(true);
   }
+  function abrirFichaPropietario(id: number) {
+    setFichaPropietario(id);
+    setSeccion('registros');
+    setHojaAbierta(true);
+  }
   // Los barrios situados, para que el encuadre arranque en Malabo y no en la
   // isla entera. Se piden una vez: los barrios no se mueven a lo largo del día.
   const [ciudad, setCiudad] = useState<Array<{ lat: number; lng: number }>>([]);
@@ -3983,7 +4139,7 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
         <button
           key={id} type="button"
           className={id === seccion ? 'idioma-activo' : undefined}
-          onClick={() => { setSeccion(id); setFichaConductor(null); setFichaPasajero(null); }}
+          onClick={() => { setSeccion(id); setFichaConductor(null); setFichaPasajero(null); setFichaPropietario(null); }}
         >
           {etiqueta}
           {/* UN solo número para todo el grupo. Tres contadores repartidos
@@ -4016,6 +4172,7 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                 alCambiarEstado={cambiarEstadoConductor}
                 ocupado={ocupadoId !== null}
                 alVerRecorrido={enConsola ? (cid) => verRecorridoConductor(cid) : undefined}
+                alVerFichaPropietario={abrirFichaPropietario}
               />
             )
             : (
@@ -4083,6 +4240,7 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                 alCambiarEstado={cambiarEstadoConductor}
                 ocupado={ocupadoId !== null}
                 alVerRecorrido={enConsola ? (cid) => verRecorridoConductor(cid) : undefined}
+                alVerFichaPropietario={abrirFichaPropietario}
               />
             )
             : (
@@ -4176,11 +4334,22 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
         )}
 
         {seccion === 'registros' && (
-          <Registros
-            alVerViaje={enConsola ? verViajeEnMapa : undefined}
-            alVerFichaConductor={abrirFichaConductor}
-            alVerFichaPasajero={abrirFichaPasajero}
-          />
+          fichaPropietario !== null
+            ? (
+              <FichaPropietario
+                id={fichaPropietario}
+                alVolver={() => setFichaPropietario(null)}
+                alVerFichaConductor={abrirFichaConductor}
+              />
+            )
+            : (
+              <Registros
+                alVerViaje={enConsola ? verViajeEnMapa : undefined}
+                alVerFichaConductor={abrirFichaConductor}
+                alVerFichaPasajero={abrirFichaPasajero}
+                alVerFichaPropietario={abrirFichaPropietario}
+              />
+            )
         )}
 
         {/* Distritos, barrios y lugares eran tres entradas de once para la
@@ -4235,6 +4404,7 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
       setHojaAbierta(true);
       setFichaConductor(null);
       setFichaPasajero(null);
+      setFichaPropietario(null);
     };
     const tituloHoja = seccion === 'central'
       ? 'Nueva solicitud'
