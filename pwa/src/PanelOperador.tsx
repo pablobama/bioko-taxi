@@ -4093,9 +4093,12 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
     conductorId: number; periodo: PeriodoRecorrido;
     tramos: Array<Array<{ lat: number; lng: number }>>;
     // El resumen del periodo, para las cuadrículas superpuestas sobre el mapa.
+    // Son las cifras del coche CIRCULANDO (al volante): la velocidad y el
+    // tiempo descuentan las esperas, que para un taxista son media jornada y
+    // hunden la media sin decir nada de cómo se mueve.
     resumen: {
-      metros: number; segundosEnServicio: number;
-      velocidadMediaKmh: number | null; clientesLlevados: number;
+      metros: number; segundosEnMovimiento: number;
+      velocidadAlVolanteKmh: number | null; clientesLlevados: number;
     };
   } | null>(null);
   // UNA carrera, enfocada en el mapa del despacho (08/10): al pulsarla en los
@@ -4115,8 +4118,8 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
         conductorId: id, periodo, tramos: r.tramos,
         resumen: {
           metros: r.metros,
-          segundosEnServicio: r.segundosEnServicio,
-          velocidadMediaKmh: r.velocidadMediaKmh,
+          segundosEnMovimiento: r.segundosEnMovimiento,
+          velocidadAlVolanteKmh: r.velocidadAlVolanteKmh,
           clientesLlevados: r.clientesLlevados,
         },
       });
@@ -4608,18 +4611,19 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
               </p>
             )}
             {/* Las cifras del recorrido, en cuadrículas superpuestas sobre el
-                mapa (09/10): el dibujo dice por dónde anduvo; esto, cuánto
-                cundió —velocidad media, tiempo, kilómetros y a cuánta gente
-                llevó—. */}
+                mapa (09/10): el dibujo dice por dónde anduvo; esto, cómo se
+                movió CIRCULANDO —la velocidad y el tiempo al volante
+                descuentan las esperas—, los kilómetros y a cuánta gente
+                llevó. */}
             {recorridoMapa !== null && (
               <div className="recorrido-cuadricula">
                 <div className="recorrido-celda">
-                  <b>{recorridoMapa.resumen.velocidadMediaKmh === null ? '—' : recorridoMapa.resumen.velocidadMediaKmh.toFixed(1)}</b>
-                  <small>km/h de media</small>
+                  <b>{recorridoMapa.resumen.velocidadAlVolanteKmh === null ? '—' : recorridoMapa.resumen.velocidadAlVolanteKmh.toFixed(1)}</b>
+                  <small>km/h al volante</small>
                 </div>
                 <div className="recorrido-celda">
-                  <b>{duracion(recorridoMapa.resumen.segundosEnServicio)}</b>
-                  <small>en servicio</small>
+                  <b>{duracion(recorridoMapa.resumen.segundosEnMovimiento)}</b>
+                  <small>al volante</small>
                 </div>
                 <div className="recorrido-celda">
                   <b>{(recorridoMapa.resumen.metros / 1000).toFixed(1)}</b>
