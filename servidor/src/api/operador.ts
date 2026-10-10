@@ -24,7 +24,8 @@ import {
 import type { ServicioVerificacionTelefono } from '../dominio/verificacion-telefono.js';
 import {
   aparatosDe, autorizar, dispositivoDeOperador, esRaiz, esTelefonoDeOperador,
-  listarOperadores, marcarVisto, revocar, revocarDispositivo, vincularDispositivo,
+  listarOperadores, marcarVisto, permisosDeTelefono, revocar, revocarDispositivo,
+  vincularDispositivo, PERMISOS_OPERADOR, type PermisoOperador,
 } from '../dominio/operadores.js';
 import { asignarNumeroManual, asignarNumeroSiguiente } from '../dominio/numeros-taxi.js';
 import {
@@ -193,6 +194,19 @@ export async function esOperadorAhora(
   return await rangoDeOperador(cliente, uuid) !== null;
 }
 
+// Los permisos de este APARATO (migración 090). La raíz —entorno— los tiene
+// todos; un operador por teléfono, los de su fila; quien no es operador,
+// ninguno. Se exporta porque también los mira la radio (la Central).
+export async function permisosDeUuid(
+  cliente: pg.Pool | pg.ClientBase,
+  uuid: string,
+): Promise<Set<PermisoOperador>> {
+  const rango = await rangoDeOperador(cliente, uuid);
+  if (rango === null) return new Set();
+  if (rango.raiz) return new Set(PERMISOS_OPERADOR);
+  return permisosDeTelefono(cliente, rango.telefono ?? '');
+}
+
 export function registrarRutasOperador(
   app: FastifyInstance,
   pool: pg.Pool,
@@ -216,6 +230,37 @@ export function registrarRutasOperador(
     }
   }
 
+  // Exigir UNO de estos permisos (migración 090). Primero que sea operador
+  // —si no, 403 de acceso—; luego que su perfil incluya alguno de los
+  // permisos que la acción pide. La raíz los tiene todos. Las LECTURAS no
+  // pasan por aquí: cualquier operador ve los datos; lo que separa los perfiles
+  // es qué pueden TOCAR.
+  async function exigirPermiso(
+    req: FastifyRequest,
+    ...permisos: PermisoOperador[]
+  ): Promise<void> {
+    const rango = await rangoDeOperador(pool, uuidDesde(req));
+    if (rango === null) {
+      throw errorHttp(403, 'Este dispositivo no tiene acceso de operador.');
+    }
+    const perms = rango.raiz
+      ? new Set<PermisoOperador>(PERMISOS_OPERADOR)
+      : await permisosDeTelefono(pool, rango.telefono ?? '');
+    if (!permisos.some((p) => perms.has(p))) {
+      throw errorHttp(403, 'Tu perfil de operador no tiene permiso para esta acción.');
+    }
+  }
+
+  // Leer el catálogo (sitios, barrios, precios): lo ve cualquier operador
+  // —para dibujar el mapa, sobre todo— y también un agente de campo.
+  async function exigirCampoLectura(req: FastifyRequest): Promise<void> {
+    const uuid = uuidDesde(req);
+    if (await esOperadorAhora(pool, uuid)) return;
+    if (!await esAgenteDeCampoPorUuid(pool, uuid)) {
+      throw errorHttp(403, 'Este dispositivo no puede ver el catálogo.');
+    }
+  }
+
   // Trabajo de campo: situar barrios, corregir sitios y fijar precios. Lo
   // pueden hacer el operador y los conductores nombrados agentes (migracion
   // 025). Es mas ancho que `exigirOperador` a proposito: el trabajo de campo
@@ -226,14 +271,11 @@ export function registrarRutasOperador(
   // a sus companeros ni el dinero.
   async function exigirCampo(req: FastifyRequest): Promise<void> {
     const uuid = uuidDesde(req);
-    // `esOperadorAhora` y no `esOperador` (06/10): este guardián se quedó
-    // mirando solo la lista vieja de uuids cuando la migración 080 estrenó la
-    // entrada por teléfono, y el operador que entraba por SMS recibía 403 al
-    // guardar una banda de precios desde su ordenador. El otro guardián
-    // (`exigirOperador`) sí se actualizó aquel día; este se escapó porque su
-    // camino feliz —el uuid del entorno— seguía funcionando para quien lo
-    // probó.
-    if (await esOperadorAhora(pool, uuid)) return;
+    // Un operador necesita el permiso `catalogo` (migración 090): el trabajo
+    // de campo —situar barrios, corregir sitios, fijar precios— es una de las
+    // cosas que ahora se reparten, no algo que pueda tocar cualquier operador.
+    // La raíz lo tiene; un operador de solo despacho, no.
+    if ((await permisosDeUuid(pool, uuid)).has('catalogo')) return;
     // Taxista agente (migración 025) o PASAJERO agente (migración 072). Quien
     // mejor sitúa un barrio es a veces alguien que ni conduce: el del mercado,
     // la enfermera del centro de salud. Lo que puede hacer es lo mismo en los
@@ -391,6 +433,19 @@ export function registrarRutasOperador(
     return rango.telefono ?? 'entorno';
   }
 
+  // Qué puede hacer QUIEN mira (migración 090): el cliente enseña solo lo que
+  // el perfil permite y pone en modo lectura lo demás. `admin` es la raíz, que
+  // lo puede todo y además reparte accesos.
+  app.get('/api/operador/yo', async (req) => {
+    await exigirOperador(req);
+    const rango = await rangoDeOperador(pool, uuidDesde(req));
+    const admin = rango?.raiz ?? false;
+    const permisos = admin
+      ? [...PERMISOS_OPERADOR]
+      : [...await permisosDeTelefono(pool, rango?.telefono ?? '')];
+    return { admin, permisos, telefono: rango?.telefono ?? null };
+  });
+
   app.get('/api/operador/accesos', async (req) => {
     await exigirOperador(req);
     const rango = await rangoDeOperador(pool, uuidDesde(req));
@@ -468,7 +523,7 @@ export function registrarRutasOperador(
   // quién puede darlo, sino que dura minutos, se gasta una vez, es para un solo
   // número y queda escrito quién lo dio.
   app.post('/api/operador/vale', async (req) => {
-    await exigirOperador(req);
+    await exigirPermiso(req, 'taxistas', 'despacho');
     const rango = await rangoDeOperador(pool, uuidDesde(req));
     const crudo = ((req.body ?? {}) as { telefono?: string }).telefono?.trim();
     const telefono = normalizarTelefono(crudo);
@@ -561,7 +616,7 @@ export function registrarRutasOperador(
   // Editar los datos del taxista: nombre, apellido, DIP y correo (migración
   // 087). El teléfono NO —ese se cambia aparte, porque es con lo que entra—.
   app.post('/api/operador/conductores/:id/datos', async (req) => {
-    await exigirOperador(req);
+    await exigirPermiso(req, 'taxistas');
     const id = Number((req.params as { id: string }).id);
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
     const cuerpo = (req.body ?? {}) as {
@@ -603,7 +658,7 @@ export function registrarRutasOperador(
   });
 
   app.post('/api/operador/conductores/:id/telefono', async (req) => {
-    await exigirOperador(req);
+    await exigirPermiso(req, 'taxistas');
     const id = Number((req.params as { id: string }).id);
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
     const crudo = ((req.body ?? {}) as { telefono?: string }).telefono;
@@ -613,7 +668,7 @@ export function registrarRutasOperador(
   // Editar los datos del dueño del coche desde su pestaña en la ficha (08/10).
   // El DIP es su identidad: nueve dígitos, y no el de otro propietario.
   app.post('/api/operador/propietarios/:id/datos', async (req) => {
-    await exigirOperador(req);
+    await exigirPermiso(req, 'taxistas');
     const id = Number((req.params as { id: string }).id);
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de propietario no válido.');
     const cuerpo = (req.body ?? {}) as {
@@ -649,7 +704,7 @@ export function registrarRutasOperador(
   // cuelga su coche. Necesita que el taxista tenga DIP y apellido: son la
   // identidad del propietario (migración 087).
   app.post('/api/operador/conductores/:id/dueno-es-el-conductor', async (req) => {
-    await exigirOperador(req);
+    await exigirPermiso(req, 'taxistas');
     const id = Number((req.params as { id: string }).id);
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
     return enTransaccion(pool, async (cliente) => {
@@ -681,7 +736,7 @@ export function registrarRutasOperador(
   // Del pasajero se recibe el id del DISPOSITIVO, que es con lo que trabaja su
   // ficha; la fila del perfil cuelga de él.
   app.post('/api/operador/pasajeros/:id/telefono', async (req) => {
-    await exigirOperador(req);
+    await exigirPermiso(req, 'despacho');
     const dispositivoId = Number((req.params as { id: string }).id);
     if (!Number.isInteger(dispositivoId)) throw errorHttp(400, 'Id de dispositivo no válido.');
     const perfil = await pool.query(
@@ -712,7 +767,7 @@ export function registrarRutasOperador(
   );
 
   app.post('/api/operador/conductores/:id/foto', async (req) => {
-    await exigirOperador(req);
+    await exigirPermiso(req, 'taxistas');
     const id = Number((req.params as { id: string }).id);
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
     const foto = req.body;
@@ -747,7 +802,7 @@ export function registrarRutasOperador(
   });
 
   app.post('/api/operador/conductores', async (req) => {
-    await exigirOperador(req);
+    await exigirPermiso(req, 'taxistas');
     const cuerpo = (req.body ?? {}) as {
       // El conductor: la cuenta operativa. Nombre, apellido, teléfono y DIP.
       nombre?: string; apellido?: string; telefono?: string; dip?: string;
@@ -1069,7 +1124,7 @@ export function registrarRutasOperador(
   // Cambia el estado de verificación de un conductor: verificar, pero
   // también suspender o bloquear si hace falta echar a alguien atrás.
   app.post('/api/operador/conductores/:id/estado', async (req) => {
-    await exigirOperador(req);
+    await exigirPermiso(req, 'taxistas');
     const id = Number((req.params as { id: string }).id);
     const { estado } = (req.body ?? {}) as { estado?: string };
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
@@ -1090,7 +1145,7 @@ export function registrarRutasOperador(
   // agente que se pasa se corta quitándoselo, y lo que tocó queda apuntado
   // desde la migración 067.
   app.post('/api/operador/pasajeros/:id/agente', async (req) => {
-    await exigirOperador(req);
+    await exigirPermiso(req, 'despacho');
     const id = Number((req.params as { id: string }).id);
     const { agente } = (req.body ?? {}) as { agente?: boolean };
     if (typeof agente !== 'boolean') throw errorHttp(400, 'Falta agente (true/false).');
@@ -1126,7 +1181,7 @@ export function registrarRutasOperador(
   // Nombrar agente de campo a un conductor, o retirarle el papel. Solo el
   // operador: es quien conoce a la gente y quien responde de lo que toquen.
   app.post('/api/operador/conductores/:id/agente', async (req) => {
-    await exigirOperador(req);
+    await exigirPermiso(req, 'taxistas');
     const id = Number((req.params as { id: string }).id);
     const { agente } = (req.body ?? {}) as { agente?: boolean };
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
@@ -1143,7 +1198,7 @@ export function registrarRutasOperador(
   // conductor en su alta, pero el operador puede corregirlo si ve mal el
   // dato (o si el conductor nunca lo llegó a marcar).
   app.post('/api/operador/conductores/:id/vehiculo', async (req) => {
-    await exigirOperador(req);
+    await exigirPermiso(req, 'taxistas');
     const id = Number((req.params as { id: string }).id);
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
     const cuerpo = (req.body ?? {}) as {
@@ -1230,7 +1285,7 @@ export function registrarRutasOperador(
   // mudarse al barrio de cada solicitud. Va en la última oleada, así que no le
   // quita trabajo a nadie que esté cerca del pasajero.
   app.post('/api/operador/conductores/:id/cualquier-zona', async (req) => {
-    await exigirOperador(req);
+    await exigirPermiso(req, 'taxistas');
     const id = Number((req.params as { id: string }).id);
     const { activo } = (req.body ?? {}) as { activo?: boolean };
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
@@ -1487,7 +1542,7 @@ export function registrarRutasOperador(
 
   app.post('/api/operador/recargas/:referencia/confirmar', async (req) => {
     const uuid = uuidDesde(req);
-    await exigirOperador(req);
+    await exigirPermiso(req, 'suscripciones');
     const { referencia } = req.params as { referencia: string };
     const { comprobante } = (req.body ?? {}) as { comprobante?: string };
     try {
@@ -1505,7 +1560,7 @@ export function registrarRutasOperador(
 
   app.post('/api/operador/recargas/:referencia/rechazar', async (req) => {
     const uuid = uuidDesde(req);
-    await exigirOperador(req);
+    await exigirPermiso(req, 'suscripciones');
     const { referencia } = req.params as { referencia: string };
     const { motivo } = (req.body ?? {}) as { motivo?: string };
     if (!motivo?.trim()) throw errorHttp(400, 'Hace falta un motivo para rechazar la recarga.');
@@ -1582,7 +1637,7 @@ export function registrarRutasOperador(
   // del sistema de strikes automático — sin ella, un bloqueo injusto (o tres
   // ausencias con excusa razonable) no tenía más salida que el SQL a mano.
   app.post('/api/operador/pasajeros/:dispositivoId/desbloquear', async (req) => {
-    await exigirOperador(req);
+    await exigirPermiso(req, 'despacho');
     const id = Number((req.params as { dispositivoId: string }).dispositivoId);
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de dispositivo no válido.');
     const res = await pool.query(
@@ -1652,7 +1707,7 @@ export function registrarRutasOperador(
 
   app.post('/api/operador/incidencias/:id/resolver', async (req) => {
     const uuid = uuidDesde(req);
-    await exigirOperador(req);
+    await exigirPermiso(req, 'despacho');
     const id = Number((req.params as { id: string }).id);
     const { accion } = (req.body ?? {}) as { accion?: string };
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de incidencia no válido.');
@@ -1867,7 +1922,7 @@ export function registrarRutasOperador(
   // sintético, así conserva historial y strikes como cualquier usuario.
 
   app.post('/api/operador/solicitudes', async (req, reply) => {
-    await exigirOperador(req);
+    await exigirPermiso(req, 'despacho');
     const cuerpo = (req.body ?? {}) as { telefono?: string; origenId?: number; destinoId?: number };
     // Canónico también aquí: si no, quien llama dos veces con el número escrito
     // de dos formas tendría dos identidades y dos historiales (migración 024).
@@ -2047,7 +2102,7 @@ export function registrarRutasOperador(
   // La oferta dirigida, desde el mapa de la mesa (06/10). El taxista la
   // recibe como cualquier otra y decide él; aquí solo se elige a quién avisar.
   app.post('/api/operador/viajes/:id/ofrecer', async (req) => {
-    await exigirOperador(req);
+    await exigirPermiso(req, 'despacho');
     const id = Number((req.params as { id: string }).id);
     const conductorId = Number(((req.body ?? {}) as { conductorId?: number }).conductorId);
     if (!Number.isInteger(id) || !Number.isInteger(conductorId)) {
@@ -2214,7 +2269,7 @@ export function registrarRutasOperador(
   // Hasta ahora todo eso era SQL a mano.
 
   app.get('/api/operador/zonas', async (req) => {
-    await exigirCampo(req);
+    await exigirCampoLectura(req);
     // Las no situadas primero: son la cola de trabajo. Ocho barrios de Malabo
     // entraron sin coordenadas porque ninguna fuente sabía dónde están
     // (migración 025), y hasta que alguien vaya, no existen para el reparto.
@@ -2291,7 +2346,7 @@ export function registrarRutasOperador(
   });
 
   app.get('/api/operador/referencias', async (req) => {
-    await exigirCampo(req);
+    await exigirCampoLectura(req);
     const { q, zonaId } = (req.query ?? {}) as { q?: string; zonaId?: string };
     // A diferencia del buscador de los pasajeros, este ve TODO: inactivas
     // incluidas, porque para reactivar algo primero hay que encontrarlo.
@@ -2454,7 +2509,7 @@ export function registrarRutasOperador(
   // a ciegas (R2), y nunca son una tarifa: el precio se negocia.
 
   app.get('/api/operador/bandas', async (req) => {
-    await exigirCampo(req);
+    await exigirCampoLectura(req);
     const filas = await pool.query(
       `SELECT b.id, b.zona_origen_id, b.zona_destino_id, b.p25, b.p50, b.p75,
               b.actualizada_en, zo.nombre AS zona_origen, zd.nombre AS zona_destino
@@ -2525,7 +2580,7 @@ export function registrarRutasOperador(
   });
 
   app.post('/api/operador/parametros/:clave', async (req) => {
-    await exigirOperador(req);
+    await exigirPermiso(req, 'catalogo');
     const { clave } = req.params as { clave: string };
     const { valor } = (req.body ?? {}) as { valor?: string };
     if (typeof valor !== 'string' || !valor.trim()) {

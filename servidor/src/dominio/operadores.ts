@@ -56,6 +56,37 @@ export async function esTelefonoDeOperador(
   return (res.rowCount ?? 0) > 0;
 }
 
+// Los permisos de un operador (migración 090). Bloques acumulables, no una
+// escala: alguien puede despachar Y gestionar suscripciones, o solo consultar
+// (ninguno). La raíz los tiene todos.
+export type PermisoOperador = 'despacho' | 'taxistas' | 'suscripciones' | 'catalogo';
+export const PERMISOS_OPERADOR: readonly PermisoOperador[] = [
+  'despacho', 'taxistas', 'suscripciones', 'catalogo',
+];
+
+function esPermiso(x: string): x is PermisoOperador {
+  return (PERMISOS_OPERADOR as readonly string[]).includes(x);
+}
+
+// Qué permisos tiene este teléfono. La raíz (entorno) los tiene TODOS —es la
+// administradora—; un operador normal, los que le dieron; uno sin fila o sin
+// roles, ninguno (solo consulta).
+export async function permisosDeTelefono(
+  cliente: Lector,
+  telefono: string,
+): Promise<Set<PermisoOperador>> {
+  const canonico = normalizarTelefono(telefono);
+  if (canonico === null) return new Set();
+  if (telefonosRaiz().has(canonico)) return new Set(PERMISOS_OPERADOR);
+  const res = await cliente.query(
+    'SELECT roles FROM operador_autorizado WHERE telefono = $1 AND revocado_en IS NULL',
+    [canonico],
+  );
+  if ((res.rowCount ?? 0) === 0) return new Set();
+  const roles: string[] = res.rows[0].roles ?? [];
+  return new Set(roles.filter(esPermiso));
+}
+
 // ¿Es este APARATO de un operador? Es la pregunta que hace cada ruta del panel.
 //
 // Comprueba las dos cosas a la vez, y las dos importan: que el aparato siga

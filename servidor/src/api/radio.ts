@@ -19,7 +19,7 @@ import {
   oyentesDe, oyentesPorConductor, pedirLaPalabra, quienHabla, radioEncendida,
   soltarLaPalabra, ultimosMensajes,
 } from '../dominio/radio.js';
-import { esOperadorAhora } from './operador.js';
+import { esOperadorAhora, permisosDeUuid } from './operador.js';
 import type { EmisorEventos } from '../dominio/eventos.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
 import type { ConexionesSse } from '../eventos/adaptador-sse.js';
@@ -105,6 +105,17 @@ export function registrarRutasRadio(
     return { uuid: uuid.toLowerCase(), canal: canalDeLaCentral() };
   }
 
+  // Hablar como la Central es del perfil de DESPACHO (migración 090): escuchar
+  // lo puede cualquier operador, pero emitir —pedir la palabra y mandar voz—
+  // solo quien despacha. La raíz, que lo tiene todo, también.
+  async function sesionCentral(req: FastifyRequest): Promise<{ uuid: string; canal: string }> {
+    const yo = await sesionOperador(req);
+    if (!(await permisosDeUuid(pool, yo.uuid)).has('despacho')) {
+      throw errorHttp(403, 'Hablar como la Central es del perfil de despacho.');
+    }
+    return yo;
+  }
+
   // La conexión viva de la Central (086): por aquí le llegan «habla X», los
   // mensajes nuevos y el silencio. El uuid puede ir en la query porque
   // EventSource no sabe mandar cabeceras, igual que en el audio de abajo.
@@ -149,7 +160,7 @@ export function registrarRutasRadio(
   });
 
   app.post('/api/operador/radio/turno', async (req, reply) => {
-    const yo = await sesionOperador(req);
+    const yo = await sesionCentral(req);
     const r = await pedirLaPalabra(pool, { canal: yo.canal, uuidOperador: yo.uuid });
     if (r.dada) {
       avisarATodos(yo.canal, null, yo.uuid, {
@@ -163,7 +174,7 @@ export function registrarRutasRadio(
   });
 
   app.delete('/api/operador/radio/turno', async (req) => {
-    const yo = await sesionOperador(req);
+    const yo = await sesionCentral(req);
     await soltarLaPalabra(pool, { canal: yo.canal, uuidOperador: yo.uuid });
     avisarATodos(yo.canal, null, yo.uuid, {
       tipo: 'radio_calla', datos: { conductorId: null },
@@ -172,7 +183,7 @@ export function registrarRutasRadio(
   });
 
   app.post('/api/operador/radio/mensaje', { bodyLimit: TOPE_CUERPO }, async (req, reply) => {
-    const yo = await sesionOperador(req);
+    const yo = await sesionCentral(req);
     const audio = req.body;
     if (!Buffer.isBuffer(audio) || audio.length === 0) {
       throw errorHttp(400, 'El cuerpo tiene que ser el audio, con content-type audio/...');

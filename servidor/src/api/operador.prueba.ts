@@ -1415,6 +1415,78 @@ test('flota: un dueño existente recibe otro coche con otro taxista', async () =
   assert.equal(malo.statusCode, 404, malo.body);
 });
 
+// Los roles de operador (migración 090): cada perfil solo TOCA lo suyo; leer,
+// lo lee cualquiera; la raíz lo puede todo.
+test('roles: cada perfil solo modifica lo suyo, y la consulta solo lee', async () => {
+  async function operadorCon(roles: string[]): Promise<string> {
+    const telefono = telefonoUnico();
+    const uuid = randomUUID();
+    await pool.query(
+      'INSERT INTO operador_autorizado (telefono, nombre, alta_por, roles) VALUES ($1, $2, $3, $4)',
+      [telefono, 'Perfil', 'test', roles],
+    );
+    await pool.query(
+      'INSERT INTO operador_dispositivo (uuid_dispositivo, telefono) VALUES ($1, $2)',
+      [uuid, telefono],
+    );
+    return uuid;
+  }
+  function altaPayload() {
+    const telefono = telefonoUnico();
+    return {
+      nombre: 'Alta', apellido: 'Rol', telefono, dip: dipUnico(), duenoConduce: true,
+      matricula: `MB-${telefono.slice(-5)}R`, marca: 'Kia', carroceria: 'turismo',
+    };
+  }
+
+  // Solo DESPACHO.
+  const desp = await operadorCon(['despacho']);
+  const yo = await app.inject({ method: 'GET', url: '/api/operador/yo', headers: cabeceras(desp) });
+  assert.equal(yo.statusCode, 200, yo.body);
+  assert.deepEqual(yo.json().permisos, ['despacho']);
+  assert.equal(yo.json().admin, false);
+  // Leer, sí (cualquier operador).
+  assert.equal((await app.inject({ method: 'GET', url: '/api/operador/viajes', headers: cabeceras(desp) })).statusCode, 200);
+  // Dar de alta un taxista, NO (es de taxistas).
+  const altaDesp = await app.inject({
+    method: 'POST', url: '/api/operador/conductores', headers: cabeceras(desp), payload: altaPayload(),
+  });
+  assert.equal(altaDesp.statusCode, 403, altaDesp.body);
+
+  // Solo TAXISTAS.
+  const tax = await operadorCon(['taxistas']);
+  const altaTax = await app.inject({
+    method: 'POST', url: '/api/operador/conductores', headers: cabeceras(tax), payload: altaPayload(),
+  });
+  assert.equal(altaTax.statusCode, 200, altaTax.body);
+  // Confirmar un pago, NO (es de suscripciones): 403 por permiso, antes de
+  // mirar la recarga.
+  const pagoTax = await app.inject({
+    method: 'POST', url: '/api/operador/recargas/NO-EXISTE/confirmar',
+    headers: cabeceras(tax), payload: { comprobante: 'x' },
+  });
+  assert.equal(pagoTax.statusCode, 403, pagoTax.body);
+
+  // CONSULTA (sin roles): lee pero no toca nada.
+  const con = await operadorCon([]);
+  assert.equal((await app.inject({ method: 'GET', url: '/api/operador/estadisticas', headers: cabeceras(con) })).statusCode, 200);
+  const tocaCon = await app.inject({
+    method: 'POST', url: '/api/operador/conductores', headers: cabeceras(con), payload: altaPayload(),
+  });
+  assert.equal(tocaCon.statusCode, 403, tocaCon.body);
+  const yoCon = await app.inject({ method: 'GET', url: '/api/operador/yo', headers: cabeceras(con) });
+  assert.deepEqual(yoCon.json().permisos, []);
+
+  // La RAÍZ del entorno lo puede todo.
+  const yoAdmin = await app.inject({ method: 'GET', url: '/api/operador/yo', headers: cabeceras(UUID_OPERADOR) });
+  assert.equal(yoAdmin.json().admin, true);
+  assert.equal(yoAdmin.json().permisos.length, 4);
+  const altaAdmin = await app.inject({
+    method: 'POST', url: '/api/operador/conductores', headers: cabeceras(UUID_OPERADOR), payload: altaPayload(),
+  });
+  assert.equal(altaAdmin.statusCode, 200, altaAdmin.body);
+});
+
 test('oferta dirigida: llega al taxi de otra zona, firmada, y sin duplicar', async () => {
   const { zonaId, origenId, destinoId } = await crearZonaConReferencias();
   const otraZona = await crearZonaConReferencias();
