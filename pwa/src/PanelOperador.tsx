@@ -5,13 +5,13 @@
 // Solo en español a propósito: es herramienta interna, no cara al pasajero
 // ni al taxista, así que no pasa por i18n.ts.
 
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, Fragment, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import {
   api,
   type AccesoOperador, type AparatoOperador,
   type BandaOperador, type CambioOperador, type ConductorOperador, type EstadisticasOperador,
   type FichaConductorOperador, type FichaPasajeroOperador, type FichaPropietarioOperador, type IncidenciaOperador,
-  type ParametroOperador, type PasajeroOperador, type PeriodoRecorrido,
+  type ParametroOperador, type PasajeroOperador, type PeriodoRecorrido, type PermisoOperador,
   type RecargaOperador, type RecorridoOperador, type ReferenciaOperador,
   type PropietarioFicha, type PropietarioRegistro, type SaludOperador, type SinOfertaViva, type SolicitudCentral,
   type TaxiVivo, type TransicionOperador, type VehiculoRegistro,
@@ -26,6 +26,19 @@ import PanelRadio from './PanelRadio';
 import { useRadio } from './radio';
 import { ErrorDelServidor } from './conexion';
 import Mapa, { colorDeCalor, type Marca } from './Mapa';
+
+// Qué puede TOCAR quien mira (migración 090). Se reparte por un contexto para
+// no pasar `puede` por props a media docena de componentes. Por defecto
+// permisivo: fuera del panel de operador (p. ej. en modo agente) no recorta
+// nada; el servidor manda igual. `admin` es la raíz.
+const PermisosOperador = createContext<{
+  puede: (permiso: PermisoOperador) => boolean;
+  admin: boolean;
+}>({ puede: () => true, admin: true });
+
+function usarPermisos(): { puede: (permiso: PermisoOperador) => boolean; admin: boolean } {
+  return useContext(PermisosOperador);
+}
 
 // Las categorías que la base acepta (CHECK de la migración 021). Se sacan de
 // donde ya estaban —el mismo sitio que dibuja los pictogramas del mapa— para
@@ -498,6 +511,9 @@ function AltaDeTaxista({ alCreada, duenoFijado, abiertaInicial = false, alCerrar
   // Avisa a quien lo monta de que se cerró, para que recoja su botón.
   alCerrar?: () => void;
 }) {
+  // Dar de alta es del perfil de taxistas (migración 090): para quien no lo
+  // tiene, el alta no existe.
+  const puedeAlta = usarPermisos().puede('taxistas');
   const [abierta, setAbierta] = useState(abiertaInicial);
   // Conductor
   const [nombre, setNombre] = useState('');
@@ -534,6 +550,7 @@ function AltaDeTaxista({ alCreada, duenoFijado, abiertaInicial = false, alCerrar
       .catch(() => setPropietarios([]));
   }, [abierta, duenoFijado, propietarios]);
 
+  if (!puedeAlta) return null;
   if (!abierta) {
     return (
       <button type="button" className="secundario" onClick={() => setAbierta(true)}>
@@ -896,6 +913,7 @@ async function reducirImagen(archivo: File, lado = 400): Promise<Blob> {
 function FotoTaxista({ id, tieneFoto, alCambiar }: {
   id: number; tieneFoto: boolean; alCambiar: () => void;
 }) {
+  const puedeCambiarFoto = usarPermisos().puede('taxistas');
   const [url, setUrl] = useState<string | null>(null);
   const [subiendo, setSubiendo] = useState(false);
   const [error, setError] = useState('');
@@ -937,13 +955,15 @@ function FotoTaxista({ id, tieneFoto, alCambiar }: {
       {url !== null
         ? <img src={url} alt="Foto del taxista" className="foto-taxista-img" />
         : <div className="foto-taxista-hueco" aria-hidden="true">👤</div>}
-      <label className="secundario foto-taxista-boton">
-        {subiendo ? 'Subiendo…' : url !== null ? 'Cambiar foto' : 'Añadir foto'}
-        <input
-          type="file" accept="image/*" capture="environment"
-          disabled={subiendo} onChange={elegir} hidden
-        />
-      </label>
+      {puedeCambiarFoto && (
+        <label className="secundario foto-taxista-boton">
+          {subiendo ? 'Subiendo…' : url !== null ? 'Cambiar foto' : 'Añadir foto'}
+          <input
+            type="file" accept="image/*" capture="environment"
+            disabled={subiendo} onChange={elegir} hidden
+          />
+        </label>
+      )}
       {error !== '' && <p className="aviso">{error}</p>}
     </div>
   );
@@ -1274,6 +1294,7 @@ function FichaConductor({
   if (error) return <><p className="aviso">{error}</p><button type="button" className="secundario" onClick={alVolver}>Volver</button></>;
   if (!ficha) return <p className="nota">Cargando…</p>;
 
+  const puedeTaxistas = usarPermisos().puede('taxistas');
   const o = ficha.ofertas;
   const prop = ficha.propietario;
   const esDuenoElConductor = prop !== null && prop.dip === ficha.dip;
@@ -1301,19 +1322,21 @@ function FichaConductor({
           y el salto al recorrido. Editar ya no vive aquí: cada pestaña trae su
           propio botón de editar, donde están los datos. */}
       <div className="fila ficha-acciones">
-        <button
-          type="button" className="secundario"
-          onClick={() => setAccionesAbiertas((v) => !v)}
-        >
-          Acciones {accionesAbiertas ? '▾' : '▸'}
-        </button>
+        {puedeTaxistas && (
+          <button
+            type="button" className="secundario"
+            onClick={() => setAccionesAbiertas((v) => !v)}
+          >
+            Acciones {accionesAbiertas ? '▾' : '▸'}
+          </button>
+        )}
         {alVerRecorrido !== undefined && (
           <button type="button" className="secundario" onClick={() => alVerRecorrido(ficha.id)}>
             Ver recorrido en el mapa
           </button>
         )}
       </div>
-      {accionesAbiertas && (
+      {puedeTaxistas && accionesAbiertas && (
         <div className="fila ficha-menu-acciones">
           {ficha.estado_verificacion !== 'verificado' && (
             <button type="button" className="principal" disabled={ocupado} onClick={() => alCambiarEstado(ficha.id, 'verificado').then(cargar)}>Verificar</button>
@@ -1380,9 +1403,11 @@ function FichaConductor({
                   { k: 'Presencia', v: ficha.presencia ?? 'Desconocida', falta: !ficha.presencia },
                 ]}
               />
-              <button type="button" className="secundario ficha-editar-boton" onClick={() => setEditando('taxista')}>
-                Editar datos
-              </button>
+              {puedeTaxistas && (
+                <button type="button" className="secundario ficha-editar-boton" onClick={() => setEditando('taxista')}>
+                  Editar datos
+                </button>
+              )}
             </>
           )}
           <div className="rejilla">
@@ -1423,9 +1448,11 @@ function FichaConductor({
                   : 'El dueño no conduce: no lleva foto.'}
               </p>
               <div className="fila ficha-acciones">
-                <button type="button" className="secundario ficha-editar-boton" onClick={() => setEditando('dueno')}>
-                  Editar datos del dueño
-                </button>
+                {puedeTaxistas && (
+                  <button type="button" className="secundario ficha-editar-boton" onClick={() => setEditando('dueno')}>
+                    Editar datos del dueño
+                  </button>
+                )}
                 {alVerFichaPropietario !== undefined && (
                   <button type="button" className="secundario" onClick={() => alVerFichaPropietario(prop.id)}>
                     Ver la flota de este dueño →
@@ -1458,9 +1485,11 @@ function FichaConductor({
                   },
                 ]}
               />
-              <button type="button" className="secundario ficha-editar-boton" onClick={() => setEditando('vehiculo')}>
-                Editar vehículo
-              </button>
+              {puedeTaxistas && (
+                <button type="button" className="secundario ficha-editar-boton" onClick={() => setEditando('vehiculo')}>
+                  Editar vehículo
+                </button>
+              )}
             </>
           )}
         </div>
@@ -1695,6 +1724,9 @@ function FichaPasajero({
   const [ocupado, setOcupado] = useState(false);
   const [carpeta, setCarpeta] = useState<CarpetaPasajero>('pasajero');
   const [accionesAbiertas, setAccionesAbiertas] = useState(false);
+  // Gestionar pasajeros (desbloquear, nombrar agente, vale, teléfono) es del
+  // perfil de despacho (migración 090).
+  const puedePasajeros = usarPermisos().puede('despacho');
 
   function cargar() {
     api.fichaPasajeroOperador(dispositivoId).then(setFicha).catch((e) => setError(e.message));
@@ -1723,16 +1755,18 @@ function FichaPasajero({
         <button type="button" className="secundario" onClick={alVolver}>Volver</button>
       </div>
 
-      {/* Las acciones, todas juntas en un desplegable. */}
-      <div className="fila ficha-acciones">
-        <button
-          type="button" className="secundario"
-          onClick={() => setAccionesAbiertas((v) => !v)}
-        >
-          Acciones {accionesAbiertas ? '▾' : '▸'}
-        </button>
-      </div>
-      {accionesAbiertas && (
+      {/* Las acciones, todas juntas en un desplegable. Solo despacho. */}
+      {puedePasajeros && (
+        <div className="fila ficha-acciones">
+          <button
+            type="button" className="secundario"
+            onClick={() => setAccionesAbiertas((v) => !v)}
+          >
+            Acciones {accionesAbiertas ? '▾' : '▸'}
+          </button>
+        </div>
+      )}
+      {puedePasajeros && accionesAbiertas && (
         <div className="fila ficha-menu-acciones">
           {(ficha.strikes > 0 || ficha.bloqueado_en) && (
             <button type="button" className="principal" disabled={ocupado} onClick={desbloquear}>
@@ -3194,6 +3228,7 @@ function FichaPropietario({ id, alVolver, alVerFichaConductor }: {
   const [ficha, setFicha] = useState<FichaPropietarioOperador | null>(null);
   const [error, setError] = useState('');
   const [anadiendo, setAnadiendo] = useState(false);
+  const puedeAnadirCoche = usarPermisos().puede('taxistas');
   function cargar() {
     api.fichaPropietarioOperador(id).then(setFicha).catch((e) => setError(e.message));
   }
@@ -3244,8 +3279,9 @@ function FichaPropietario({ id, alVolver, alVerFichaConductor }: {
         </Tabla>
       )}
       {/* Ampliar la flota: otro coche de este mismo dueño, con otro taxista.
-          El dueño ya va fijado, así que el alta no vuelve a preguntarlo. */}
-      {anadiendo ? (
+          El dueño ya va fijado, así que el alta no vuelve a preguntarlo. Solo
+          el perfil de taxistas. */}
+      {puedeAnadirCoche && (anadiendo ? (
         <AltaDeTaxista
           abiertaInicial
           duenoFijado={{ id: p.id, nombre: p.nombre, apellido: p.apellido }}
@@ -3256,7 +3292,7 @@ function FichaPropietario({ id, alVolver, alVerFichaConductor }: {
         <button type="button" className="principal ficha-editar-boton" onClick={() => setAnadiendo(true)}>
           ➕ Añadir otro coche a este dueño
         </button>
-      )}
+      ))}
     </>
   );
 }
@@ -3598,6 +3634,7 @@ function TarjetaDelMapa({
   alCerrar: () => void;
   alAbrirFicha: (conductorId: number) => void;
 }) {
+  const puedeOfrecer = usarPermisos().puede('despacho');
   const [mensaje, setMensaje] = useState('');
   const [error, setError] = useState('');
   const [ocupado, setOcupado] = useState(false);
@@ -3675,10 +3712,10 @@ function TarjetaDelMapa({
           </p>
           {mensaje !== '' && <p className="nota">{mensaje}</p>}
           {error !== '' && <p className="aviso">{error}</p>}
-          {cercanos.length === 0 && (
+          {puedeOfrecer && cercanos.length === 0 && (
             <p className="nota">Ningún taxi libre con posición a quien mandársela.</p>
           )}
-          {cercanos.length > 0 && (
+          {puedeOfrecer && cercanos.length > 0 && (
             <>
               <p className="mesa-tarjeta-titulo">Mandársela a un taxi</p>
               {cercanos.map(({ t, metros }) => (
@@ -3758,10 +3795,13 @@ function Bandeja({
   if (incidencias === null || recargas === null || altas === null) {
     return <p className="nota">Cargando…</p>;
   }
+  // Cada perfil ve solo lo que puede atender (migración 090): las incidencias
+  // son de despacho, los pagos de suscripciones, las altas de taxistas.
+  const { puede } = usarPermisos();
   const pendientes: Pendiente[] = [
-    ...incidencias.map((i) => ({ clase: 'incidencia' as const, cuando: i.creada_en, incidencia: i })),
-    ...recargas.map((r) => ({ clase: 'pago' as const, cuando: r.solicitada_en, recarga: r })),
-    ...altas.map((c) => ({ clase: 'alta' as const, cuando: c.fecha_alta, conductor: c })),
+    ...(puede('despacho') ? incidencias.map((i) => ({ clase: 'incidencia' as const, cuando: i.creada_en, incidencia: i })) : []),
+    ...(puede('suscripciones') ? recargas.map((r) => ({ clase: 'pago' as const, cuando: r.solicitada_en, recarga: r })) : []),
+    ...(puede('taxistas') ? altas.map((c) => ({ clase: 'alta' as const, cuando: c.fecha_alta, conductor: c })) : []),
   ].sort((a, b) => new Date(a.cuando).getTime() - new Date(b.cuando).getTime());
 
   if (pendientes.length === 0) {
@@ -3868,12 +3908,47 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   }, [esAgente]);
   // El panel es solo en español; la radio comparte textos con la del taxista.
   const tRadio = crearT('es');
+  // El perfil de quien mira (migración 090). Null mientras carga; mientras
+  // tanto no se enseña ningún botón de modificar (seguro por defecto).
+  const [yo, setYo] = useState<{ admin: boolean; permisos: PermisoOperador[] } | null>(null);
+  useEffect(() => {
+    if (esAgente) return;
+    api.yoOperador()
+      .then((r) => setYo({ admin: r.admin, permisos: r.permisos }))
+      .catch(() => setYo({ admin: false, permisos: [] }));
+  }, [esAgente]);
+  const admin = yo?.admin ?? false;
+  const puede = useCallback(
+    (p: PermisoOperador) => admin || (yo?.permisos.includes(p) ?? false),
+    [admin, yo],
+  );
+  const valorPermisos = { puede, admin };
+
+  // Qué secciones tienen sentido para este perfil. Leer lo lee cualquiera
+  // (Gente, Registros, los datos de Ajustes), así que esas se quedan; lo que se
+  // recorta es lo que SOLO sirve para modificar.
+  function seccionPermitida(id: Seccion): boolean {
+    switch (id) {
+      case 'porhacer': return puede('despacho') || puede('suscripciones') || puede('taxistas');
+      case 'central': return puede('despacho');
+      case 'sitios': return puede('catalogo');
+      default: return true; // gente, registros, ajustes: lectura para todos
+    }
+  }
   const visibles = esAgente
     ? SECCIONES.filter(([id]) => SECCIONES_AGENTE.includes(id))
-    : SECCIONES;
+    : SECCIONES.filter(([id]) => seccionPermitida(id));
+
   // Se abre en la bandeja, no en un resumen: lo primero que hace quien se
   // sienta es mirar qué hay pendiente de decidir.
   const [seccion, setSeccion] = useState<Seccion>(esAgente ? 'sitios' : 'porhacer');
+  // Si el perfil no puede ver la sección donde arranca (p. ej. consulta, que no
+  // tiene «Por hacer»), se le lleva a la primera que sí.
+  useEffect(() => {
+    if (yo === null || esAgente) return;
+    if (!seccionPermitida(seccion) && visibles.length > 0) setSeccion(visibles[0][0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [yo]);
   // Qué pestaña dentro de cada grupo. Separadas para que cambiar de grupo y
   // volver te devuelva donde estabas.
   const [enGente, setEnGente] = useState<'conductores' | 'pasajeros'>('conductores');
@@ -4489,14 +4564,15 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
 
         {seccion === 'ajustes' && (
           <>
-            {/* Fuera del modo agente: un agente de campo no administra a sus
-                compañeros, y el servidor le contestaría 403 al pedir la lista. */}
-            {!esAgente && <Accesos />}
-            <Ajustes />
+            {/* Repartir accesos es de la raíz/administrador (migración 090); un
+                agente de campo no administra a sus compañeros. */}
+            {!esAgente && admin && <Accesos />}
+            {/* Los parámetros del sistema son del perfil de catálogo. */}
+            {puede('catalogo') && <Ajustes />}
             {/* La salud del sistema, que era la pestaña «Resumen». Aquí y no
                 arriba: las alarmas que hay que ver sin falta ya salen en la
                 columna de la izquierda, y esto es el detalle de cada una, que
-                se mira cuando algo chirría. */}
+                se mira cuando algo chirría. La ve cualquiera. */}
             {stats && <Resumen stats={stats} salud={salud} />}
           </>
         )}
@@ -4523,6 +4599,7 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
       ? 'Nueva solicitud'
       : SECCIONES.find(([id]) => id === seccion)?.[1] ?? '';
     return (
+      <PermisosOperador.Provider value={valorPermisos}>
       <main className="mesa">
         <nav className="mesa-rail">
           <button
@@ -4787,12 +4864,14 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
 
           {!dockPlegado && (
             <aside className="mesa-dock">
-              <button
-                type="button" className="principal mesa-llamada"
-                onClick={() => abrirHoja('central')}
-              >
-                📞 Nueva solicitud
-              </button>
+              {puede('despacho') && (
+                <button
+                  type="button" className="principal mesa-llamada"
+                  onClick={() => abrirHoja('central')}
+                >
+                  📞 Nueva solicitud
+                </button>
+              )}
               <DockVivo viajes={viajesVivos} />
             </aside>
           )}
@@ -4805,7 +4884,7 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
             {dockPlegado ? '⟨' : '⟩'}
           </button>
 
-      {!esAgente && (
+      {!esAgente && puede('despacho') && (
         <PanelRadio
           estado={radio.estado}
           encendida={radio.encendida}
@@ -4836,11 +4915,13 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
           )}
         </div>
       </main>
+      </PermisosOperador.Provider>
     );
   }
 
   // --- El teléfono, igual que siempre ------------------------------------
   return (
+    <PermisosOperador.Provider value={valorPermisos}>
     <main className="lienzo">
       <section className="hoja hoja-completa">
         {!enFicha && (
@@ -4858,7 +4939,7 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
         )}
         {contenido}
       </section>
-      {!esAgente && (
+      {!esAgente && puede('despacho') && (
         <PanelRadio
           estado={radio.estado}
           encendida={radio.encendida}
@@ -4876,6 +4957,7 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
         />
       )}
     </main>
+    </PermisosOperador.Provider>
   );
 }
 

@@ -461,10 +461,17 @@ export interface Sesion {
 
 // Quién puede entrar al panel. Los de la raíz vienen marcados y sin fecha: no
 // son una fila de la base, están en la variable de entorno.
+// Los permisos de un operador (migración 090). Bloques acumulables; sin
+// ninguno, solo consulta.
+export type PermisoOperador = 'despacho' | 'taxistas' | 'suscripciones' | 'catalogo';
+
 export interface AccesoOperador {
   telefono: string;
   nombre: string | null;
   raiz: boolean;
+  // Los permisos del operador (migración 090). La raíz los tiene todos. Lo
+  // rellena la fase 3 (el panel de accesos); opcional hasta entonces.
+  roles?: PermisoOperador[];
   alta_por: string | null;
   creado_en: string | null;
   aparatos: number;
@@ -1372,6 +1379,13 @@ export const api = {
   // Dar y quitar accesos (migración 080). El teléfono viaja en el cuerpo
   // incluso cuando solo se lee: en la URL acabaría en el registro de peticiones
   // del servidor.
+  // Qué puede hacer quien mira (migración 090): el panel enseña solo lo que su
+  // perfil permite. `admin` es la raíz (lo puede todo y reparte accesos).
+  yoOperador: () =>
+    pedirJson<{ admin: boolean; permisos: PermisoOperador[]; telefono: string | null }>(
+      '/api/operador/yo',
+    ),
+
   accesosOperador: () =>
     pedirJson<{ yo: { telefono: string | null; raiz: boolean } | null; operadores: AccesoOperador[] }>(
       '/api/operador/accesos',
