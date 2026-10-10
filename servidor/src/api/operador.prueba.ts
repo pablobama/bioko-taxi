@@ -1487,6 +1487,38 @@ test('roles: cada perfil solo modifica lo suyo, y la consulta solo lee', async (
   assert.equal(altaAdmin.statusCode, 200, altaAdmin.body);
 });
 
+// La raíz reparte y cambia los perfiles desde el panel de accesos (migración
+// 090); un operador normal no.
+test('accesos: la raíz da un perfil y lo cambia; otro no puede', async () => {
+  const tel = telefonoUnico();
+  const dar = await app.inject({
+    method: 'POST', url: '/api/operador/accesos', headers: cabeceras(UUID_OPERADOR),
+    payload: { telefono: tel, nombre: 'Con perfil', roles: ['despacho'] },
+  });
+  assert.equal(dar.statusCode, 200, dar.body);
+
+  const buscarFila = async () => (await app.inject({
+    method: 'GET', url: '/api/operador/accesos', headers: cabeceras(UUID_OPERADOR),
+  })).json().operadores.find((o: { telefono: string }) => o.telefono === tel);
+  assert.deepEqual((await buscarFila()).roles, ['despacho']);
+
+  // Cambiarle el perfil.
+  const cambia = await app.inject({
+    method: 'POST', url: '/api/operador/accesos/roles', headers: cabeceras(UUID_OPERADOR),
+    payload: { telefono: tel, roles: ['suscripciones', 'taxistas', 'inventado'] },
+  });
+  assert.equal(cambia.statusCode, 200, cambia.body);
+  // El rol inventado se descarta; quedan los dos válidos.
+  assert.deepEqual([...(await buscarFila()).roles].sort(), ['suscripciones', 'taxistas']);
+
+  // Un aparato que no es de la raíz no reparte perfiles.
+  const ajeno = await app.inject({
+    method: 'POST', url: '/api/operador/accesos/roles', headers: cabeceras(randomUUID()),
+    payload: { telefono: tel, roles: [] },
+  });
+  assert.equal(ajeno.statusCode, 403, ajeno.body);
+});
+
 test('oferta dirigida: llega al taxi de otra zona, firmada, y sin duplicar', async () => {
   const { zonaId, origenId, destinoId } = await crearZonaConReferencias();
   const otraZona = await crearZonaConReferencias();

@@ -24,8 +24,8 @@ import {
 import type { ServicioVerificacionTelefono } from '../dominio/verificacion-telefono.js';
 import {
   aparatosDe, autorizar, dispositivoDeOperador, esRaiz, esTelefonoDeOperador,
-  listarOperadores, marcarVisto, permisosDeTelefono, revocar, revocarDispositivo,
-  vincularDispositivo, PERMISOS_OPERADOR, type PermisoOperador,
+  fijarRolesDeOperador, listarOperadores, marcarVisto, permisosDeTelefono, revocar,
+  revocarDispositivo, rolesValidos, vincularDispositivo, PERMISOS_OPERADOR, type PermisoOperador,
 } from '../dominio/operadores.js';
 import { asignarNumeroManual, asignarNumeroSiguiente } from '../dominio/numeros-taxi.js';
 import {
@@ -468,7 +468,7 @@ export function registrarRutasOperador(
 
   app.post('/api/operador/accesos', async (req) => {
     const quien = await exigirRaiz(req);
-    const cuerpo = (req.body ?? {}) as { telefono?: string; nombre?: string };
+    const cuerpo = (req.body ?? {}) as { telefono?: string; nombre?: string; roles?: string[] };
     const telefono = normalizarTelefono(cuerpo.telefono?.trim());
     if (!telefono) {
       throw errorHttp(400, 'Falta el teléfono, o no se entiende. Son nueve cifras.');
@@ -479,8 +479,25 @@ export function registrarRutasOperador(
       throw errorHttp(409, 'Ese número ya es el principal: entra siempre y no se le quita aquí.');
     }
     const nombre = cuerpo.nombre?.trim();
-    const alta = await autorizar(pool, telefono, nombre ? nombre : null, quien);
+    const roles = rolesValidos(cuerpo.roles ?? []);
+    const alta = await autorizar(pool, telefono, nombre ? nombre : null, quien, roles);
     return { autorizado: true, yaEstaba: !alta };
+  });
+
+  // Cambiar los permisos de un operador (migración 090). Solo la raíz: repartir
+  // lo que cada uno puede tocar es administrar accesos, no una acción más.
+  app.post('/api/operador/accesos/roles', async (req) => {
+    await exigirRaiz(req);
+    const cuerpo = (req.body ?? {}) as { telefono?: string; roles?: string[] };
+    const telefono = normalizarTelefono(cuerpo.telefono?.trim());
+    if (!telefono) throw errorHttp(400, 'Falta el teléfono, o no se entiende.');
+    if (esRaiz(telefono)) {
+      throw errorHttp(409, 'La raíz lo puede todo: sus permisos no se tocan desde aquí.');
+    }
+    const roles = rolesValidos(cuerpo.roles ?? []);
+    const hecho = await enTransaccion(pool, (cliente) => fijarRolesDeOperador(cliente, telefono, roles));
+    if (!hecho) throw errorHttp(404, 'Ese número no tiene acceso de operador.');
+    return { guardado: true, roles };
   });
 
   app.post('/api/operador/accesos/quitar', async (req) => {

@@ -1397,10 +1397,17 @@ export const api = {
       body: JSON.stringify({ telefono }),
     }),
 
-  darAccesoOperador: (telefono: string, nombre?: string) =>
+  darAccesoOperador: (telefono: string, nombre?: string, roles: PermisoOperador[] = []) =>
     pedirJson<{ autorizado: boolean; yaEstaba: boolean }>('/api/operador/accesos', {
       method: 'POST',
-      body: JSON.stringify({ telefono, nombre }),
+      body: JSON.stringify({ telefono, nombre, roles }),
+    }),
+
+  // Cambiar los permisos de un operador (migración 090). Solo la raíz.
+  fijarRolesOperador: (telefono: string, roles: PermisoOperador[]) =>
+    pedirJson<{ guardado: boolean; roles: PermisoOperador[] }>('/api/operador/accesos/roles', {
+      method: 'POST',
+      body: JSON.stringify({ telefono, roles }),
     }),
 
   quitarAccesoOperador: (telefono: string) =>

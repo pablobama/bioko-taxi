@@ -145,14 +145,21 @@ export interface OperadorListado {
   telefono: string;
   nombre: string | null;
   raiz: boolean;
+  // Los permisos del operador (migración 090). La raíz los tiene todos.
+  roles: PermisoOperador[];
   alta_por: string | null;
   creado_en: string | null;
   aparatos: number;
 }
 
+// Deja solo los permisos válidos, por si llega basura en el text[].
+export function rolesValidos(roles: readonly string[]): PermisoOperador[] {
+  return roles.filter(esPermiso);
+}
+
 export async function listarOperadores(cliente: Lector): Promise<OperadorListado[]> {
   const res = await cliente.query(
-    `SELECT a.telefono, a.nombre, a.alta_por, a.creado_en,
+    `SELECT a.telefono, a.nombre, a.alta_por, a.creado_en, a.roles,
             (SELECT count(*) FROM operador_dispositivo d
              WHERE d.telefono = a.telefono AND d.revocado_en IS NULL)::int AS aparatos
      FROM operador_autorizado a
@@ -163,6 +170,7 @@ export async function listarOperadores(cliente: Lector): Promise<OperadorListado
     telefono: f.telefono,
     nombre: f.nombre,
     raiz: false,
+    roles: rolesValidos(f.roles ?? []),
     alta_por: f.alta_por,
     creado_en: f.creado_en,
     aparatos: f.aparatos,
@@ -188,11 +196,29 @@ export async function listarOperadores(cliente: Lector): Promise<OperadorListado
     telefono,
     nombre: null,
     raiz: true,
+    roles: [...PERMISOS_OPERADOR],
     alta_por: null,
     creado_en: null,
     aparatos: cuentas.get(telefono) ?? 0,
   }));
   return [...raices, ...dados];
+}
+
+// Cambiar los permisos de un operador ya autorizado (migración 090). Devuelve
+// si existía para cambiarlo. La raíz no pasa por aquí: sus permisos son todos
+// y viven en el entorno.
+export async function fijarRolesDeOperador(
+  cliente: Lector,
+  telefono: string,
+  roles: PermisoOperador[],
+): Promise<boolean> {
+  const canonico = normalizarTelefono(telefono);
+  if (canonico === null) return false;
+  const res = await cliente.query(
+    'UPDATE operador_autorizado SET roles = $2 WHERE telefono = $1 AND revocado_en IS NULL',
+    [canonico, rolesValidos(roles)],
+  );
+  return (res.rowCount ?? 0) > 0;
 }
 
 // Devuelve si ha dado de alta a alguien nuevo. Dar de alta a quien ya estaba no
@@ -204,14 +230,15 @@ export async function autorizar(
   telefono: string,
   nombre: string | null,
   altaPor: string,
+  roles: PermisoOperador[] = [],
 ): Promise<boolean> {
   const canonico = normalizarTelefono(telefono);
   if (canonico === null) throw new Error(`Teléfono no válido: ${telefono}`);
   const res = await cliente.query(
-    `INSERT INTO operador_autorizado (telefono, nombre, alta_por)
-     VALUES ($1, $2, $3)
+    `INSERT INTO operador_autorizado (telefono, nombre, alta_por, roles)
+     VALUES ($1, $2, $3, $4)
      ON CONFLICT (telefono) WHERE revocado_en IS NULL DO NOTHING`,
-    [canonico, nombre, altaPor],
+    [canonico, nombre, altaPor, rolesValidos(roles)],
   );
   return (res.rowCount ?? 0) > 0;
 }

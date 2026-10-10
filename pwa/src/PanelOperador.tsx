@@ -3340,6 +3340,48 @@ function Registros({
 // SE ENSEÑA EL TELÉFONO ENTERO, a propósito. Es el dato con el que se da y se
 // quita el acceso: taparlo a medias dejaría a quien mira sin poder comprobar
 // que el número que va a echar es el que cree.
+// Los perfiles que la raíz reparte (migración 090). «Consulta» no es un perfil
+// marcable: es no tener ninguno.
+const ROLES_ASIGNABLES: PermisoOperador[] = ['despacho', 'taxistas', 'suscripciones', 'catalogo'];
+const ETIQUETA_ROL: Record<PermisoOperador, string> = {
+  despacho: 'Central / Despacho',
+  taxistas: 'Registro de taxistas',
+  suscripciones: 'Suscripciones',
+  catalogo: 'Catálogo',
+};
+
+function CasillasRol({ roles, alCambiar }: {
+  roles: Set<PermisoOperador>;
+  alCambiar: (roles: Set<PermisoOperador>) => void;
+}) {
+  return (
+    <div className="fila roles-casillas">
+      {ROLES_ASIGNABLES.map((r) => (
+        <label key={r} className="casilla">
+          <input
+            type="checkbox" checked={roles.has(r)}
+            onChange={(e) => {
+              const n = new Set(roles);
+              if (e.target.checked) n.add(r); else n.delete(r);
+              alCambiar(n);
+            }}
+          />
+          {ETIQUETA_ROL[r]}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+// Los perfiles de un operador, en texto: «Administrador», «Solo consulta», o la
+// lista de los que tiene.
+function textoRoles(o: AccesoOperador): string {
+  if (o.raiz) return 'Administrador';
+  const roles = o.roles ?? [];
+  if (roles.length === 0) return 'Solo consulta';
+  return roles.map((r) => ETIQUETA_ROL[r]).join(' · ');
+}
+
 function Accesos() {
   const [lista, setLista] = useState<AccesoOperador[] | null>(null);
   const [raiz, setRaiz] = useState(false);
@@ -3356,6 +3398,10 @@ function Accesos() {
   // De quién se están mirando los aparatos, y cuáles.
   const [abierto, setAbierto] = useState<string | null>(null);
   const [aparatos, setAparatos] = useState<AparatoOperador[] | null>(null);
+  // Los perfiles al dar de alta, y el editor de perfiles de una fila.
+  const [rolesNuevos, setRolesNuevos] = useState<Set<PermisoOperador>>(new Set());
+  const [editandoRoles, setEditandoRoles] = useState<string | null>(null);
+  const [rolesEdit, setRolesEdit] = useState<Set<PermisoOperador>>(new Set());
 
   const cargar = useCallback(() => {
     api.accesosOperador()
@@ -3385,14 +3431,32 @@ function Accesos() {
     const tel = telefono.trim();
     setError(''); setAviso(''); setOcupado(true);
     try {
-      const r = await api.darAccesoOperador(tel, nombre.trim() || undefined);
+      const r = await api.darAccesoOperador(tel, nombre.trim() || undefined, [...rolesNuevos]);
       setAviso(r.yaEstaba
         ? `El ${tel} ya tenía acceso; no he cambiado nada.`
         : `Listo. El ${tel} ya puede entrar con su teléfono.`);
-      setTelefono(''); setNombre('');
+      setTelefono(''); setNombre(''); setRolesNuevos(new Set());
       cargar();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo dar el acceso.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  function abrirEdicionRoles(o: AccesoOperador) {
+    setEditandoRoles(o.telefono);
+    setRolesEdit(new Set(o.roles ?? []));
+  }
+  async function guardarRoles(tel: string) {
+    setError(''); setAviso(''); setOcupado(true);
+    try {
+      await api.fijarRolesOperador(tel, [...rolesEdit]);
+      setAviso(`Perfil de ${tel} actualizado.`);
+      setEditandoRoles(null);
+      cargar();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo cambiar el perfil.');
     } finally {
       setOcupado(false);
     }
@@ -3449,6 +3513,8 @@ function Accesos() {
               onChange={(e) => setNombre(e.target.value)}
             />
           </div>
+          <p className="nota">Qué podrá tocar (sin marcar nada, solo consulta):</p>
+          <CasillasRol roles={rolesNuevos} alCambiar={setRolesNuevos} />
           <div className="fila">
             <button
               type="button" className="principal"
@@ -3466,7 +3532,7 @@ function Accesos() {
       )}
 
       {lista !== null && (
-        <Tabla cabeceras={['Teléfono', 'Nombre', 'Aparatos', 'Desde', 'Quién lo dio', '']}>
+        <Tabla cabeceras={['Teléfono', 'Nombre', 'Perfil', 'Aparatos', 'Desde', 'Quién lo dio', '']}>
           {lista.map((o) => (
             <tr key={o.telefono}>
               <td className="tabla-clave">
@@ -3475,6 +3541,30 @@ function Accesos() {
                 {o.raiz && <span className="tabla-tenue"> · principal</span>}
               </td>
               <td>{o.nombre ?? '—'}</td>
+              <td>
+                {editandoRoles === o.telefono ? (
+                  <>
+                    <CasillasRol roles={rolesEdit} alCambiar={setRolesEdit} />
+                    <div className="fila">
+                      <button type="button" className="principal" disabled={ocupado} onClick={() => guardarRoles(o.telefono)}>
+                        Guardar perfil
+                      </button>
+                      <button type="button" className="secundario" onClick={() => setEditandoRoles(null)}>
+                        Cancelar
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {textoRoles(o)}
+                    {raiz && !o.raiz && (
+                      <button type="button" className="tabla-enlace" onClick={() => abrirEdicionRoles(o)}>
+                        {' '}editar
+                      </button>
+                    )}
+                  </>
+                )}
+              </td>
               <td>
                 <button type="button" className="enlace" onClick={() => verAparatos(o.telefono)}>
                   {o.aparatos}
