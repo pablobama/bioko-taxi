@@ -1266,6 +1266,46 @@ const CARPETAS_FICHA: Array<[CarpetaFicha, string]> = [
   ['taxista', 'Taxista'], ['dueno', 'Dueño'], ['vehiculo', 'Vehículo'], ['servicio', 'Servicio'],
 ];
 
+// Renovar la cuota del taxista (migración 090). Cada cuota cubre unos días
+// (parámetro suscripcion_dias); aquí se eligen cuántas cobrar de golpe y se
+// suman a lo que le quedaba. Es el trabajo del perfil de suscripciones.
+function RenovarCuota({ id, alHecho }: { id: number; alHecho: () => void }) {
+  const [cuotas, setCuotas] = useState(1);
+  const [ocupado, setOcupado] = useState(false);
+  const [error, setError] = useState('');
+  const [hecho, setHecho] = useState('');
+
+  async function renovar() {
+    setError('');
+    setHecho('');
+    setOcupado(true);
+    try {
+      const r = await api.renovarSuscripcion(id, cuotas);
+      setHecho(`Renovada: ${r.dias} días más, hasta ${fecha(r.suscrito_hasta)}.`);
+      alHecho();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo renovar la cuota.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  return (
+    <div className="fila ficha-acciones">
+      <select value={cuotas} onChange={(e) => setCuotas(Number(e.target.value))}>
+        {[1, 2, 4, 8, 12].map((n) => (
+          <option key={n} value={n}>{n} cuota{n === 1 ? '' : 's'}</option>
+        ))}
+      </select>
+      <button type="button" className="secundario" disabled={ocupado} onClick={renovar}>
+        {ocupado ? 'Renovando…' : 'Cobrar y renovar la cuota'}
+      </button>
+      {hecho !== '' && <span className="nota">{hecho}</span>}
+      {error !== '' && <span className="aviso">{error}</span>}
+    </div>
+  );
+}
+
 function FichaConductor({
   id, alVolver, alCambiarEstado, ocupado, alVerRecorrido, alVerFichaPropietario,
 }: {
@@ -1294,7 +1334,9 @@ function FichaConductor({
   if (error) return <><p className="aviso">{error}</p><button type="button" className="secundario" onClick={alVolver}>Volver</button></>;
   if (!ficha) return <p className="nota">Cargando…</p>;
 
-  const puedeTaxistas = usarPermisos().puede('taxistas');
+  const permisos = usarPermisos();
+  const puedeTaxistas = permisos.puede('taxistas');
+  const puedeSuscripciones = permisos.puede('suscripciones');
   const o = ficha.ofertas;
   const prop = ficha.propietario;
   const esDuenoElConductor = prop !== null && prop.dip === ficha.dip;
@@ -1501,6 +1543,9 @@ function FichaConductor({
             Nº de taxi: <strong>{ficha.numero_taxi ?? '—'}</strong>
             {' · '}Suscripción: <strong>{ficha.suscripcionVigente ? `hasta ${fecha(ficha.suscrito_hasta)}` : 'vencida'}</strong>
           </p>
+          {/* Renovar la cuota: del perfil de suscripciones. Sin cuota al día,
+              el taxista no recibe carreras. */}
+          {puedeSuscripciones && <RenovarCuota id={ficha.id} alHecho={cargar} />}
           <p className="nota">
             Recibe: <strong>{ficha.recibe_en_cualquier_zona ? 'de toda la isla' : 'solo de su barrio'}</strong>
             {ficha.es_agente && ' · es agente de campo'}

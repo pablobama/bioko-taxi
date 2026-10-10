@@ -1605,6 +1605,14 @@ export const api = {
       method: 'POST', body: '{}',
     }),
 
+  // Renovar la cuota del taxista (migración 090): suma `periodos` periodos de
+  // suscripción. Del perfil de suscripciones.
+  renovarSuscripcion: (conductorId: number, periodos: number) =>
+    pedirJson<{ suscrito_hasta: string; dias: number }>(
+      `/api/operador/conductores/${conductorId}/suscripcion`,
+      { method: 'POST', body: JSON.stringify({ periodos }) },
+    ),
+
   recorridoConductor: (conductorId: number, periodo: PeriodoRecorrido) =>
     pedirJson<RecorridoOperador>(
       `/api/operador/conductores/${conductorId}/recorrido?periodo=${periodo}`,

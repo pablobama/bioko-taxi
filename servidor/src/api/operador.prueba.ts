@@ -1519,6 +1519,54 @@ test('accesos: la raíz da un perfil y lo cambia; otro no puede', async () => {
   assert.equal(ajeno.statusCode, 403, ajeno.body);
 });
 
+// Renovar la cuota (migración 090): solo el perfil de suscripciones, y suma
+// días a lo que le quedaba.
+test('suscripción: suscripciones renueva la cuota y suma días; despacho no', async () => {
+  async function operadorDe(roles: string[]): Promise<string> {
+    const telefono = telefonoUnico();
+    const uuid = randomUUID();
+    await pool.query(
+      'INSERT INTO operador_autorizado (telefono, nombre, alta_por, roles) VALUES ($1, $2, $3, $4)',
+      [telefono, 'Perfil', 'test', roles],
+    );
+    await pool.query(
+      'INSERT INTO operador_dispositivo (uuid_dispositivo, telefono) VALUES ($1, $2)',
+      [uuid, telefono],
+    );
+    return uuid;
+  }
+
+  const telefono = telefonoUnico();
+  const alta = await app.inject({
+    method: 'POST', url: '/api/operador/conductores', headers: cabeceras(UUID_OPERADOR),
+    payload: {
+      nombre: 'Cuota', apellido: 'Taxi', telefono, dip: dipUnico(), duenoConduce: true,
+      matricula: `MB-${telefono.slice(-5)}C`, marca: 'Kia', carroceria: 'turismo',
+    },
+  });
+  assert.equal(alta.statusCode, 200, alta.body);
+  const id = Number(alta.json().conductorId);
+  const antes = (await pool.query('SELECT suscrito_hasta FROM conductor WHERE id = $1', [id])).rows[0].suscrito_hasta;
+
+  const sus = await operadorDe(['suscripciones']);
+  const r = await app.inject({
+    method: 'POST', url: `/api/operador/conductores/${id}/suscripcion`,
+    headers: cabeceras(sus), payload: { periodos: 2 },
+  });
+  assert.equal(r.statusCode, 200, r.body);
+  assert.equal(r.json().dias, 14, 'dos cuotas de 7 días');
+  const despues = (await pool.query('SELECT suscrito_hasta FROM conductor WHERE id = $1', [id])).rows[0].suscrito_hasta;
+  assert.ok(new Date(despues) > new Date(antes), 'la cuota se extendió');
+
+  // Un operador de despacho no renueva cuotas.
+  const desp = await operadorDe(['despacho']);
+  const no = await app.inject({
+    method: 'POST', url: `/api/operador/conductores/${id}/suscripcion`,
+    headers: cabeceras(desp), payload: { periodos: 1 },
+  });
+  assert.equal(no.statusCode, 403, no.body);
+});
+
 test('oferta dirigida: llega al taxi de otra zona, firmada, y sin duplicar', async () => {
   const { zonaId, origenId, destinoId } = await crearZonaConReferencias();
   const otraZona = await crearZonaConReferencias();

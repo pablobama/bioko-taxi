@@ -1157,6 +1157,35 @@ export function registrarRutasOperador(
     return res.rows[0];
   });
 
+  // Renovar la cuota del taxista (migración 090): extiende `suscrito_hasta`
+  // por los periodos elegidos —cada uno cubre `suscripcion_dias` (migración
+  // 011)— SUMANDO desde su fin si aún no venció, para no perderle los días que
+  // le quedaban, o desde hoy si ya estaba vencida. Es el trabajo del perfil de
+  // suscripciones; queda firmado en el registro de cambios (067).
+  app.post('/api/operador/conductores/:id/suscripcion', async (req) => {
+    await exigirPermiso(req, 'suscripciones');
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
+    const { periodos } = (req.body ?? {}) as { periodos?: number };
+    const n = periodos ?? 1;
+    if (!Number.isInteger(n) || n < 1 || n > 52) {
+      throw errorHttp(400, 'Los periodos de cuota tienen que ser un número entre 1 y 52.');
+    }
+    const diasPorPeriodo = await leerParametroEntero(pool, 'suscripcion_dias');
+    const dias = n * diasPorPeriodo;
+    const res = await pool.query(
+      `UPDATE conductor
+       SET suscrito_hasta = GREATEST(COALESCE(suscrito_hasta, now()), now())
+                            + make_interval(days => $2)
+       WHERE id = $1
+       RETURNING suscrito_hasta`,
+      [id, dias],
+    );
+    if (res.rowCount === 0) throw errorHttp(404, 'Conductor no encontrado.');
+    await apuntarCambio(req, 'conductor', `${id}.suscripcion`, null, `+${dias} días de cuota`);
+    return { suscrito_hasta: res.rows[0].suscrito_hasta, dias };
+  });
+
   // Lo mismo para un PASAJERO (migración 072). El papel es el mismo y se
   // retira igual de fácil, que es lo que lo hace asumible: el daño de un
   // agente que se pasa se corta quitándoselo, y lo que tocó queda apuntado
