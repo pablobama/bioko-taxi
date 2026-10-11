@@ -4832,6 +4832,10 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                 recorrido (cuando se está mirando uno). Juntos en un contenedor
                 para que nunca se pisen. */}
             <div className="mesa-superpuesto">
+              {/* El tiempo de Malabo, también en el despacho de ordenador: a la
+                  central le vale saber si llueve (dispara carreras) o aprieta
+                  el calor. */}
+              <FranjaTiempo t={tRadio} variante="linea" />
               {/* Buscar un taxi por matrícula desde el despacho: se va
                   filtrando la flota viva al escribir, y al elegir uno se abre
                   su tarjeta con los datos. */}
