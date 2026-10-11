@@ -462,6 +462,14 @@ const es: Diccionario = {
   'aviso.sinUbicacionServicio': 'Activa la ubicación: el barrio donde entras en servicio lo dice tu GPS.',
   'aviso.noSePudoServicio': 'No se pudo cambiar el servicio.',
   'aviso.noSePudoRenovar': 'No se pudo renovar.',
+  // Franja del tiempo (migración 091). Los nombres del cielo son para lectores
+  // de pantalla; lo que se ve es el dibujo y los grados.
+  'tiempo.sol': 'Despejado',
+  'tiempo.nubes': 'Nublado',
+  'tiempo.lluvia': 'Lluvia',
+  'tiempo.tormenta': 'Tormenta',
+  'tiempo.avisoCalor': 'Mucho calor · bebe agua',
+  'tiempo.avisoLluvia': 'Lluvia en camino · lleva paraguas',
 };
 
 const fr: Diccionario = {
@@ -864,6 +872,12 @@ const fr: Diccionario = {
   'aviso.sinUbicacionServicio': 'Active la localisation : c’est ton GPS qui dit dans quel quartier tu prends le service.',
   'aviso.noSePudoServicio': 'Impossible de changer le statut de service.',
   'aviso.noSePudoRenovar': 'Impossible de renouveler.',
+  'tiempo.sol': 'Dégagé',
+  'tiempo.nubes': 'Nuageux',
+  'tiempo.lluvia': 'Pluie',
+  'tiempo.tormenta': 'Orage',
+  'tiempo.avisoCalor': 'Forte chaleur · bois de l’eau',
+  'tiempo.avisoLluvia': 'Pluie en approche · prends un parapluie',
 };
 
 const en: Diccionario = {
@@ -1266,6 +1280,12 @@ const en: Diccionario = {
   'aviso.sinUbicacionServicio': 'Turn on location: your GPS decides which neighbourhood you go online in.',
   'aviso.noSePudoServicio': 'Could not change service status.',
   'aviso.noSePudoRenovar': 'Could not renew.',
+  'tiempo.sol': 'Clear',
+  'tiempo.nubes': 'Cloudy',
+  'tiempo.lluvia': 'Rain',
+  'tiempo.tormenta': 'Storm',
+  'tiempo.avisoCalor': 'Very hot · drink water',
+  'tiempo.avisoLluvia': 'Rain coming · take an umbrella',
 };
 
 // El tipo de la función de traducción, para que los componentes no tengan

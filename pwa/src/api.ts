@@ -944,8 +944,23 @@ export interface EstadoConductor {
   pasajeros: PasajeroConductor[];
 }
 
+// El tiempo de Malabo para la franja superior (migración 091). Lo calcula y
+// cachea el servidor; aquí solo se recibe ya masticado.
+export type CieloTiempo = 'sol' | 'nubes' | 'lluvia' | 'tormenta';
+export interface Tiempo {
+  tempC: number;
+  sensacionC: number;
+  cielo: CieloTiempo;
+  aviso: 'calor' | 'lluvia' | null;
+  actualizado: number;
+}
+
 export const api = {
   sesion: () => pedirJson<Sesion>('/api/sesion'),
+
+  // `tiempo` es null cuando el servidor aún no tiene dato (Open-Meteo caído en
+  // el primer arranque): la pantalla entonces no enseña la franja.
+  tiempo: () => pedirJson<{ tiempo: Tiempo | null }>('/api/tiempo'),
 
   altaConductor: (datos: AltaConductor) =>
     pedirJson<{ conductorId: number; estadoVerificacion: string; aviso: string | null }>(

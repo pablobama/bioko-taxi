@@ -197,6 +197,33 @@ export async function enviarAlConductor(
   return enviarA(cliente, await suscripcionesDelConductor(cliente, conductorId), carga, ttlSeg);
 }
 
+// Todos los buzones, sin distinguir pasajero de taxista. Lo usa el aviso del
+// tiempo (migración 091): el calor o la lluvia es de toda la isla, no de una
+// carrera ni de un dispositivo concreto. Es el único envío de la plataforma
+// que va a todo el mundo, así que su disparo está muy acotado (solo en el
+// cambio de estado del tiempo, no en cada sondeo).
+export async function suscripcionesTodas(
+  cliente: pg.ClientBase | pg.Pool,
+): Promise<SuscripcionWeb[]> {
+  const res = await cliente.query(
+    'SELECT id, endpoint, clave_p256dh, clave_auth FROM suscripcion_web',
+  );
+  return res.rows.map((f) => ({
+    id: Number(f.id),
+    endpoint: f.endpoint,
+    clave_p256dh: f.clave_p256dh,
+    clave_auth: f.clave_auth,
+  }));
+}
+
+export async function enviarATodos(
+  cliente: pg.ClientBase | pg.Pool,
+  carga: Record<string, unknown>,
+  ttlSeg = 60,
+): Promise<ResultadoEnvio> {
+  return enviarA(cliente, await suscripcionesTodas(cliente), carga, ttlSeg);
+}
+
 async function enviarA(
   cliente: pg.ClientBase | pg.Pool,
   buzones: SuscripcionWeb[],

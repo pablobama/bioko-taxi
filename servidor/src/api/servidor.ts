@@ -18,6 +18,7 @@ import {
   buscarReferencias, buscarZonas, entradaDeZona, referenciasMasUsadas,
 } from '../dominio/gazetteer.js';
 import { ocupacionDe, rutaDe } from '../dominio/ocupacion.js';
+import { tiempoDeMalabo } from '../dominio/meteo.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
 import { registrarPosicion } from '../dominio/proximidad.js';
 import { puntoDeRecogida } from '../dominio/recogida.js';
@@ -180,6 +181,18 @@ export function crearServidor(
   // conexiones SSE de todos los viajes en curso. Sin cabeceras ni permisos:
   // no revela nada que no se sepa por el propio dominio respondiendo.
   app.get('/api/vivo', async () => ({ vivo: true }));
+
+  // El tiempo de Malabo para la franja de la app (migración 091). Sin
+  // cabeceras ni permisos: es un dato público y la franja la ve todo el mundo,
+  // pasajero o taxista. Devuelve null cuando aún no hay dato (primer arranque
+  // con Open-Meteo caído); la pantalla simplemente no enseña la franja.
+  app.get('/api/tiempo', async (_req, reply) => {
+    const tiempo = await tiempoDeMalabo(pool);
+    // Un fallo externo no debe caducar demasiado deprisa en caché del
+    // navegador: 5 min casa con el refresco del servidor y alivia la red.
+    void reply.header('Cache-Control', 'public, max-age=300');
+    return { tiempo };
+  });
 
   // --- Gazetteer ----------------------------------------------------------
 

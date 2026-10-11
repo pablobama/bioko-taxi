@@ -26,6 +26,7 @@ type T = ReturnType<typeof crearT>;
 import Mapa from './Mapa';
 import PanelCliente from './PanelCliente';
 import PanelConductor from './PanelConductor';
+import FranjaTiempo from './FranjaTiempo';
 import PanelOperador from './PanelOperador';
 import VistaSeguimiento from './VistaSeguimiento';
 import { alternarSilencio, estaSilenciado, prepararSonido } from './sonidos';
@@ -359,6 +360,10 @@ export default function App() {
         : null;
   const conmutador = <ConmutadorRol actual={rolActual} />;
 
+  // La franja del tiempo de Malabo (migración 091). Solo en las pantallas del
+  // pasajero y del taxista: es donde esperan o circulan y el tiempo importa.
+  const franjaTiempo = <FranjaTiempo t={t} />;
+
   // «Mírame llegar» (migración 043): quien abre el enlace de un viaje
   // compartido. Va ANTES que todo lo demás —incluida la pantalla de carga— a
   // propósito: casi nunca es alguien que use la aplicación, así que no tiene
@@ -397,6 +402,7 @@ export default function App() {
         {cinta}
         {bandaSinConexion}
         {conmutador}
+        {franjaTiempo}
         <PanelCliente
           perfilInicial={perfil}
           puntos={puntos}
@@ -413,6 +419,7 @@ export default function App() {
         {cinta}
         {bandaSinConexion}
         {conmutador}
+        {franjaTiempo}
         <PanelConductor
           conductor={conductor}
           puntos={puntos}

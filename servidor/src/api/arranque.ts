@@ -15,6 +15,7 @@ import { renovarSuscripcion } from '../dominio/monedero.js';
 import { caducarPresencias } from '../dominio/presencia.js';
 import { caducarViajesColgados } from '../dominio/caducidad.js';
 import { procesarProximidad } from '../dominio/proximidad.js';
+import { avisarSiCambiaElTiempo } from '../dominio/meteo.js';
 import { purgarIntentos } from '../dominio/cuentas.js';
 import { purgarEsperas } from '../dominio/esperas.js';
 import { purgarRastro } from '../dominio/rastro.js';
@@ -227,6 +228,14 @@ async function principal(): Promise<void> {
       }
     })();
   }, 5000);
+
+  // Aviso del tiempo (migración 091). Su propio reloj y lento: el tiempo no
+  // cambia de minuto a minuto, y el push solo sale cuando el aviso de calor o
+  // lluvia aparece o cambia, no en cada pasada. La primera, poco después de
+  // arrancar, para no competir con el sondeo de salud del hosting.
+  const avisarTiempo = () => { void avisarSiCambiaElTiempo(pool); };
+  setTimeout(avisarTiempo, 30 * 1000);
+  setInterval(avisarTiempo, 15 * 60 * 1000);
 }
 
 principal().catch((error) => {

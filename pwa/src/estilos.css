@@ -600,6 +600,115 @@ body {
   color: var(--tinta);
 }
 
+/* ------------------------------------------------------- franja del tiempo ---
+   El tiempo de Malabo (migración 091). Panel flotante CENTRADO y por debajo de
+   la fila de controles de arriba: a la izquierda vive el botón de ampliar el
+   plano (top:8 left:8) y a la derecha el conmutador de papeles (top:8 right:8),
+   así que la parte alta libre es el centro, un pelo más abajo. Fondo
+   transparente de cristal (un velo oscuro con desenfoque), sin degradados de
+   colores: elegante y discreto sobre el plano. El dibujo del cielo manda, en
+   grande. Con aviso de calor o lluvia, el texto y un halo suave se tiñen para
+   que el color diga ya de qué va antes de leer.
+
+   Va por DEBAJO de los botones (z-index 890 < mandos-flotantes 900 y
+   conmutador 1100): en un teléfono la columna de la izquierda y el conmutador
+   de la derecha quedan siempre por encima, no tapados por la franja. Y el
+   dibujo del cielo SOBRESALE por el borde de arriba, con sombra, en relieve. */
+.franja-tiempo {
+  position: fixed;
+  top: calc(52px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 890;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 20px);
+  padding: 5px 15px 5px 12px;
+  border-radius: 16px;
+  color: var(--hueso);
+  background: rgba(16, 16, 20, 0.32);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(12px) saturate(1.1);
+  -webkit-backdrop-filter: blur(12px) saturate(1.1);
+  /* El icono se sale por arriba, así que el recuadro no debe recortarlo. */
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* El dibujo del cielo, grande y asomando por encima del recuadro: el margen
+   negativo lo sube hasta sobresalir del borde superior y la sombra proyectada
+   lo despega del velo, de modo que parece flotar en relieve sobre la franja. */
+.franja-tiempo-icono {
+  font-size: 2.1rem;
+  line-height: 1;
+  margin-top: -16px;
+  margin-bottom: -6px;
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.55));
+}
+
+.franja-tiempo-grados {
+  font-weight: 700;
+  font-size: 1.1rem;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+/* El nombre del cielo, en pequeño al lado de los grados: un apoyo, no el
+   protagonista. En 320 px estorba, así que ahí desaparece y quedan los grados
+   y el dibujo, que es lo que se entiende sin leer. */
+.franja-tiempo-cielo {
+  font-weight: 600;
+  font-size: 0.72rem;
+  opacity: 0.68;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.franja-tiempo-aviso {
+  font-weight: 700;
+  font-size: 0.82rem;
+  padding-left: 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.18);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Con aviso: el texto se tiñe y el velo gana un halo suave del mismo color. El
+   calor en ámbar cálido, la lluvia en azul, sin romper la transparencia. */
+.franja-tiempo[data-aviso='calor'] {
+  border-color: rgba(255, 150, 80, 0.45);
+  box-shadow: 0 0 16px rgba(255, 140, 60, 0.28), 0 2px 14px rgba(0, 0, 0, 0.28);
+}
+
+.franja-tiempo[data-aviso='calor'] .franja-tiempo-aviso {
+  color: #ffc480;
+}
+
+.franja-tiempo[data-aviso='lluvia'] {
+  border-color: rgba(130, 180, 240, 0.45);
+  box-shadow: 0 0 16px rgba(110, 160, 230, 0.28), 0 2px 14px rgba(0, 0, 0, 0.28);
+}
+
+.franja-tiempo[data-aviso='lluvia'] .franja-tiempo-aviso {
+  color: #aaccf5;
+}
+
+/* Con aviso, el nombre del cielo cede su sitio: el aviso es más importante y
+   así se lee entero en vez de cortarse en «lleva para…». Y en pantallas muy
+   estrechas desaparece siempre. */
+.franja-tiempo[data-aviso='calor'] .franja-tiempo-cielo,
+.franja-tiempo[data-aviso='lluvia'] .franja-tiempo-cielo {
+  display: none;
+}
+
+@media (max-width: 340px) {
+  .franja-tiempo-cielo { display: none; }
+}
+
 .hoja h1 {
   font-size: 1.65rem;
   font-weight: 700;

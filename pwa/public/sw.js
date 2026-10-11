@@ -135,8 +135,10 @@ self.addEventListener('push', (evento) => {
       tag: carga.solicitudId ? `solicitud-${carga.solicitudId}` : carga.tipo,
       renotify: true,
       // Se queda en pantalla hasta que se toca. Una carrera que desaparece
-      // sola a los cinco segundos no sirve para nada.
-      requireInteraction: true,
+      // sola a los cinco segundos no sirve para nada. Los avisos informativos
+      // —el del tiempo (migración 091)— mandan `persistente: false` y no se
+      // quedan fijos: no son algo que haya que atender, solo saberlo.
+      requireInteraction: carga.persistente !== false,
       data: carga,
     }),
   );
