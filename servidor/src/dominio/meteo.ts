@@ -23,7 +23,12 @@ import { enviarATodos } from './notificaciones.js';
 // los móviles, pase lo que pase con el tráfico.
 const CACHE_MS = 10 * 60 * 1000;
 
-export type Cielo = 'sol' | 'nubes' | 'lluvia' | 'tormenta';
+// Ocho estados del cielo, no cuatro: Open-Meteo (códigos WMO) distingue el sol
+// con nubes, los claros y los chubascos, y la franja lo aprovecha con su propio
+// dibujo. En Bioko no nieva; los códigos de nieve se tratan como precipitación.
+export type Cielo =
+  | 'despejado' | 'poco_nuboso' | 'sol_nubes' | 'nublado'
+  | 'niebla' | 'chubascos' | 'lluvia' | 'tormenta';
 export type AvisoTiempo = 'calor' | 'lluvia' | null;
 
 export interface Tiempo {
@@ -44,16 +49,25 @@ export interface TiempoReportado {
   probLluvia: number;
 }
 
-// Códigos WMO de Open-Meteo agrupados en los cuatro dibujos que enseña la app.
+// Códigos WMO de Open-Meteo agrupados en los ocho dibujos que enseña la app.
 // https://open-meteo.com/en/docs — 0 despejado … 99 tormenta con granizo.
 export function cieloDesdeCodigo(codigo: number): Cielo {
-  if (codigo >= 95) return 'tormenta';
-  // 51–67 llovizna/lluvia, 80–82 chubascos, 61–65 lluvia. 71+ es nieve, que
-  // en Bioko no ocurre; si llegara, «lluvia» es lo más honesto que mostrar.
-  if (codigo >= 51) return 'lluvia';
-  // 1–3 algo de nubes, 45/48 niebla.
-  if (codigo >= 1) return 'nubes';
-  return 'sol';
+  if (codigo >= 95) return 'tormenta';          // 95-99 tormenta
+  if (codigo >= 80 && codigo <= 82) return 'chubascos'; // chubascos de lluvia
+  if (codigo >= 85 && codigo <= 86) return 'chubascos'; // chubascos de nieve (N/A)
+  if (codigo >= 71 && codigo <= 77) return 'lluvia';    // nieve (N/A) → precipitación
+  if (codigo >= 61 && codigo <= 67) return 'lluvia';    // lluvia
+  if (codigo >= 51 && codigo <= 57) return 'chubascos'; // llovizna → claros con agua
+  if (codigo === 45 || codigo === 48) return 'niebla';
+  if (codigo === 3) return 'nublado';
+  if (codigo === 2) return 'sol_nubes';         // nubes con claros
+  if (codigo === 1) return 'poco_nuboso';       // sol con alguna nube
+  return 'despejado';                           // 0
+}
+
+// Cielos con agua: los que, por sí solos, justifican el aviso de lluvia.
+function esLluvioso(cielo: Cielo): boolean {
+  return cielo === 'chubascos' || cielo === 'lluvia' || cielo === 'tormenta';
 }
 
 // Decide el aviso a partir del cielo, la sensación térmica, la probabilidad de
@@ -67,7 +81,7 @@ export function decidirAviso(
   umbralLluvia: number,
 ): AvisoTiempo {
   // La lluvia manda sobre el calor: si va a llover, eso es lo accionable.
-  if (cielo === 'tormenta' || cielo === 'lluvia' || probLluvia >= umbralLluvia) {
+  if (esLluvioso(cielo) || probLluvia >= umbralLluvia) {
     return 'lluvia';
   }
   if (sensacionC >= umbralCalor) return 'calor';

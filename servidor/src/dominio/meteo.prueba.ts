@@ -8,42 +8,52 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cieloDesdeCodigo, decidirAviso } from './meteo.js';
 
-test('el código WMO se agrupa en los cuatro cielos que dibuja la app', () => {
-  assert.equal(cieloDesdeCodigo(0), 'sol');
-  assert.equal(cieloDesdeCodigo(1), 'nubes');
-  assert.equal(cieloDesdeCodigo(3), 'nubes');
-  assert.equal(cieloDesdeCodigo(45), 'nubes'); // niebla
+test('el código WMO se agrupa en los ocho cielos que dibuja la app', () => {
+  assert.equal(cieloDesdeCodigo(0), 'despejado');
+  assert.equal(cieloDesdeCodigo(1), 'poco_nuboso');
+  assert.equal(cieloDesdeCodigo(2), 'sol_nubes');
+  assert.equal(cieloDesdeCodigo(3), 'nublado');
+  assert.equal(cieloDesdeCodigo(45), 'niebla');
+  assert.equal(cieloDesdeCodigo(48), 'niebla');
+  assert.equal(cieloDesdeCodigo(51), 'chubascos'); // llovizna
   assert.equal(cieloDesdeCodigo(61), 'lluvia');
-  assert.equal(cieloDesdeCodigo(80), 'lluvia'); // chubascos
+  assert.equal(cieloDesdeCodigo(65), 'lluvia');
+  assert.equal(cieloDesdeCodigo(80), 'chubascos'); // chubascos de lluvia
   assert.equal(cieloDesdeCodigo(95), 'tormenta');
   assert.equal(cieloDesdeCodigo(99), 'tormenta');
 });
 
-test('lluvia por cielo: tormenta o lluvia avisan aunque la probabilidad sea baja', () => {
+test('lluvia por cielo: chubascos, lluvia o tormenta avisan aunque la probabilidad sea baja', () => {
+  assert.equal(decidirAviso('chubascos', 25, 0, 33, 60), 'lluvia');
   assert.equal(decidirAviso('lluvia', 25, 0, 33, 60), 'lluvia');
   assert.equal(decidirAviso('tormenta', 25, 0, 33, 60), 'lluvia');
 });
 
 test('lluvia por probabilidad: con cielo seco pero probabilidad alta, avisa de lluvia', () => {
-  assert.equal(decidirAviso('nubes', 25, 60, 33, 60), 'lluvia');
-  assert.equal(decidirAviso('sol', 25, 75, 33, 60), 'lluvia');
+  assert.equal(decidirAviso('nublado', 25, 60, 33, 60), 'lluvia');
+  assert.equal(decidirAviso('despejado', 25, 75, 33, 60), 'lluvia');
 });
 
 test('calor: con la sensación en el umbral y sin lluvia, avisa de calor', () => {
-  assert.equal(decidirAviso('sol', 33, 10, 33, 60), 'calor');
-  assert.equal(decidirAviso('nubes', 35, 59, 33, 60), 'calor');
+  assert.equal(decidirAviso('despejado', 33, 10, 33, 60), 'calor');
+  assert.equal(decidirAviso('sol_nubes', 35, 59, 33, 60), 'calor');
 });
 
 test('la lluvia manda sobre el calor: aunque haga calor, si va a llover el aviso es de lluvia', () => {
-  assert.equal(decidirAviso('sol', 40, 80, 33, 60), 'lluvia');
+  assert.equal(decidirAviso('despejado', 40, 80, 33, 60), 'lluvia');
+});
+
+test('un cielo nuboso seco no es lluvia: la niebla y las nubes no avisan por sí solas', () => {
+  assert.equal(decidirAviso('niebla', 25, 0, 33, 60), null);
+  assert.equal(decidirAviso('sol_nubes', 25, 59, 33, 60), null);
 });
 
 test('sin motivo no hay aviso: ni calor ni lluvia bajo umbral', () => {
-  assert.equal(decidirAviso('sol', 32, 59, 33, 60), null);
-  assert.equal(decidirAviso('nubes', 30, 0, 33, 60), null);
+  assert.equal(decidirAviso('despejado', 32, 59, 33, 60), null);
+  assert.equal(decidirAviso('poco_nuboso', 30, 0, 33, 60), null);
 });
 
 test('los umbrales mandan: subir el de calor silencia un aviso que antes saltaba', () => {
-  assert.equal(decidirAviso('sol', 34, 0, 33, 60), 'calor');
-  assert.equal(decidirAviso('sol', 34, 0, 36, 60), null);
+  assert.equal(decidirAviso('despejado', 34, 0, 33, 60), 'calor');
+  assert.equal(decidirAviso('despejado', 34, 0, 36, 60), null);
 });

@@ -948,7 +948,9 @@ export interface EstadoConductor {
 // calcula el cielo y el aviso y lo cachea para todos, pero el DATO CRUDO lo
 // trae el móvil de Open-Meteo: desde la IP compartida de Render, Open-Meteo
 // responde 429. Ver `leerTiempoDeMalabo` más abajo.
-export type CieloTiempo = 'sol' | 'nubes' | 'lluvia' | 'tormenta';
+export type CieloTiempo =
+  | 'despejado' | 'poco_nuboso' | 'sol_nubes' | 'nublado'
+  | 'niebla' | 'chubascos' | 'lluvia' | 'tormenta';
 export interface Tiempo {
   tempC: number;
   sensacionC: number;

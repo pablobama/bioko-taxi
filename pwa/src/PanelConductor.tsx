@@ -1062,7 +1062,7 @@ export default function PanelConductor({
 // La guía de la primera vez del taxista. Lo que hay que saber para trabajar
 // hoy: entrar en servicio, qué es una oferta y lo que cuesta un desvío, dónde
 // está el saldo, y dónde se encienden la voz y el resto.
-const VERSION_GUIA_CONDUCTOR = 1;
+const VERSION_GUIA_CONDUCTOR = 2;
 
 function pasosConductor(t: ReturnType<typeof crearT>): PasoGuia[] {
   return [
@@ -1085,6 +1085,11 @@ function pasosConductor(t: ReturnType<typeof crearT>): PasoGuia[] {
       selector: '[data-guia="mandos"]',
       titulo: t('guia.conductor.mandosTitulo'),
       texto: t('guia.conductor.mandosTexto'),
+    },
+    {
+      selector: '[data-guia="tiempo"]',
+      titulo: t('guia.conductor.tiempoTitulo'),
+      texto: t('guia.conductor.tiempoTexto'),
     },
   ];
 }

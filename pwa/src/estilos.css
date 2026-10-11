@@ -622,44 +622,66 @@ body {
   z-index: 890;
   display: flex;
   align-items: center;
-  gap: 10px;
+  /* Sin hueco general: el icono y los grados se tocan (abajo). Cada bloque
+     pone su propio margen donde hace falta. */
+  gap: 0;
   max-width: calc(100vw - 20px);
-  padding: 5px 15px 5px 12px;
+  padding: 4px 14px 4px 11px;
   border-radius: 16px;
   color: var(--hueso);
-  background: rgba(16, 16, 20, 0.32);
+  background: rgba(16, 16, 20, 0.34);
   border: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow: 0 2px 14px rgba(0, 0, 0, 0.28);
   backdrop-filter: blur(12px) saturate(1.1);
   -webkit-backdrop-filter: blur(12px) saturate(1.1);
   /* El icono se sale por arriba, así que el recuadro no debe recortarlo. */
   overflow: visible;
-  pointer-events: none;
+  /* Es un botón: un toque la oculta a solo el icono, otro la abre. Se resetea
+     la pinta por defecto del botón y se marca como pulsable. */
+  font: inherit;
+  text-align: left;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  /* Entrada suave al aparecer; se conserva el centrado (translateX -50%). */
+  animation: franja-tiempo-entrar 0.45s ease-out both;
+}
+
+/* Oculta: se queda en solo el icono, un botón mínimo que sigue flotando arriba
+   y basta tocar para volver a abrir. */
+.franja-tiempo[data-colapsado='si'] {
+  padding: 4px 10px;
+}
+
+.franja-tiempo[data-colapsado='si'] .franja-tiempo-icono {
+  margin-right: 0;
 }
 
 /* El dibujo del cielo, grande y asomando por encima del recuadro: el margen
    negativo lo sube hasta sobresalir del borde superior y la sombra proyectada
-   lo despega del velo, de modo que parece flotar en relieve sobre la franja. */
+   lo despega del velo. Flota con una animación muy lenta, que le da relieve y
+   vida sin distraer. */
 .franja-tiempo-icono {
-  font-size: 2.1rem;
+  font-size: 2.2rem;
   line-height: 1;
   margin-top: -16px;
   margin-bottom: -6px;
+  /* Pegado a los grados: apenas un pelo de aire. */
+  margin-right: 2px;
   filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.55));
+  animation: franja-tiempo-flotar 3.6s ease-in-out infinite;
 }
 
+/* Los grados, rozando el icono. */
 .franja-tiempo-grados {
   font-weight: 700;
-  font-size: 1.1rem;
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
+  font-size: 1.2rem;
 }
 
-/* El nombre del cielo, en pequeño al lado de los grados: un apoyo, no el
-   protagonista. En 320 px estorba, así que ahí desaparece y quedan los grados
-   y el dibujo, que es lo que se entiende sin leer. */
+/* El nombre del cielo, cuando no hay aviso: en pequeño al lado de los grados. */
 .franja-tiempo-cielo {
+  margin-left: 9px;
   font-weight: 600;
   font-size: 0.72rem;
   opacity: 0.68;
@@ -667,42 +689,103 @@ body {
   letter-spacing: 0.04em;
 }
 
+/* El aviso, en DOS líneas: el qué arriba y el consejo debajo. Así la franja es
+   más estrecha y cabe mejor en el centro de la zona superior del móvil. */
 .franja-tiempo-aviso {
-  font-weight: 700;
-  font-size: 0.82rem;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.12;
+  margin-left: 10px;
   padding-left: 10px;
   border-left: 1px solid rgba(255, 255, 255, 0.18);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-/* Con aviso: el texto se tiñe y el velo gana un halo suave del mismo color. El
-   calor en ámbar cálido, la lluvia en azul, sin romper la transparencia. */
+/* Cada línea en una sola línea: el título arriba y el consejo debajo, sin que
+   «Lluvia en camino» se parta. El chip crece a su ancho natural, que sigue
+   cabiendo de sobra en el centro de la zona superior. */
+.franja-tiempo-aviso strong {
+  font-weight: 700;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.franja-tiempo-aviso small {
+  font-weight: 600;
+  font-size: 0.68rem;
+  opacity: 0.82;
+  white-space: nowrap;
+}
+
+/* Con aviso: el texto se tiñe y el velo gana un halo suave del mismo color que
+   late despacio. El calor en ámbar cálido, la lluvia en azul. */
 .franja-tiempo[data-aviso='calor'] {
   border-color: rgba(255, 150, 80, 0.45);
-  box-shadow: 0 0 16px rgba(255, 140, 60, 0.28), 0 2px 14px rgba(0, 0, 0, 0.28);
+  animation: franja-tiempo-entrar 0.45s ease-out both,
+             franja-tiempo-halo-calor 2.8s ease-in-out 0.45s infinite;
 }
 
-.franja-tiempo[data-aviso='calor'] .franja-tiempo-aviso {
-  color: #ffc480;
-}
+.franja-tiempo[data-aviso='calor'] .franja-tiempo-aviso { color: #ffc480; }
 
 .franja-tiempo[data-aviso='lluvia'] {
   border-color: rgba(130, 180, 240, 0.45);
-  box-shadow: 0 0 16px rgba(110, 160, 230, 0.28), 0 2px 14px rgba(0, 0, 0, 0.28);
+  animation: franja-tiempo-entrar 0.45s ease-out both,
+             franja-tiempo-halo-lluvia 2.8s ease-in-out 0.45s infinite;
 }
 
-.franja-tiempo[data-aviso='lluvia'] .franja-tiempo-aviso {
-  color: #aaccf5;
+.franja-tiempo[data-aviso='lluvia'] .franja-tiempo-aviso { color: #aaccf5; }
+
+@keyframes franja-tiempo-entrar {
+  from { opacity: 0; transform: translate(-50%, -9px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
 }
 
-/* Con aviso, el nombre del cielo cede su sitio: el aviso es más importante y
-   así se lee entero en vez de cortarse en «lleva para…». Y en pantallas muy
-   estrechas desaparece siempre. */
-.franja-tiempo[data-aviso='calor'] .franja-tiempo-cielo,
-.franja-tiempo[data-aviso='lluvia'] .franja-tiempo-cielo {
-  display: none;
+@keyframes franja-tiempo-flotar {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+@keyframes franja-tiempo-halo-calor {
+  0%, 100% { box-shadow: 0 0 10px rgba(255, 140, 60, 0.18), 0 2px 14px rgba(0, 0, 0, 0.28); }
+  50% { box-shadow: 0 0 22px rgba(255, 140, 60, 0.42), 0 2px 14px rgba(0, 0, 0, 0.28); }
+}
+
+@keyframes franja-tiempo-halo-lluvia {
+  0%, 100% { box-shadow: 0 0 10px rgba(110, 160, 230, 0.2), 0 2px 14px rgba(0, 0, 0, 0.28); }
+  50% { box-shadow: 0 0 22px rgba(110, 160, 230, 0.45), 0 2px 14px rgba(0, 0, 0, 0.28); }
+}
+
+/* Quien pide menos movimiento, menos movimiento: se quedan quietos el icono,
+   la entrada y los halos. La franja se ve igual, solo que sin animar. */
+@media (prefers-reduced-motion: reduce) {
+  .franja-tiempo,
+  .franja-tiempo[data-aviso='calor'],
+  .franja-tiempo[data-aviso='lluvia'],
+  .franja-tiempo-icono {
+    animation: none;
+  }
+}
+
+/* Variante EN LÍNEA para la cabecera del panel del operador: el mismo chip,
+   pero en el flujo normal —ni fijo ni centrado— para que no tape el título ni
+   las pestañas. Sin la animación de entrada ni el halo (ambos mueven la
+   posición y aquí la posición la manda el documento); el icono sí sigue
+   flotando, que es inofensivo. */
+.franja-tiempo-linea,
+.franja-tiempo-linea[data-aviso='calor'],
+.franja-tiempo-linea[data-aviso='lluvia'] {
+  position: static;
+  transform: none;
+  animation: none;
+  margin: 2px 0 12px;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 5px 13px;
+}
+
+.franja-tiempo-linea .franja-tiempo-icono {
+  font-size: 1.75rem;
+  margin-top: -2px;
+  margin-bottom: -2px;
 }
 
 @media (max-width: 340px) {

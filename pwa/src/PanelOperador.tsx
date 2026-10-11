@@ -22,6 +22,7 @@ import { abrirEventosOperador, bajarFotoConductor } from './api';
 import { ESTILO_CATEGORIA } from './categorias';
 import { metrosEntre } from './geo';
 import { crearT } from './i18n';
+import FranjaTiempo from './FranjaTiempo';
 import PanelRadio from './PanelRadio';
 import { useRadio } from './radio';
 import { ErrorDelServidor } from './conexion';
@@ -5069,6 +5070,9 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                 </button>
               )}
             </div>
+            {/* El tiempo de Malabo, en línea: a la central también le viene bien
+                saber si llueve (dispara carreras) o aprieta el calor. */}
+            <FranjaTiempo t={tRadio} variante="linea" />
             {barraSecciones}
           </>
         )}

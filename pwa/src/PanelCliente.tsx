@@ -1188,7 +1188,7 @@ export default function PanelCliente({
 //
 // La versión sube solo cuando la guía cambia de verdad; entonces se vuelve a
 // enseñar una vez a quien ya la había visto.
-const VERSION_GUIA = 1;
+const VERSION_GUIA = 2;
 
 function pasosCliente(t: ReturnType<typeof crearT>): PasoGuia[] {
   return [
@@ -1216,6 +1216,11 @@ function pasosCliente(t: ReturnType<typeof crearT>): PasoGuia[] {
       selector: '[data-guia="mandos"]',
       titulo: t('guia.cliente.mandosTitulo'),
       texto: t('guia.cliente.mandosTexto'),
+    },
+    {
+      selector: '[data-guia="tiempo"]',
+      titulo: t('guia.cliente.tiempoTitulo'),
+      texto: t('guia.cliente.tiempoTexto'),
     },
   ];
 }
