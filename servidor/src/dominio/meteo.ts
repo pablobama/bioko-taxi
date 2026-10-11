@@ -18,7 +18,9 @@ const LON = 8.78;
 // en unas pocas por hora pase lo que pase con el tráfico.
 const CACHE_MS = 10 * 60 * 1000;
 // Si la red tarda más que esto, no bloqueamos: se sirve lo último que hubiera.
-const TIMEOUT_MS = 4000;
+// 8s, no 4: en un arranque en frío de Render el primer handshake TLS saliente
+// puede ir lento, y cortar demasiado pronto dejaba la franja vacía.
+const TIMEOUT_MS = 8000;
 
 export type Cielo = 'sol' | 'nubes' | 'lluvia' | 'tormenta';
 export type AvisoTiempo = 'calor' | 'lluvia' | null;
@@ -49,6 +51,11 @@ export function cieloDesdeCodigo(codigo: number): Cielo {
 // peticiones casi simultáneas con la caché vencida comparten una sola llamada.
 let cache: Tiempo | null = null;
 let enVuelo: Promise<Tiempo | null> | null = null;
+
+// El último error al leer el tiempo, para diagnóstico (ver /api/tiempo?debug).
+// No se enseña nunca al usuario; solo lo consulta quien depura producción.
+let ultimoError: string | null = null;
+export function ultimoErrorTiempo(): string | null { return ultimoError; }
 
 // El tiempo actual más la probabilidad de lluvia de la hora en curso. Esa
 // probabilidad decide el aviso de lluvia aunque ahora mismo no esté cayendo.
@@ -153,10 +160,23 @@ export async function tiempoDeMalabo(pool: pg.Pool): Promise<Tiempo | null> {
   if (!enVuelo) {
     enVuelo = (async () => {
       try {
-        const { base, probLluvia } = await pedirAOpenMeteo();
-        cache = await conAviso(pool, base, probLluvia);
+        // Un reintento: un corte puntual de red saliente no debe dejar la
+        // franja vacía diez minutos hasta el siguiente ciclo.
+        let crudo;
+        try {
+          crudo = await pedirAOpenMeteo();
+        } catch (primerFallo) {
+          console.warn('Tiempo: primer intento falló, reintentando:', primerFallo);
+          crudo = await pedirAOpenMeteo();
+        }
+        cache = await conAviso(pool, crudo.base, crudo.probLluvia);
+        ultimoError = null;
         return cache;
       } catch (error) {
+        const nombre = error instanceof Error ? error.name : 'Error';
+        const mensaje = error instanceof Error ? error.message : String(error);
+        const causa = (error as { cause?: { code?: string; message?: string } }).cause;
+        ultimoError = [nombre, mensaje, causa?.code, causa?.message].filter(Boolean).join(' · ');
         console.error('No se pudo leer el tiempo de Malabo:', error);
         return cache; // el último bueno, o null si nunca hubo
       } finally {

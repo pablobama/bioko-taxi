@@ -7,7 +7,17 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import dns from 'node:dns';
 import estaticos from '@fastify/static';
+
+// IPv4 primero en TODAS las resoluciones de nombres del proceso. En el
+// contenedor de Render (como en muchos) no hay salida IPv6, y Node desde la v17
+// resuelve «verbatim» —puede intentar la IPv6 primero—. Un servicio con solo
+// registro A (Twilio, la base) no se entera; uno con registro AAAA
+// (api.open-meteo.com) hacía que el fetch del tiempo fallara SIEMPRE en
+// producción aunque funcionara en local. Forzar IPv4 no rompe nada: a un host
+// con IPv4 se le sigue llegando igual, solo cambia el orden de preferencia.
+dns.setDefaultResultOrder('ipv4first');
 import { crearPool, enTransaccion } from '../bd/conexion.js';
 import { avanzarDespachos, iniciarDespacho } from '../dominio/despacho.js';
 import { ErrorSaldoInsuficiente } from '../dominio/errores.js';
