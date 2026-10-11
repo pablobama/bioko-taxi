@@ -1,26 +1,27 @@
-// El tiempo de Malabo para la franja de la app (migración 091). Lo trae de
-// Open-Meteo —gratis, sin clave, sin registro— y lo cachea en memoria unos
-// minutos: así una sola llamada sirve a todos los móviles, el payload que baja
-// es diminuto (importa con red cara) y si Open-Meteo falla se sigue sirviendo
-// el último valor bueno en vez de romper la pantalla.
+// El tiempo de Malabo para la franja de la app (migración 091).
+//
+// POR QUÉ EL DATO LO TRAE EL MÓVIL Y NO EL SERVIDOR. La idea primera era que el
+// servidor leyera Open-Meteo y lo cacheara. En producción no funciona: Open-
+// Meteo limita por IP y la IP de salida de Render es compartida y está siempre
+// pasada de cupo —responde 429— aunque nuestro uso sea mínimo. El teléfono, en
+// cambio, sale por su propia IP (móvil o wifi de casa), que tiene su cupo
+// entero: lee Open-Meteo sin problema. Así que el móvil trae el dato crudo y lo
+// reporta aquí; el servidor sigue siendo el que manda —calcula el cielo y el
+// aviso con sus umbrales, cachea para todos y dispara el push—, pero no
+// depende de una salida a Internet que no tiene.
+//
+// La caché la comparten todos: el primer móvil que la encuentra vieja lee Open-
+// Meteo y la refresca; los demás reciben lo ya masticado. Vive en memoria y es
+// efímera, no hay fila que guardar.
 
 import type pg from 'pg';
 import { leerParametroEntero } from './parametros.js';
 import { enviarATodos } from './notificaciones.js';
 
-// Malabo ciudad. El tiempo de la isla entera es a efectos prácticos el mismo;
-// un solo punto basta y evita multiplicar llamadas.
-const LAT = 3.75;
-const LON = 8.78;
-
-// Cuánto vive un valor cacheado. El tiempo no cambia de minuto a minuto y
-// Open-Meteo refresca cada hora; 10 min es de sobra y mantiene las llamadas
-// en unas pocas por hora pase lo que pase con el tráfico.
+// Cuánto se considera «fresco» un dato. El tiempo no cambia de minuto a minuto;
+// 10 min mantiene las lecturas de Open-Meteo en unas pocas por hora entre todos
+// los móviles, pase lo que pase con el tráfico.
 const CACHE_MS = 10 * 60 * 1000;
-// Si la red tarda más que esto, no bloqueamos: se sirve lo último que hubiera.
-// 8s, no 4: en un arranque en frío de Render el primer handshake TLS saliente
-// puede ir lento, y cortar demasiado pronto dejaba la franja vacía.
-const TIMEOUT_MS = 8000;
 
 export type Cielo = 'sol' | 'nubes' | 'lluvia' | 'tormenta';
 export type AvisoTiempo = 'calor' | 'lluvia' | null;
@@ -30,9 +31,17 @@ export interface Tiempo {
   sensacionC: number;
   cielo: Cielo;
   aviso: AvisoTiempo;
-  // Epoch ms en que el servidor obtuvo este dato. El cliente no lo necesita
-  // para nada crítico; va por transparencia y para depurar.
+  // Epoch ms en que se registró este dato. Sirve para saber si sigue fresco.
   actualizado: number;
+}
+
+// Lo que el móvil reporta tal cual lo da Open-Meteo. El servidor no se fía a
+// ciegas: lo acota a rangos sensatos antes de usarlo (ver registrarTiempo).
+export interface TiempoReportado {
+  tempC: number;
+  sensacionC: number;
+  weatherCode: number;
+  probLluvia: number;
 }
 
 // Códigos WMO de Open-Meteo agrupados en los cuatro dibujos que enseña la app.
@@ -45,79 +54,6 @@ export function cieloDesdeCodigo(codigo: number): Cielo {
   // 1–3 algo de nubes, 45/48 niebla.
   if (codigo >= 1) return 'nubes';
   return 'sol';
-}
-
-// Valor en caché y, cuando hay una petición en vuelo, su promesa: así dos
-// peticiones casi simultáneas con la caché vencida comparten una sola llamada.
-let cache: Tiempo | null = null;
-let enVuelo: Promise<Tiempo | null> | null = null;
-
-// El último error al leer el tiempo, para diagnóstico (ver /api/tiempo?debug).
-// No se enseña nunca al usuario; solo lo consulta quien depura producción.
-let ultimoError: string | null = null;
-export function ultimoErrorTiempo(): string | null { return ultimoError; }
-
-// El tiempo actual más la probabilidad de lluvia de la hora en curso. Esa
-// probabilidad decide el aviso de lluvia aunque ahora mismo no esté cayendo.
-interface Crudo {
-  base: Omit<Tiempo, 'aviso'>;
-  probLluvia: number;
-}
-
-async function pedirAOpenMeteo(): Promise<Crudo> {
-  const url = new URL('https://api.open-meteo.com/v1/forecast');
-  url.searchParams.set('latitude', String(LAT));
-  url.searchParams.set('longitude', String(LON));
-  url.searchParams.set('current', 'temperature_2m,apparent_temperature,weather_code');
-  url.searchParams.set('hourly', 'precipitation_probability');
-  url.searchParams.set('forecast_days', '1');
-  url.searchParams.set('timezone', 'Africa/Malabo');
-
-  const respuesta = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
-  if (!respuesta.ok) {
-    throw new Error(`Open-Meteo respondió ${respuesta.status}`);
-  }
-  const datos = await respuesta.json() as {
-    current?: {
-      time?: string;
-      temperature_2m?: number;
-      apparent_temperature?: number;
-      weather_code?: number;
-    };
-    hourly?: {
-      time?: string[];
-      precipitation_probability?: Array<number | null>;
-    };
-  };
-  const actual = datos.current;
-  if (!actual || typeof actual.temperature_2m !== 'number') {
-    throw new Error('Open-Meteo devolvió una respuesta sin tiempo actual.');
-  }
-  return {
-    base: {
-      tempC: Math.round(actual.temperature_2m),
-      sensacionC: Math.round(actual.apparent_temperature ?? actual.temperature_2m),
-      cielo: cieloDesdeCodigo(actual.weather_code ?? 0),
-      actualizado: Date.now(),
-    },
-    probLluvia: probabilidadDeLaHora(datos.hourly, actual.time),
-  };
-}
-
-// Casa la hora del dato «actual» (p. ej. «2026-10-11T14:00») con la serie
-// horaria y devuelve su probabilidad de lluvia. Si no cuadra nada, 0: un dato
-// que falta nunca debe inventar un aviso.
-function probabilidadDeLaHora(
-  hourly: { time?: string[]; precipitation_probability?: Array<number | null> } | undefined,
-  horaActual: string | undefined,
-): number {
-  if (!hourly?.time || !hourly.precipitation_probability || !horaActual) return 0;
-  // La hora «actual» trae minutos (…T14:30); la serie horaria va en punto
-  // (…T14:00). Comparamos solo hasta la hora.
-  const clave = horaActual.slice(0, 13);
-  const i = hourly.time.findIndex((t) => t.slice(0, 13) === clave);
-  const prob = i >= 0 ? hourly.precipitation_probability[i] : null;
-  return typeof prob === 'number' ? prob : 0;
 }
 
 // Decide el aviso a partir del cielo, la sensación térmica, la probabilidad de
@@ -138,8 +74,24 @@ export function decidirAviso(
   return null;
 }
 
-// Pega la decisión de aviso a los umbrales vivos de la tabla parametro. Se
-// separa del fetch para poder recalcular si cambian los umbrales sin re-pedir.
+// Acota un número a un rango sensato; si no es un número, cae al valor por
+// defecto. El dato viene de un cliente y no se usa crudo: así un móvil que
+// mande basura (o malicia) no puede inventar un calor de 300° ni un aviso falso
+// fuera de lo físicamente posible en Bioko.
+function acotar(valor: unknown, min: number, max: number, pordefecto: number): number {
+  const n = typeof valor === 'number' && Number.isFinite(valor) ? valor : pordefecto;
+  return Math.min(max, Math.max(min, n));
+}
+
+// El tiempo cacheado (último reportado por algún móvil) y si sigue fresco.
+let cache: Tiempo | null = null;
+
+export function tiempoCacheado(): { tiempo: Tiempo | null; fresco: boolean } {
+  const fresco = cache !== null && Date.now() - cache.actualizado < CACHE_MS;
+  return { tiempo: cache, fresco };
+}
+
+// Calcula el aviso con los umbrales vivos de la tabla parametro.
 async function conAviso(
   pool: pg.Pool,
   base: Omit<Tiempo, 'aviso'>,
@@ -151,40 +103,25 @@ async function conAviso(
   return { ...base, aviso };
 }
 
-// Punto de entrada. Devuelve el tiempo cacheado si sigue fresco; si no, lo
-// renueva. Nunca lanza hacia fuera: ante un fallo sirve lo último (o null la
-// primera vez), porque una franja del tiempo jamás debe tumbar la app.
-export async function tiempoDeMalabo(pool: pg.Pool): Promise<Tiempo | null> {
-  const fresco = cache && Date.now() - cache.actualizado < CACHE_MS;
-  if (fresco) return cache;
-  if (!enVuelo) {
-    enVuelo = (async () => {
-      try {
-        // Un reintento: un corte puntual de red saliente no debe dejar la
-        // franja vacía diez minutos hasta el siguiente ciclo.
-        let crudo;
-        try {
-          crudo = await pedirAOpenMeteo();
-        } catch (primerFallo) {
-          console.warn('Tiempo: primer intento falló, reintentando:', primerFallo);
-          crudo = await pedirAOpenMeteo();
-        }
-        cache = await conAviso(pool, crudo.base, crudo.probLluvia);
-        ultimoError = null;
-        return cache;
-      } catch (error) {
-        const nombre = error instanceof Error ? error.name : 'Error';
-        const mensaje = error instanceof Error ? error.message : String(error);
-        const causa = (error as { cause?: { code?: string; message?: string } }).cause;
-        ultimoError = [nombre, mensaje, causa?.code, causa?.message].filter(Boolean).join(' · ');
-        console.error('No se pudo leer el tiempo de Malabo:', error);
-        return cache; // el último bueno, o null si nunca hubo
-      } finally {
-        enVuelo = null;
-      }
-    })();
-  }
-  return enVuelo;
+// Registra lo que un móvil leyó de Open-Meteo: lo acota, calcula cielo y aviso,
+// lo cachea para todos y, si el aviso acaba de aparecer o cambiar, dispara el
+// push. Devuelve el tiempo ya masticado para pintar la franja de ese móvil.
+export async function registrarTiempo(pool: pg.Pool, reportado: TiempoReportado): Promise<Tiempo> {
+  const tempC = Math.round(acotar(reportado.tempC, -20, 60, 0));
+  const sensacionC = Math.round(acotar(reportado.sensacionC, -20, 70, tempC));
+  const weatherCode = Math.round(acotar(reportado.weatherCode, 0, 99, 0));
+  const probLluvia = acotar(reportado.probLluvia, 0, 100, 0);
+  const base: Omit<Tiempo, 'aviso'> = {
+    tempC,
+    sensacionC,
+    cielo: cieloDesdeCodigo(weatherCode),
+    actualizado: Date.now(),
+  };
+  cache = await conAviso(pool, base, probLluvia);
+  // Con el dato recién fresco, mira si toca avisar. El flanco y el dedup de
+  // abajo evitan que varios móviles reportando a la vez disparen varios push.
+  await avisarSiCambiaElTiempo(pool);
+  return cache;
 }
 
 // --- Aviso push del tiempo (migración 091) ---------------------------------
@@ -213,12 +150,15 @@ function textoDelAviso(tipo: 'calor' | 'lluvia', tempC: number): { titulo: strin
   return { titulo: 'Lluvia en camino en Malabo', cuerpo: 'Lleva paraguas: buen momento para pedir taxi.' };
 }
 
-// Mira el tiempo y, si el aviso acaba de aparecer o cambiar, manda el push.
-// Pensada para el planificador (cada pocos minutos); nunca lanza hacia fuera.
+// Mira el tiempo cacheado y, si el aviso acaba de aparecer o cambiar, manda el
+// push. La llaman tanto registrarTiempo (dato recién llegado) como el
+// planificador cada pocos minutos. Nunca lanza hacia fuera.
 export async function avisarSiCambiaElTiempo(pool: pg.Pool): Promise<void> {
   try {
-    const tiempo = await tiempoDeMalabo(pool);
-    if (!tiempo) return;
+    const { tiempo, fresco } = tiempoCacheado();
+    // Sin dato, o con uno viejo (hace rato que nadie abre la app), no se avisa:
+    // mejor callar que avisar de un tiempo de hace una hora.
+    if (!tiempo || !fresco) return;
 
     if (tiempo.aviso === null) {
       // Despejó: se olvida el activo para que la próxima vez que vuelva a saltar

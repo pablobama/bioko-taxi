@@ -5,11 +5,11 @@
 // debe ocupar sitio cuando no tiene nada que decir.
 
 import { useEffect, useState } from 'react';
-import { api, type CieloTiempo, type Tiempo } from './api';
+import { api, leerTiempoDeMalabo, type CieloTiempo, type Tiempo } from './api';
 import type { T } from './i18n';
 
-// Cada diez minutos de sobra: el servidor cachea igual y el tiempo no cambia
-// más deprisa. El primer tiro es inmediato al montar.
+// Cada diez minutos de sobra: el tiempo no cambia más deprisa y la caché del
+// servidor dura lo mismo. El primer tiro es inmediato al montar.
 const REFRESCO_MS = 10 * 60 * 1000;
 
 // El dibujo de cada cielo. Emojis y no SVG a propósito: pesan cero, se ven en
@@ -28,10 +28,21 @@ export default function FranjaTiempo({ t }: { t: T }) {
     let vivo = true;
     async function cargar() {
       try {
-        const { tiempo: dato } = await api.tiempo();
-        // Un fallo no borra lo que ya se veía: si `dato` es null por una caída
-        // puntual, se conserva el último bueno.
-        if (vivo && dato) setTiempo(dato);
+        // 1) ¿Tiene el servidor un dato fresco (de otro móvil hace poco)? Si sí,
+        //    se usa y este móvil no molesta a Open-Meteo.
+        const { tiempo: dato, fresco } = await api.tiempo();
+        if (vivo && dato && fresco) { setTiempo(dato); return; }
+        // 2) Si no, este móvil lee Open-Meteo (su IP sí tiene cupo) y lo reporta;
+        //    el servidor devuelve el cielo y el aviso ya calculados.
+        try {
+          const reportado = await leerTiempoDeMalabo();
+          const { tiempo: masticado } = await api.reportarTiempo(reportado);
+          if (vivo && masticado) setTiempo(masticado);
+        } catch {
+          // Open-Meteo no respondió: al menos se enseña lo que el servidor tenga
+          // (aunque sea de hace un rato), mejor que nada.
+          if (vivo && dato) setTiempo(dato);
+        }
       } catch {
         // Silencio: la franja es un adorno útil, nunca un error que mostrar.
       }

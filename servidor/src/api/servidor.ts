@@ -18,7 +18,7 @@ import {
   buscarReferencias, buscarZonas, entradaDeZona, referenciasMasUsadas,
 } from '../dominio/gazetteer.js';
 import { ocupacionDe, rutaDe } from '../dominio/ocupacion.js';
-import { tiempoDeMalabo, ultimoErrorTiempo } from '../dominio/meteo.js';
+import { tiempoCacheado, registrarTiempo } from '../dominio/meteo.js';
 import { leerParametroEntero } from '../dominio/parametros.js';
 import { registrarPosicion } from '../dominio/proximidad.js';
 import { puntoDeRecogida } from '../dominio/recogida.js';
@@ -186,15 +186,23 @@ export function crearServidor(
   // cabeceras ni permisos: es un dato público y la franja la ve todo el mundo,
   // pasajero o taxista. Devuelve null cuando aún no hay dato (primer arranque
   // con Open-Meteo caído); la pantalla simplemente no enseña la franja.
-  app.get('/api/tiempo', async (req, reply) => {
-    const tiempo = await tiempoDeMalabo(pool);
-    // Un fallo externo no debe caducar demasiado deprisa en caché del
-    // navegador: 5 min casa con el refresco del servidor y alivia la red.
-    void reply.header('Cache-Control', 'public, max-age=300');
-    // Diagnóstico puntual con ?debug=1: cuando el tiempo viene null, dice por
-    // qué (último error de la lectura de Open-Meteo). No revela nada sensible.
-    const debug = (req.query as Record<string, string | undefined>).debug;
-    if (debug) return { tiempo, error: ultimoErrorTiempo() };
+  // El tiempo de Malabo (migración 091). El servidor NO lo lee de Open-Meteo
+  // —desde Render la IP compartida recibe 429—; lo trae el móvil y lo reporta
+  // por POST. El GET devuelve lo último que algún móvil reportó, con `fresco`
+  // para que el cliente sepa si merece la pena volver a leer Open-Meteo él.
+  app.get('/api/tiempo', async (_req) => {
+    const { tiempo, fresco } = tiempoCacheado();
+    return { tiempo, fresco };
+  });
+
+  app.post('/api/tiempo', async (req) => {
+    const c = (req.body ?? {}) as Record<string, unknown>;
+    const tiempo = await registrarTiempo(pool, {
+      tempC: Number(c.tempC),
+      sensacionC: Number(c.sensacionC),
+      weatherCode: Number(c.weatherCode),
+      probLluvia: Number(c.probLluvia),
+    });
     return { tiempo };
   });
 

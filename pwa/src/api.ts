@@ -944,8 +944,10 @@ export interface EstadoConductor {
   pasajeros: PasajeroConductor[];
 }
 
-// El tiempo de Malabo para la franja superior (migración 091). Lo calcula y
-// cachea el servidor; aquí solo se recibe ya masticado.
+// El tiempo de Malabo para la franja superior (migración 091). El servidor
+// calcula el cielo y el aviso y lo cachea para todos, pero el DATO CRUDO lo
+// trae el móvil de Open-Meteo: desde la IP compartida de Render, Open-Meteo
+// responde 429. Ver `leerTiempoDeMalabo` más abajo.
 export type CieloTiempo = 'sol' | 'nubes' | 'lluvia' | 'tormenta';
 export interface Tiempo {
   tempC: number;
@@ -955,12 +957,64 @@ export interface Tiempo {
   actualizado: number;
 }
 
+// Lo que se lee de Open-Meteo y se reporta al servidor para que lo mastique.
+export interface TiempoReportado {
+  tempC: number;
+  sensacionC: number;
+  weatherCode: number;
+  probLluvia: number;
+}
+
+// Lee el tiempo de Malabo directo de Open-Meteo DESDE EL NAVEGADOR. El móvil
+// sale por su propia IP (con su cupo entero), así que aquí sí responde. Devuelve
+// los valores crudos para reportarlos; lanza si algo falla (la franja lo
+// absorbe y no enseña nada). Coordenada fija de Malabo: no usa el GPS de nadie.
+export async function leerTiempoDeMalabo(): Promise<TiempoReportado> {
+  const url = 'https://api.open-meteo.com/v1/forecast'
+    + '?latitude=3.75&longitude=8.78'
+    + '&current=temperature_2m,apparent_temperature,weather_code'
+    + '&hourly=precipitation_probability&forecast_days=1&timezone=Africa%2FMalabo';
+  const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error(`Open-Meteo ${r.status}`);
+  const d = await r.json() as {
+    current?: { time?: string; temperature_2m?: number; apparent_temperature?: number; weather_code?: number };
+    hourly?: { time?: string[]; precipitation_probability?: Array<number | null> };
+  };
+  const actual = d.current;
+  if (!actual || typeof actual.temperature_2m !== 'number') {
+    throw new Error('Open-Meteo sin tiempo actual');
+  }
+  // La probabilidad de lluvia de la hora en curso, casando la hora de `current`
+  // (con minutos) con la serie horaria (en punto).
+  let probLluvia = 0;
+  if (d.hourly?.time && d.hourly.precipitation_probability && actual.time) {
+    const clave = actual.time.slice(0, 13);
+    const i = d.hourly.time.findIndex((t) => t.slice(0, 13) === clave);
+    const p = i >= 0 ? d.hourly.precipitation_probability[i] : null;
+    if (typeof p === 'number') probLluvia = p;
+  }
+  return {
+    tempC: actual.temperature_2m,
+    sensacionC: actual.apparent_temperature ?? actual.temperature_2m,
+    weatherCode: actual.weather_code ?? 0,
+    probLluvia,
+  };
+}
+
 export const api = {
   sesion: () => pedirJson<Sesion>('/api/sesion'),
 
-  // `tiempo` es null cuando el servidor aún no tiene dato (Open-Meteo caído en
-  // el primer arranque): la pantalla entonces no enseña la franja.
-  tiempo: () => pedirJson<{ tiempo: Tiempo | null }>('/api/tiempo'),
+  // Lo último que algún móvil reportó, con `fresco` (menos de 10 min): si está
+  // fresco, este móvil no necesita volver a leer Open-Meteo. `tiempo` es null
+  // mientras nadie haya reportado aún.
+  tiempo: () => pedirJson<{ tiempo: Tiempo | null; fresco: boolean }>('/api/tiempo'),
+
+  // Reporta al servidor lo leído de Open-Meteo; devuelve el tiempo ya con cielo
+  // y aviso calculados, para pintar la franja.
+  reportarTiempo: (reportado: TiempoReportado) =>
+    pedirJson<{ tiempo: Tiempo }>('/api/tiempo', {
+      method: 'POST', body: JSON.stringify(reportado), reintentos: 1,
+    }),
 
   altaConductor: (datos: AltaConductor) =>
     pedirJson<{ conductorId: number; estadoVerificacion: string; aviso: string | null }>(
