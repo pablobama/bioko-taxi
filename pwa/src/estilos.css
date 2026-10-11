@@ -3146,6 +3146,52 @@ button.importe.elegido-importe {
   font-size: 0.72rem;
 }
 
+/* Cabecera de cada grupo del buscador: «En servicio» / «En el registro». */
+.mesa-buscar-grupo {
+  margin: 6px 4px 2px;
+  color: var(--humo);
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.mesa-buscar-grupo:first-child {
+  margin-top: 2px;
+}
+
+/* De quién es el recorrido que se está viendo, dentro del chip. Es un botón:
+   abre la ficha completa del taxi sin quitar el recorrido del plano. */
+.recorrido-quien {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  border: none;
+  background: none;
+  color: var(--hueso);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+.recorrido-quien:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.recorrido-quien b {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--ambar);
+  color: #1c1c21;
+  font-size: 0.72em;
+  font-weight: 800;
+}
+.recorrido-quien small {
+  color: var(--humo);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
 .recorrido-cuadricula {
   display: grid;
   grid-template-columns: repeat(2, max-content);

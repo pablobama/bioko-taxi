@@ -4296,6 +4296,23 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   // (09/10): se va filtrando la flota viva según se escribe, y al elegir uno
   // se abre su tarjeta con los datos.
   const [busquedaTaxi, setBusquedaTaxi] = useState('');
+  // Además de filtrar la flota viva (instantáneo, sin red), se busca en TODO el
+  // registro —también los que no están en servicio— por nombre, teléfono o
+  // matrícula (11/10). Así el buscador encuentra el historial, y al elegir uno
+  // se pinta su recorrido. Se pregunta al servidor con un respiro para no
+  // disparar una consulta por cada tecla.
+  const [registroTaxis, setRegistroTaxis] = useState<ConductorOperador[]>([]);
+  useEffect(() => {
+    const q = busquedaTaxi.trim();
+    if (q.length < 2) { setRegistroTaxis([]); return undefined; }
+    let vivo = true;
+    const reloj = setTimeout(() => {
+      api.conductoresOperador(undefined, q)
+        .then((r) => { if (vivo) setRegistroTaxis(r.conductores); })
+        .catch(() => { if (vivo) setRegistroTaxis([]); });
+    }, 300);
+    return () => { vivo = false; clearTimeout(reloj); };
+  }, [busquedaTaxi]);
   // Las carreras dibujadas sobre el plano (06/10): id → tramos de su traza.
   // Un Map y no una sola: comparar dos viajes es verlos JUNTOS.
   const [trazas, setTrazas] = useState<Map<number, Array<Array<{ lat: number; lng: number }>>>>(new Map());
@@ -4306,6 +4323,10 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   // ficha.
   const [recorridoMapa, setRecorridoMapa] = useState<{
     conductorId: number; periodo: PeriodoRecorrido;
+    // De quién es el recorrido, cuando se abre desde el buscador (no desde su
+    // ficha, donde ya se sabe). Deja ver y abrir la ficha del taxi del
+    // historial sin perder el recorrido pintado.
+    etiqueta?: { nombre: string; matricula: string | null; numero: string | null };
     tramos: Array<Array<{ lat: number; lng: number }>>;
     // El resumen del periodo, para las cuadrículas superpuestas sobre el mapa.
     // Son las cifras del coche CIRCULANDO (al volante): la velocidad y el
@@ -4326,11 +4347,15 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
     tramos: Array<Array<{ lat: number; lng: number }>>;
   } | null>(null);
 
-  async function verRecorridoConductor(id: number, periodo: PeriodoRecorrido = 'dia') {
+  async function verRecorridoConductor(
+    id: number,
+    periodo: PeriodoRecorrido = 'dia',
+    etiqueta?: { nombre: string; matricula: string | null; numero: string | null },
+  ) {
     try {
       const r = await api.recorridoConductor(id, periodo);
       setRecorridoMapa({
-        conductorId: id, periodo, tramos: r.tramos,
+        conductorId: id, periodo, etiqueta, tramos: r.tramos,
         resumen: {
           metros: r.metros,
           segundosEnMovimiento: r.segundosEnMovimiento,
@@ -4847,18 +4872,30 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                 />
                 {busquedaTaxi.trim() !== '' && (() => {
                   const q = busquedaTaxi.trim().toLowerCase();
-                  const coincidencias = (taxisVivos ?? []).filter((t) => (
+                  // En servicio ahora: instantáneo, de la flota viva.
+                  const vivos = (taxisVivos ?? []).filter((t) => (
                     (t.matricula ?? '').toLowerCase().includes(q)
                     || (t.numero_taxi ?? '').toLowerCase().includes(q)
                     || t.nombre.toLowerCase().includes(q)
-                  )).slice(0, 8);
+                  )).slice(0, 6);
+                  const idsVivos = new Set(vivos.map((t) => t.conductor_id));
+                  // Del registro: los que NO están en servicio ahora. Al elegir
+                  // uno se pinta su recorrido, que es lo que se viene a ver de un
+                  // taxi que no está en el plano.
+                  const registro = registroTaxis
+                    .filter((c) => !idsVivos.has(c.id))
+                    .slice(0, 6);
                   return (
                     <div className="mesa-buscar-resultados">
-                      {coincidencias.length === 0 ? (
-                        <p className="nota">Ningún taxi en servicio con esa matrícula.</p>
-                      ) : coincidencias.map((t) => (
+                      {vivos.length === 0 && registro.length === 0 && (
+                        <p className="nota">Ningún taxi con esa matrícula, ni en servicio ni en el registro.</p>
+                      )}
+                      {vivos.length > 0 && (
+                        <p className="mesa-buscar-grupo">En servicio</p>
+                      )}
+                      {vivos.map((t) => (
                         <button
-                          key={t.conductor_id} type="button" className="mesa-buscar-fila"
+                          key={`vivo-${t.conductor_id}`} type="button" className="mesa-buscar-fila"
                           onClick={() => { setFoco({ tipo: 'taxi', id: t.conductor_id }); setBusquedaTaxi(''); }}
                         >
                           <span className="mesa-buscar-mat">
@@ -4868,6 +4905,29 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                           <small>
                             {t.nombre} · {t.estado === 'DISPONIBLE' ? 'libre' : 'con pasajero'}
                             {t.zona !== null && ` · ${t.zona}`}
+                          </small>
+                        </button>
+                      ))}
+                      {registro.length > 0 && (
+                        <p className="mesa-buscar-grupo">En el registro · toca para ver su recorrido</p>
+                      )}
+                      {registro.map((c) => (
+                        <button
+                          key={`reg-${c.id}`} type="button" className="mesa-buscar-fila"
+                          onClick={() => {
+                            void verRecorridoConductor(c.id, 'dia', {
+                              nombre: c.nombre, matricula: c.matricula, numero: c.numero_taxi,
+                            });
+                            setBusquedaTaxi('');
+                          }}
+                        >
+                          <span className="mesa-buscar-mat">
+                            {c.numero_taxi !== null && <b>{c.numero_taxi}</b>}
+                            {c.matricula ?? 'sin matrícula'}
+                          </span>
+                          <small>
+                            {c.nombre}
+                            {c.marca !== null && ` · ${c.marca}`}
                           </small>
                         </button>
                       ))}
@@ -4947,12 +5007,30 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
             )}
             {recorridoMapa !== null && (
               <span className="mesa-chip mesa-chip-recorrido">
-                <small>Recorrido</small>
+                {/* De quién es, cuando se abrió desde el buscador. La matrícula
+                    es un botón: abre su ficha completa sin perder el recorrido. */}
+                {recorridoMapa.etiqueta ? (
+                  <button
+                    type="button" className="recorrido-quien"
+                    onClick={() => {
+                      setEnGente('conductores');
+                      setFichaConductor(recorridoMapa.conductorId);
+                      setSeccion('gente');
+                      setHojaAbierta(true);
+                    }}
+                  >
+                    {recorridoMapa.etiqueta.numero !== null && <b>{recorridoMapa.etiqueta.numero}</b>}
+                    {recorridoMapa.etiqueta.matricula ?? 'sin matrícula'}
+                    <small>{recorridoMapa.etiqueta.nombre} · ver ficha</small>
+                  </button>
+                ) : (
+                  <small>Recorrido</small>
+                )}
                 {(['dia', 'semana', 'mes'] as const).map((per) => (
                   <button
                     key={per} type="button"
                     className={per === recorridoMapa.periodo ? 'recorrido-per activo' : 'recorrido-per'}
-                    onClick={() => verRecorridoConductor(recorridoMapa.conductorId, per)}
+                    onClick={() => verRecorridoConductor(recorridoMapa.conductorId, per, recorridoMapa.etiqueta)}
                   >
                     {per === 'dia' ? 'Hoy' : per === 'semana' ? 'Semana' : 'Mes'}
                   </button>
