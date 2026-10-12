@@ -102,6 +102,9 @@ export interface PropiedadesMapa {
     lng: number;
     matricula: string | null;
     libre: boolean;
+    // Posición vieja: el taxi sigue en servicio pero hace rato que no manda
+    // dónde está. Se pinta hueco para no confundir «ahí está» con «ahí estaba».
+    atenuado?: boolean;
   }>;
   buscando?: boolean;
   encuadre?: Encuadre;
@@ -976,10 +979,12 @@ export default function Mapa({
                 onPointerDown={alTocarTaxi ? (ev) => ev.stopPropagation() : undefined}
                 style={alTocarTaxi ? { cursor: 'pointer' } : undefined}
               >
+                {/* Lleno = reportando ahora; hueco (en el color de su estado) =
+                    posición vieja. Libre en ámbar, con pasajero en gris. */}
                 <circle
                   r={7}
-                  fill={t.libre ? '#ffb020' : '#5a5a64'}
-                  stroke="#16161a"
+                  fill={t.atenuado ? 'none' : (t.libre ? '#ffb020' : '#5a5a64')}
+                  stroke={t.atenuado ? (t.libre ? '#ffb020' : '#8a8a94') : '#16161a'}
                   strokeWidth={2}
                 />
                 {t.matricula !== null && (

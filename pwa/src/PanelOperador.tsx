@@ -14,7 +14,7 @@ import {
   type FacturacionOperador,
   type ParametroOperador, type PasajeroOperador, type PeriodoRecorrido, type PermisoOperador,
   type RangoRecorrido,
-  type RecargaOperador, type RecorridoOperador, type ReferenciaOperador,
+  type RecargaOperador, type RecorridoOperador, type ReferenciaOperador, type SalidaRecorrido,
   type PropietarioFicha, type PropietarioRegistro, type SaludOperador, type SinOfertaViva, type SolicitudCentral,
   type TaxiVivo, type TransicionOperador, type VehiculoRegistro,
   type ViajeVivo,
@@ -4627,6 +4627,9 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
       metros: number; segundosEnMovimiento: number;
       velocidadAlVolanteKmh: number | null; clientesLlevados: number;
     };
+    // Un renglón por salida (087): para LEER el recorrido además de verlo —a
+    // qué hora salió, cuánto duró y cuánto anduvo cada tramo.
+    salidas: SalidaRecorrido[];
   } | null>(null);
   // La tarjeta de un punto tocado del recorrido: barrio y hora de ese paso.
   const [puntoInfo, setPuntoInfo] = useState<
@@ -4674,6 +4677,7 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
           velocidadAlVolanteKmh: r.velocidadAlVolanteKmh,
           clientesLlevados: r.clientesLlevados,
         },
+        salidas: r.salidas,
       });
       setPuntoInfo(null);
       setAnimacion(null);
@@ -4853,14 +4857,36 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   // Esc cierra la hoja desde cualquier sitio. Es el gesto de «quita esto de
   // en medio», y tener que buscar la cruz con el ratón en mitad de una
   // llamada es justo lo que la mesa quiere evitar.
+  // Atajos de teclado de la mesa (12/10): Esc cierra lo abierto, y los dígitos
+  // 1..n saltan a la sección n del raíl, en su orden. Despachar es con las dos
+  // manos en el teléfono; alcanzar el ratón para cambiar de lámina cuesta.
   useEffect(() => {
-    if (!enConsola) return;
+    if (!enConsola) return undefined;
     const alTeclear = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setHojaAbierta(false);
+      const destino = e.target as HTMLElement | null;
+      const escribiendo = destino !== null && (destino.tagName === 'INPUT'
+        || destino.tagName === 'TEXTAREA' || destino.tagName === 'SELECT'
+        || destino.isContentEditable);
+      if (e.key === 'Escape') {
+        // De dentro afuera: primero la hoja; si no hay, quita el recorrido
+        // pintado y vuelve al despacho vivo.
+        if (hojaAbierta) setHojaAbierta(false);
+        else if (recorridoMapa !== null) setRecorridoMapa(null);
+        return;
+      }
+      if (escribiendo || e.ctrlKey || e.metaKey || e.altKey) return;
+      const n = Number(e.key);
+      if (Number.isInteger(n) && n >= 1 && n <= visibles.length) {
+        setSeccion(visibles[n - 1][0]);
+        setHojaAbierta(true);
+        setFichaConductor(null);
+        setFichaPasajero(null);
+        setFichaPropietario(null);
+      }
     };
     window.addEventListener('keydown', alTeclear);
     return () => window.removeEventListener('keydown', alTeclear);
-  }, [enConsola]);
+  }, [enConsola, hojaAbierta, recorridoMapa, visibles]);
 
   // Los taxis que el mapa puede pintar: los que han mandado alguna posición.
   const taxisEnMapa = (taxisVivos ?? [])
@@ -4871,6 +4897,9 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
       lng: t.lng,
       matricula: t.matricula,
       libre: t.estado === 'DISPONIBLE',
+      // Más de dos minutos sin mandar posición: sigue en servicio, pero lo que
+      // se ve es dónde estaba, no dónde está. Se pinta hueco.
+      atenuado: (t.visto_hace_seg ?? 0) > 120,
     }));
 
   // Las mismas piezas montadas de dos maneras. Se nombran aquí en vez de
@@ -5420,6 +5449,40 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                     <b>{recorridoMapa.resumen.clientesLlevados}</b>
                     <small>{recorridoMapa.resumen.clientesLlevados === 1 ? 'cliente llevado' : 'clientes llevados'}</small>
                   </div>
+                </div>
+              )}
+
+              {/* Leyenda del mapa de calor: qué quiere decir el color del trazo
+                  cuando un sitio se pisó varias veces. Solo si hay repetición;
+                  con una sola pasada el trazo es de un color y no hay nada que
+                  explicar. */}
+              {recorridoMapa !== null && recorridoMapa.maxPasadas > 1 && (
+                <div className="recorrido-leyenda">
+                  <span>veces por el mismo sitio</span>
+                  <i style={{ background: colorDeCalor(1, recorridoMapa.maxPasadas) }} />1
+                  <i style={{ background: colorDeCalor(Math.ceil(recorridoMapa.maxPasadas / 2), recorridoMapa.maxPasadas) }} />
+                  <i style={{ background: colorDeCalor(recorridoMapa.maxPasadas, recorridoMapa.maxPasadas) }} />
+                  {recorridoMapa.maxPasadas}
+                </div>
+              )}
+
+              {/* Las salidas, para LEER el recorrido además de verlo: a qué hora
+                  arrancó cada tramo, cuánto duró y cuánto anduvo. Las paradas no
+                  se listan —no son salidas—; de la más reciente a la primera. */}
+              {recorridoMapa !== null && recorridoMapa.salidas.some((s) => !s.parado) && (
+                <div className="recorrido-salidas">
+                  <h5>Salidas</h5>
+                  <ul>
+                    {recorridoMapa.salidas
+                      .filter((s) => !s.parado)
+                      .slice(-12).reverse()
+                      .map((s, i) => (
+                        <li key={`${s.desde}-${i}`}>
+                          <b>{soloHora(s.desde)}</b>
+                          <span>{duracion(s.segundos)} · {(s.metros / 1000).toFixed(1)} km</span>
+                        </li>
+                      ))}
+                  </ul>
                 </div>
               )}
             </div>

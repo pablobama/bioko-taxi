@@ -3317,6 +3317,66 @@ button.importe.elegido-importe {
   color: var(--humo);
 }
 
+/* Leyenda del mapa de calor del recorrido, superpuesta como las cifras. */
+.recorrido-leyenda {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  width: max-content;
+  max-width: 260px;
+  padding: 6px 10px;
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  background: rgba(16, 16, 20, 0.78);
+  font-size: 0.72rem;
+  color: var(--humo);
+}
+.recorrido-leyenda span { margin-right: 4px; }
+.recorrido-leyenda i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.recorrido-leyenda i + i { margin-left: -4px; }
+
+/* Las salidas: una lista corta y legible, con su propio scroll para no empujar
+   el mapa cuando hay muchas. */
+.recorrido-salidas {
+  width: max-content;
+  max-width: 260px;
+  padding: 8px 10px;
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  background: rgba(16, 16, 20, 0.78);
+}
+.recorrido-salidas h5 {
+  margin: 0 0 4px;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--humo);
+}
+.recorrido-salidas ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 168px;
+  overflow-y: auto;
+}
+.recorrido-salidas li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.76rem;
+}
+.recorrido-salidas li b { color: var(--hueso); font-weight: 700; }
+.recorrido-salidas li span { color: var(--humo); }
+
 .mesa-chip-aviso b {
   color: var(--ambar-claro);
 }
