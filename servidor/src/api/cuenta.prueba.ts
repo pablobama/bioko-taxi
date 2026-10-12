@@ -399,3 +399,43 @@ test('repetir el MISMO número no gasta cupo: equivocarse al teclear es normal',
     assert.equal(res.status, 200, `consulta ${i}: ${JSON.stringify(res.cuerpo)}`);
   }
 });
+
+// --- Taxista que usa la app como pasajero (pedido 12/10) --------------------
+//
+// Sin volver a verificar el número: el taxista ya demostró que la línea es suya
+// al entrar, así que su perfil de pasajero nace verificado en OTRO aparato. Los
+// dos papeles conviven; la ficha de taxista no se toca.
+
+test('un taxista puede usar la app como pasajero sin re-verificar, y sigue siendo taxista', async () => {
+  const telefono = telefonoUnico();
+  const uuidTaxista = await darDeAltaConductor(telefono, `KN-${Math.floor(Math.random() * 9000) + 1000}-ZZ`);
+  // El panel exige el teléfono verificado por SMS (telefono_verificado_en), y
+  // eso es lo que esta función reusa. Se pone directo para no depender del
+  // flujo de SMS, que en la base compartida de dev choca con otras pruebas.
+  await pool.query(
+    'UPDATE conductor SET telefono_verificado_en = now() WHERE telefono = $1',
+    [telefono],
+  );
+
+  const uuidPasajero = randomUUID();
+  const cambio = await llamar('POST', '/api/conductor/usar-como-pasajero', uuidTaxista, { uuid: uuidPasajero });
+  assert.equal(cambio.status, 200, JSON.stringify(cambio.cuerpo));
+  assert.equal(cambio.cuerpo.rol, 'cliente');
+
+  // El aparato nuevo es un pasajero verificado con el mismo número.
+  const sesionPasajero = await llamar('GET', '/api/sesion', uuidPasajero);
+  assert.equal(sesionPasajero.status, 200, JSON.stringify(sesionPasajero.cuerpo));
+  assert.equal(sesionPasajero.cuerpo.rol, 'cliente');
+  assert.equal(sesionPasajero.cuerpo.cliente.telefono, telefono);
+  assert.equal(sesionPasajero.cuerpo.cliente.telefonoVerificado, true);
+
+  // Y el aparato del taxista sigue siendo taxista: no se le ha tocado nada.
+  const sesionTaxista = await llamar('GET', '/api/sesion', uuidTaxista);
+  assert.equal(sesionTaxista.status, 200, JSON.stringify(sesionTaxista.cuerpo));
+  assert.equal(sesionTaxista.cuerpo.rol, 'conductor');
+});
+
+test('usar como pasajero exige un aparato de taxista: un desconocido no puede', async () => {
+  const res = await llamar('POST', '/api/conductor/usar-como-pasajero', randomUUID(), { uuid: randomUUID() });
+  assert.equal(res.status, 403, JSON.stringify(res.cuerpo));
+});

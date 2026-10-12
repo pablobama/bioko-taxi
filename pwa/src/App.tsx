@@ -283,6 +283,42 @@ export default function App() {
     }
   }
 
+  // Usar la aplicación como pasajero siendo taxista (pedido 12/10), sin volver
+  // a verificar el número. Un dispositivo es de un rol o del otro, así que el
+  // pasajero vive en OTRO uuid; se guardan los dos para poder saltar de vuelta
+  // al taxista sin pasar por el alta.
+  async function usarComoPasajero() {
+    if (!window.confirm(t('conductor.usarComoPasajeroConfirmar'))) return;
+    const uuidTaxista = uuidDispositivo();
+    const uuidPasajero = localStorage.getItem('uuidRolPasajero') ?? crypto.randomUUID();
+    try {
+      // Va con el dispositivo de taxista actual, que es lo que autoriza al
+      // servidor a reusar el teléfono ya verificado.
+      await api.usarComoPasajero(uuidPasajero);
+    } catch (error) {
+      setAviso(mensajeDeError(error, t('app.sinServidor')));
+      return;
+    }
+    localStorage.setItem('uuidRolTaxista', uuidTaxista);
+    localStorage.setItem('uuidRolPasajero', uuidPasajero);
+    // La sesión cacheada y el viaje activo son del papel que se deja.
+    localStorage.removeItem(CLAVE_SESION);
+    localStorage.removeItem('solicitudActiva');
+    localStorage.setItem('dispositivo', uuidPasajero);
+    window.location.replace(window.location.pathname);
+  }
+
+  // Y la vuelta: el pasajero que llegó aquí desde su taxi puede regresar a él
+  // sin más, porque su ficha de taxista sigue intacta en el otro uuid.
+  function volverATaxista() {
+    const uuidTaxista = localStorage.getItem('uuidRolTaxista');
+    if (!uuidTaxista) return;
+    localStorage.removeItem(CLAVE_SESION);
+    localStorage.removeItem('solicitudActiva');
+    localStorage.setItem('dispositivo', uuidTaxista);
+    window.location.replace(window.location.pathname);
+  }
+
   useEffect(() => {
     api.mapa().then((m) => setPuntos(m.referencias)).catch(() => undefined);
     // El enlace de activación tiene que resolverse ANTES de preguntar quién
@@ -408,6 +444,11 @@ export default function App() {
           puntos={puntos}
           idioma={idioma}
           alAbrirCampo={perfil.agente ? () => setPantalla('campo') : undefined}
+          alVolverATaxista={
+            typeof localStorage !== 'undefined' && localStorage.getItem('uuidRolTaxista')
+              ? volverATaxista
+              : undefined
+          }
         />
       </>
     );
@@ -427,6 +468,7 @@ export default function App() {
           alAbrirAjustes={() => setPantalla('ajustes_conductor')}
           alAbrirEstadisticas={() => setPantalla('estadisticas_conductor')}
           alAbrirCampo={conductor.agente ? () => setPantalla('campo') : undefined}
+          alUsarComoPasajero={() => { void usarComoPasajero(); }}
           alRecargarSesion={() => { void cargarSesion(); }}
         />
       </>

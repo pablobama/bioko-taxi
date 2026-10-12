@@ -333,3 +333,97 @@ export async function devolverCliente(
   );
   return { rol: 'cliente', nombre: p.nombre };
 }
+
+// El taxista quiere usar la aplicación como pasajero (pedido 12/10), SIN volver
+// a verificar su número: ya demostró que la línea es suya al entrar como
+// taxista, y el teléfono del conductor está verificado. Así que aquí no hay
+// código por SMS —la ruta la autentica el dispositivo de conductor, que es la
+// prueba— y se le prepara un perfil de pasajero VERIFICADO en un aparato nuevo.
+//
+// Son cuentas distintas a propósito (ver la cabecera y migración 024): el
+// mismo número vive como taxista en un dispositivo y como pasajero en otro, y
+// el móvil guarda los dos uuid para saltar de uno a otro. La ficha de taxista
+// no se toca.
+export async function taxistaAPasajero(
+  cliente: pg.ClientBase,
+  uuidConductor: string,
+  uuidCliente: string,
+): Promise<CuentaDevuelta> {
+  // Quién pide esto: el aparato tiene que ser un taxista verificado. Se mira
+  // por el uuid del conductor, que es con el que viaja la petición.
+  const quien = await cliente.query(
+    `SELECT c.id, c.telefono, c.nombre, c.estado_verificacion, c.telefono_verificado_en
+     FROM dispositivo d JOIN conductor c ON c.id = d.conductor_id
+     WHERE d.uuid_persistente = $1 AND d.tipo = 'conductor'`,
+    [uuidConductor],
+  );
+  if (quien.rowCount === 0) {
+    throw new CuentaNoEntregable(403, 'Esto solo lo puede pedir un taxista registrado.');
+  }
+  const c = quien.rows[0];
+  if (c.estado_verificacion !== 'verificado' || c.telefono_verificado_en === null) {
+    throw new CuentaNoEntregable(
+      403,
+      'Tu alta de taxista aún no está verificada, así que no se puede reusar tu número.',
+    );
+  }
+  const telefono: string = c.telefono;
+
+  // El aparato de pasajero es OTRO, nunca el del taxista: un dispositivo es de
+  // un rol o del otro, no de los dos (lo garantiza `/api/sesion`).
+  if (uuidCliente === uuidConductor) {
+    throw new CuentaNoEntregable(400, 'El pasajero necesita un aparato distinto al del taxista.');
+  }
+  const yaConductor = await cliente.query(
+    'SELECT tipo FROM dispositivo WHERE uuid_persistente = $1 FOR UPDATE',
+    [uuidCliente],
+  );
+  if ((yaConductor.rowCount ?? 0) > 0 && yaConductor.rows[0].tipo === 'conductor') {
+    throw new CuentaNoEntregable(409, 'Ese aparato ya es de un taxista.');
+  }
+
+  const dispositivo = await cliente.query(
+    `INSERT INTO dispositivo (uuid_persistente, tipo, ultimo_heartbeat)
+     VALUES ($1, 'cliente', now())
+     ON CONFLICT (uuid_persistente) DO UPDATE SET ultimo_heartbeat = now()
+     RETURNING id`,
+    [uuidCliente],
+  );
+  const dispositivoId = Number(dispositivo.rows[0].id);
+
+  // Si ese número ya tenía un perfil de pasajero vigente en otro aparato, deja
+  // de estarlo aquí: el índice `perfil_cliente_telefono_vigente` (migración
+  // 024) solo deja uno vigente por número, así que el anterior tiene que
+  // soltarlo antes de insertar. Se conservan sus datos de contacto para no
+  // pedirlos de nuevo.
+  const previo = await cliente.query(
+    `SELECT dispositivo_id, correo, nombre, edad, genero
+     FROM perfil_cliente WHERE telefono = $1 AND telefono_vigente FOR UPDATE`,
+    [telefono],
+  );
+  const datosPrevios = (previo.rowCount ?? 0) > 0 ? previo.rows[0] : null;
+  if (datosPrevios !== null && Number(datosPrevios.dispositivo_id) !== dispositivoId) {
+    await cliente.query(
+      'UPDATE perfil_cliente SET telefono_vigente = false WHERE dispositivo_id = $1',
+      [datosPrevios.dispositivo_id],
+    );
+  }
+
+  const nombre: string = datosPrevios?.nombre ?? c.nombre;
+  await cliente.query(
+    `INSERT INTO perfil_cliente
+       (dispositivo_id, telefono, correo, nombre, edad, genero,
+        telefono_vigente, telefono_verificado_en)
+     VALUES ($1, $2, $3, $4, $5, $6, true, now())
+     ON CONFLICT (dispositivo_id) DO UPDATE
+       SET telefono = EXCLUDED.telefono,
+           correo = COALESCE(EXCLUDED.correo, perfil_cliente.correo),
+           nombre = COALESCE(EXCLUDED.nombre, perfil_cliente.nombre),
+           telefono_vigente = true,
+           telefono_verificado_en = now(),
+           actualizado_en = now()`,
+    [dispositivoId, telefono, datosPrevios?.correo ?? null, nombre,
+      datosPrevios?.edad ?? null, datosPrevios?.genero ?? null],
+  );
+  return { rol: 'cliente', nombre };
+}

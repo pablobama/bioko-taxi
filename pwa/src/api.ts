@@ -1686,6 +1686,16 @@ export const api = {
       reintentos: 1,
     }),
 
+  // Usar la app como pasajero siendo taxista, sin re-verificar el número. Se
+  // llama ESTANDO como taxista (la petición viaja con su dispositivo, que es la
+  // prueba) y le prepara un perfil de pasajero verificado en `uuidPasajero`.
+  usarComoPasajero: (uuidPasajero: string) =>
+    pedirJson<{ rol: 'cliente'; nombre: string | null }>('/api/conductor/usar-como-pasajero', {
+      method: 'POST',
+      body: JSON.stringify({ uuid: uuidPasajero }),
+      reintentos: 1,
+    }),
+
   // El mismo papel para un pasajero (migración 072). Quien mejor sitúa un
   // barrio es a veces alguien que ni conduce.
   nombrarAgentePasajero: (dispositivoId: number, agente: boolean) =>

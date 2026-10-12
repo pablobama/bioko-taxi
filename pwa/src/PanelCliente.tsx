@@ -59,6 +59,8 @@ export interface PropiedadesPanelCliente {
   // Solo para el pasajero con papel de campo (migración 072). Sin él, el botón
   // del mapa no existe.
   alAbrirCampo?: () => void;
+  // Volver al panel de taxista, solo si se llegó aquí desde él (pedido 12/10).
+  alVolverATaxista?: () => void;
 }
 
 // Buscador de referencias con coincidencia difusa del gazetteer.
@@ -292,7 +294,7 @@ function FormularioPerfil({
 }
 
 export default function PanelCliente({
-  perfilInicial, puntos, idioma, alAbrirCampo,
+  perfilInicial, puntos, idioma, alAbrirCampo, alVolverATaxista,
 }: PropiedadesPanelCliente) {
   const t = crearT(idioma);
   const [fase, setFase] = useState<Fase>('cargando');
@@ -1093,6 +1095,10 @@ export default function PanelCliente({
               : []),
             { icono: '▤', etiqueta: t('cabecera.tusNumeros'), alPulsar: () => setFase('estadisticas') },
             { icono: '⚙', etiqueta: t('cabecera.tusDatos'), alPulsar: () => setFase('ajustes') },
+            // Volver al taxi, solo si se llegó aquí desde él (pedido 12/10).
+            ...(alVolverATaxista
+              ? [{ icono: '🚕', etiqueta: t('cabecera.volverATaxista'), alPulsar: alVolverATaxista }]
+              : []),
           ]}
         />
       )}

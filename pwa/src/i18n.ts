@@ -370,6 +370,10 @@ const es: Diccionario = {
   // Cabecera común
   'cabecera.tusNumeros': 'Tus números',
   'cabecera.tusDatos': 'Tus datos',
+  'cabecera.usarComoPasajero': 'Usar como pasajero',
+  'cabecera.volverATaxista': 'Volver a taxista',
+  'conductor.usarComoPasajeroConfirmar':
+    'Vas a usar la app como pasajero con tu mismo número, sin volver a verificarlo. Podrás volver a taxista cuando quieras. ¿Seguir?',
   'cabecera.ocultarPanel': 'Ocultar el panel y ver el plano entero',
   'cabecera.mostrarPanel': 'Mostrar el panel',
 
@@ -801,6 +805,10 @@ const fr: Diccionario = {
 
   'cabecera.tusNumeros': 'Tes chiffres',
   'cabecera.tusDatos': 'Tes données',
+  'cabecera.usarComoPasajero': 'Utiliser comme passager',
+  'cabecera.volverATaxista': 'Revenir en taxi',
+  'conductor.usarComoPasajeroConfirmar':
+    'Tu vas utiliser l’appli comme passager avec ton même numéro, sans le revérifier. Tu pourras revenir en taxi quand tu veux. Continuer ?',
   'cabecera.ocultarPanel': 'Masquer le panneau et voir tout le plan',
   'cabecera.mostrarPanel': 'Afficher le panneau',
 
@@ -1221,6 +1229,10 @@ const en: Diccionario = {
 
   'cabecera.tusNumeros': 'Your numbers',
   'cabecera.tusDatos': 'Your details',
+  'cabecera.usarComoPasajero': 'Use as passenger',
+  'cabecera.volverATaxista': 'Back to driver',
+  'conductor.usarComoPasajeroConfirmar':
+    'You’ll use the app as a passenger with your same number, no re-verifying. You can switch back to driver anytime. Continue?',
   'cabecera.ocultarPanel': 'Hide the panel and see the whole map',
   'cabecera.mostrarPanel': 'Show the panel',
 

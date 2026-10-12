@@ -19,6 +19,7 @@ import { inicioDelDiaEnMalabo } from '../dominio/tiempo.js';
 import { normalizarTelefono } from '../dominio/telefono.js';
 import { asignarNumeroSiguiente } from '../dominio/numeros-taxi.js';
 import { esOperadorAhora } from './operador.js';
+import { CuentaNoEntregable, taxistaAPasajero } from '../dominio/cuentas.js';
 
 const PATRON_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CARROCERIAS = ['turismo', '4x4', 'furgoneta', 'autobus'];
@@ -303,6 +304,28 @@ export function registrarRutasSesion(app: FastifyInstance, pool: pg.Pool): void 
           : 'Tu alta está pendiente de verificación. No recibirás carreras hasta que el operador compruebe tus datos.',
       };
     });
+  });
+
+  // Usar la aplicación como pasajero siendo taxista (pedido 12/10), sin volver
+  // a verificar el número: lo autentica el dispositivo de taxista, que ya probó
+  // que la línea es suya. El móvil manda un uuid de pasajero nuevo —otro
+  // aparato, porque un dispositivo es de un rol o del otro— y el servidor le
+  // prepara ahí un perfil verificado reusando el teléfono.
+  app.post('/api/conductor/usar-como-pasajero', async (req) => {
+    const uuidConductor = uuidDesde(req);
+    const cuerpo = (req.body ?? {}) as { uuid?: string };
+    const uuidCliente = cuerpo.uuid?.trim().toLowerCase();
+    if (!uuidCliente || !PATRON_UUID.test(uuidCliente)) {
+      throw errorHttp(400, 'Falta el uuid del aparato de pasajero.');
+    }
+    try {
+      return await enTransaccion(pool, (cliente) => (
+        taxistaAPasajero(cliente, uuidConductor, uuidCliente)
+      ));
+    } catch (e) {
+      if (e instanceof CuentaNoEntregable) throw errorHttp(e.codigoHttp, e.message);
+      throw e;
+    }
   });
 
   // Panel de estadísticas de uso, distinto según el rol.

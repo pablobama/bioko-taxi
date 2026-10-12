@@ -49,7 +49,7 @@ const SE_PUEDEN_HACER_SIN_RED: Record<string, string> = {
 
 export default function PanelConductor({
   conductor, puntos, idioma, alAbrirAjustes, alAbrirEstadisticas, alAbrirCampo,
-  alRecargarSesion,
+  alUsarComoPasajero, alRecargarSesion,
 }: {
   conductor: DatosConductor;
   puntos: PuntoMapa[];
@@ -58,6 +58,9 @@ export default function PanelConductor({
   alAbrirEstadisticas: () => void;
   // Solo para agentes de campo (migración 025): abre las herramientas del mapa.
   alAbrirCampo?: () => void;
+  // Usar la app como pasajero sin re-verificar el número (pedido 12/10). Va
+  // debajo de «Configurar» en el menú.
+  alUsarComoPasajero: () => void;
   // Los datos de sesión (verificación, suscripción) los tiene App: tras
   // pagar la cuota hay que pedirle que los recargue, o el panel seguiría
   // mostrando la situación anterior.
@@ -1020,6 +1023,9 @@ export default function PanelConductor({
             },
             { icono: '▤', etiqueta: t('cabecera.tusNumeros'), alPulsar: alAbrirEstadisticas },
             { icono: '⚙', etiqueta: t('cabecera.tusDatos'), alPulsar: alAbrirAjustes },
+            // Debajo de «Configurar» (pedido 12/10): saltar a pasajero con el
+            // mismo número, sin otra verificación.
+            { icono: '🧍', etiqueta: t('cabecera.usarComoPasajero'), alPulsar: alUsarComoPasajero },
           ]}
         />
       )}
