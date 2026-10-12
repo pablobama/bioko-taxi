@@ -1025,7 +1025,10 @@ export default function PanelConductor({
             { icono: '⚙', etiqueta: t('cabecera.tusDatos'), alPulsar: alAbrirAjustes },
             // Debajo de «Configurar» (pedido 12/10): saltar a pasajero con el
             // mismo número, sin otra verificación.
-            { icono: '🧍', etiqueta: t('cabecera.usarComoPasajero'), alPulsar: alUsarComoPasajero },
+            {
+              icono: '🧍', etiqueta: t('cabecera.usarComoPasajero'),
+              alPulsar: alUsarComoPasajero, dataGuia: 'pasajero',
+            },
           ]}
         />
       )}
@@ -1068,7 +1071,7 @@ export default function PanelConductor({
 // La guía de la primera vez del taxista. Lo que hay que saber para trabajar
 // hoy: entrar en servicio, qué es una oferta y lo que cuesta un desvío, dónde
 // está el saldo, y dónde se encienden la voz y el resto.
-const VERSION_GUIA_CONDUCTOR = 2;
+const VERSION_GUIA_CONDUCTOR = 3;
 
 function pasosConductor(t: ReturnType<typeof crearT>): PasoGuia[] {
   return [
@@ -1096,6 +1099,11 @@ function pasosConductor(t: ReturnType<typeof crearT>): PasoGuia[] {
       selector: '[data-guia="tiempo"]',
       titulo: t('guia.conductor.tiempoTitulo'),
       texto: t('guia.conductor.tiempoTexto'),
+    },
+    {
+      selector: '[data-guia="pasajero"]',
+      titulo: t('guia.conductor.pasajeroTitulo'),
+      texto: t('guia.conductor.pasajeroTexto'),
     },
   ];
 }

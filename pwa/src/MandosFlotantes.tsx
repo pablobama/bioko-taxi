@@ -17,6 +17,8 @@ interface Mando {
   icono: string;
   etiqueta: string;
   alPulsar: () => void;
+  // Para anclar un paso de la guía de primera vez a un mando concreto.
+  dataGuia?: string;
 }
 
 export default function MandosFlotantes({
@@ -45,6 +47,7 @@ export default function MandosFlotantes({
           type="button"
           className="ajustes mando-flotante"
           aria-label={mando.etiqueta}
+          data-guia={mando.dataGuia}
           onClick={mando.alPulsar}
         >
           {mando.icono}
