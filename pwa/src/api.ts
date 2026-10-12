@@ -1765,14 +1765,16 @@ export const api = {
   // tocado. Mismo rango/horas que el recorrido que se está viendo.
   puntoRecorrido: (
     conductorId: number,
-    p: { lat: number; lng: number; desde: string; hasta: string; horaDesde?: number; horaHasta?: number },
+    p: { lat: number; lng: number } & RangoRecorrido,
   ) => {
-    const partes = [
-      `lat=${p.lat}`, `lng=${p.lng}`,
-      `desde=${encodeURIComponent(p.desde)}`, `hasta=${encodeURIComponent(p.hasta)}`,
-    ];
-    if (p.horaDesde !== undefined) partes.push(`horaDesde=${p.horaDesde}`);
-    if (p.horaHasta !== undefined) partes.push(`horaHasta=${p.horaHasta}`);
+    const partes = [`lat=${p.lat}`, `lng=${p.lng}`];
+    if ('periodo' in p) {
+      partes.push(`periodo=${p.periodo}`);
+    } else {
+      partes.push(`desde=${encodeURIComponent(p.desde)}`, `hasta=${encodeURIComponent(p.hasta)}`);
+      if (p.horaDesde !== undefined) partes.push(`horaDesde=${p.horaDesde}`);
+      if (p.horaHasta !== undefined) partes.push(`horaHasta=${p.horaHasta}`);
+    }
     return pedirJson<{ punto: PuntoRecorrido | null }>(
       `/api/operador/conductores/${conductorId}/punto?${partes.join('&')}`,
     );

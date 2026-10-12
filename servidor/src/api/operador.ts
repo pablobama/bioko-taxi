@@ -1630,17 +1630,30 @@ export function registrarRutasOperador(
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
     const q = (req.query ?? {}) as {
       lat?: string; lng?: string; desde?: string; hasta?: string;
-      horaDesde?: string; horaHasta?: string;
+      horaDesde?: string; horaHasta?: string; periodo?: string;
     };
     const lat = Number(q.lat);
     const lng = Number(q.lng);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       throw errorHttp(400, 'Faltan lat/lng válidos.');
     }
-    const desde = new Date(q.desde ?? '');
-    const hasta = new Date(q.hasta ?? '');
-    if (Number.isNaN(desde.getTime()) || Number.isNaN(hasta.getTime())) {
-      throw errorHttp(400, 'desde/hasta tienen que ser fechas válidas.');
+    // El rango se da con fechas explícitas (la mesa, con su selector) o con un
+    // periodo (la ficha, que solo tiene día/semana/mes). Mismo cálculo que el
+    // endpoint de recorrido, para que el punto se busque en la MISMA ventana
+    // que se está viendo.
+    let desde: Date;
+    let hasta: Date;
+    if (q.desde !== undefined || q.hasta !== undefined) {
+      desde = new Date(q.desde ?? '');
+      hasta = new Date(q.hasta ?? '');
+      if (Number.isNaN(desde.getTime()) || Number.isNaN(hasta.getTime())) {
+        throw errorHttp(400, 'desde/hasta tienen que ser fechas válidas.');
+      }
+    } else {
+      const dias = DIAS_POR_PERIODO[q.periodo ?? 'dia'];
+      if (dias === undefined) throw errorHttp(400, 'periodo tiene que ser dia, semana o mes.');
+      hasta = new Date();
+      desde = inicioDelDiaEnMalabo(dias, hasta);
     }
     const horaDesde = q.horaDesde === undefined ? null : Number(q.horaDesde);
     const horaHasta = q.horaHasta === undefined ? null : Number(q.horaHasta);

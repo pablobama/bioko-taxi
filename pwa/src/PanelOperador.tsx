@@ -1738,17 +1738,47 @@ function RecorridoConductor({ id }: { id: number }) {
   const [recorrido, setRecorrido] = useState<RecorridoOperador | null>(null);
   const [error, setError] = useState('');
   const [cargando, setCargando] = useState(true);
+  // La llamada de un punto tocado: dónde (barrio) y cuándo pasó el taxi por el
+  // sitio. La misma función que la mesa de escritorio, pero aquí —en la ficha—
+  // para que tocar el trazo informe en CUALQUIER ventana, no solo a pantalla
+  // ancha. Se pregunta por el mismo periodo que se está viendo.
+  const [puntoInfo, setPuntoInfo] = useState<
+    { lat: number; lng: number; barrio: string | null; hora: string; velocidadKmh: number | null } | null
+  >(null);
 
   useEffect(() => {
     let vivo = true;
     setCargando(true);
     setError('');
+    setPuntoInfo(null);
     api.recorridoConductor(id, { periodo })
       .then((r) => { if (vivo) setRecorrido(r); })
       .catch((e) => { if (vivo) setError(e.message); })
       .finally(() => { if (vivo) setCargando(false); });
     return () => { vivo = false; };
   }, [id, periodo]);
+
+  async function verPunto(lat: number, lng: number) {
+    try {
+      const { punto } = await api.puntoRecorrido(id, { lat, lng, periodo });
+      if (punto === null) { setPuntoInfo(null); return; }
+      setPuntoInfo({
+        lat: punto.lat, lng: punto.lng, barrio: punto.barrio,
+        hora: punto.en, velocidadKmh: punto.velocidadKmh,
+      });
+    } catch {
+      setPuntoInfo(null);
+    }
+  }
+
+  const notaDelPunto = puntoInfo === null ? null : {
+    lat: puntoInfo.lat,
+    lng: puntoInfo.lng,
+    titulo: puntoInfo.barrio ?? 'Fuera de los barrios conocidos',
+    sub: new Date(puntoInfo.hora).toLocaleString('es-ES', {
+      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+    }) + (puntoInfo.velocidadKmh !== null ? ` · ${puntoInfo.velocidadKmh.toFixed(0)} km/h` : ''),
+  };
 
   // Con el plano abierto a pantalla completa, la tecla de escape lo cierra: es
   // lo que hace todo el mundo con algo que ocupa la pantalla entera, y sin eso
@@ -1835,6 +1865,9 @@ function RecorridoConductor({ id }: { id: number }) {
           <Mapa
             puntos={[]} encuadre="recorrido" recorrido={tramos}
             maxPasadas={recorrido?.maxPasadas ?? 1}
+            alTocarRecorrido={(lat, lng) => { void verPunto(lat, lng); }}
+            nota={notaDelPunto}
+            alCerrarNota={() => setPuntoInfo(null)}
           />
           {/* Trescientos píxeles de alto bastan para saber si anduvo por el
               centro o por Semu, y no bastan para nada más: un mes de recorrido
