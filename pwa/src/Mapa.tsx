@@ -146,6 +146,10 @@ export interface PropiedadesMapa {
   alTocarRecorrido?: (lat: number, lng: number) => void;
   // Un punto que se mueve a lo largo del recorrido cuando se reproduce.
   animacion?: { lat: number; lng: number } | null;
+  // Una «llamada» anclada a un punto del plano: un globo con el barrio y la
+  // hora del paso que se ha tocado, con su pico apuntando al sitio exacto.
+  nota?: { lat: number; lng: number; titulo: string; sub?: string } | null;
+  alCerrarNota?: () => void;
 }
 
 // El plano se prepara una sola vez para toda la vida de la aplicación: son
@@ -182,7 +186,7 @@ export default function Mapa({
   buscando, encuadre = 'persona', paradas, recorrido,
   origenEnVivo = false, etiquetasExtremos = null,
   maxPasadas = 1, rumbo = null, rumboCoche = null, yo = null, alCalcularRuta,
-  alTocarRecorrido, animacion = null,
+  alTocarRecorrido, animacion = null, nota = null, alCerrarNota,
 }: PropiedadesMapa) {
   const contenedor = useRef<HTMLDivElement>(null);
   const [caja, setCaja] = useState({ ancho: 0, alto: 0 });
@@ -752,14 +756,48 @@ export default function Mapa({
             );
           })}
 
-          {/* El punto que recorre la trayectoria al reproducirla: un disco
-              ámbar con halo, bien visible sobre el trazo. */}
+          {/* La cabeza del trazo mientras se dibuja al reproducir: un disco
+              ámbar con halo, en la punta de lo ya revelado. */}
           {animacion && (() => {
             const [ax, ay] = pantalla(animacion.lat, animacion.lng);
             return (
               <g>
                 <circle cx={ax} cy={ay} r={11} fill="#ffb020" opacity={0.25} />
                 <circle cx={ax} cy={ay} r={6} fill="#ffb020" stroke="#08080a" strokeWidth={2} />
+              </g>
+            );
+          })()}
+
+          {/* La llamada de un punto tocado: un globo con el barrio y la hora,
+              anclado al sitio con un pico. Se coloca encima del punto, o debajo
+              si arriba no cabe, y se recorta a los bordes del plano. */}
+          {nota && (() => {
+            const [nx, ny] = pantalla(nota.lat, nota.lng);
+            const W = 186;
+            const H = nota.sub ? 56 : 40;
+            const arriba = ny - H - 16 >= 0;
+            const bx = Math.max(6, Math.min(ancho - W - 6, nx - W / 2));
+            const by = arriba ? ny - H - 12 : ny + 12;
+            return (
+              <g>
+                {/* El pico, del globo al punto. */}
+                <line x1={nx} y1={ny} x2={nx} y2={arriba ? by + H : by}
+                  stroke="#ffb020" strokeWidth={1.5} />
+                <circle cx={nx} cy={ny} r={5} fill="#ffb020" stroke="#08080a" strokeWidth={2} />
+                <foreignObject x={bx} y={by} width={W} height={H} style={{ overflow: 'visible' }}>
+                  <div className="mapa-llamada">
+                    <div className="mapa-llamada-texto">
+                      <b>📍 {nota.titulo}</b>
+                      {nota.sub && <small>{nota.sub}</small>}
+                    </div>
+                    <button
+                      type="button" className="mapa-llamada-cerrar"
+                      aria-label="Cerrar" onClick={() => alCerrarNota?.()}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </foreignObject>
               </g>
             );
           })()}

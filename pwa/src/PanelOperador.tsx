@@ -4423,13 +4423,51 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
     }
   }
 
-  // Dónde está el punto que recorre la trayectoria, según el avance (0–1).
+  // Dónde está la cabeza del trazo que se va dibujando, según el avance (0–1).
   function puntoAnimado(): { lat: number; lng: number } | null {
     if (animacion === null || recorridoMapa === null) return null;
     const pts = recorridoMapa.tramos.flat();
     if (pts.length === 0) return null;
     const idx = Math.min(pts.length - 1, Math.floor(animacion * (pts.length - 1)));
     return { lat: pts[idx].lat, lng: pts[idx].lng };
+  }
+
+  // El recorrido que se pinta: entero, o —mientras se reproduce— solo lo que ya
+  // se ha «dibujado» hasta el avance, para que el trazo se vaya creando sobre
+  // las vías en vez de que un punto lo recorra sin dejar rastro.
+  function recorridoVisible(): Array<Array<{ lat: number; lng: number; n?: number }>> | undefined {
+    const trazasArr = trazas.size > 0 ? [...trazas.values()].flat() : [];
+    if (recorridoMapa === null) return trazasArr.length > 0 ? trazasArr : undefined;
+    if (animacion === null) {
+      const todo = [...trazasArr, ...recorridoMapa.tramos];
+      return todo.length > 0 ? todo : undefined;
+    }
+    const total = recorridoMapa.tramos.reduce((s, t) => s + t.length, 0);
+    const objetivo = Math.max(2, Math.floor(animacion * total));
+    const revelado: Array<Array<{ lat: number; lng: number; n: number }>> = [];
+    let contados = 0;
+    for (const t of recorridoMapa.tramos) {
+      if (contados >= objetivo) break;
+      const quedan = objetivo - contados;
+      revelado.push(quedan >= t.length ? t : t.slice(0, Math.max(2, quedan)));
+      contados += t.length;
+    }
+    return [...trazasArr, ...revelado];
+  }
+
+  // La llamada del punto tocado, lista para el plano (barrio + hora + km/h).
+  function notaDelPunto(): { lat: number; lng: number; titulo: string; sub?: string } | null {
+    if (puntoInfo === null) return null;
+    const hora = new Date(puntoInfo.hora).toLocaleString('es-ES', {
+      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+    });
+    const vel = puntoInfo.velocidadKmh !== null ? ` · ${puntoInfo.velocidadKmh.toFixed(0)} km/h` : '';
+    return {
+      lat: puntoInfo.lat,
+      lng: puntoInfo.lng,
+      titulo: puntoInfo.barrio ?? 'Fuera de los barrios conocidos',
+      sub: hora + vel,
+    };
   }
 
   // El motor de la reproducción: avanza el punto por el trazo y se para al
@@ -4912,16 +4950,12 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
               ]}
               alTocarTaxi={(id) => setFoco({ tipo: 'taxi', id })}
               alTocarEspera={(id, viva) => setFoco({ tipo: viva ? 'viva' : 'apagada', id })}
-              recorrido={(() => {
-                const dibujos = [
-                  ...(trazas.size > 0 ? [...trazas.values()].flat() : []),
-                  ...(recorridoMapa?.tramos ?? []),
-                ];
-                return dibujos.length > 0 ? dibujos : undefined;
-              })()}
+              recorrido={recorridoVisible()}
               maxPasadas={recorridoMapa?.maxPasadas ?? 1}
               alTocarRecorrido={recorridoMapa !== null ? (lat, lng) => { void verPuntoRecorrido(lat, lng); } : undefined}
               animacion={puntoAnimado()}
+              nota={notaDelPunto()}
+              alCerrarNota={() => setPuntoInfo(null)}
             />
             )}
             {viajeEnMapa === null && taxisVivos !== null && taxisEnMapa.length === 0 && (
@@ -5064,22 +5098,6 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                   </div>
                   <button type="submit" className="principal">Ver recorrido</button>
                 </form>
-              )}
-
-              {/* La tarjeta de un punto tocado del trazo: dónde y cuándo pasó. */}
-              {puntoInfo !== null && (
-                <div className="recorrido-punto">
-                  <b>📍 {puntoInfo.barrio ?? 'Fuera de los barrios conocidos'}</b>
-                  <small>
-                    {new Date(puntoInfo.hora).toLocaleString('es-ES', {
-                      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
-                    })}
-                    {puntoInfo.velocidadKmh !== null && ` · ${puntoInfo.velocidadKmh.toFixed(0)} km/h`}
-                  </small>
-                  <button type="button" className="recorrido-quitar" onClick={() => setPuntoInfo(null)}>
-                    cerrar ✕
-                  </button>
-                </div>
               )}
 
               {/* Las cifras del recorrido: el dibujo dice por dónde anduvo;

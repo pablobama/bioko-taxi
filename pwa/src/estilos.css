@@ -3238,6 +3238,36 @@ button.importe.elegido-importe {
   font-size: 0.85rem;
 }
 
+/* La «llamada» anclada a un punto del plano (globo con barrio y hora). Vive
+   dentro de un foreignObject del SVG, así que es HTML normal. */
+.mapa-llamada {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  width: max-content;
+  max-width: 186px;
+  padding: 6px 8px 6px 10px;
+  border: 1px solid var(--ambar);
+  border-radius: 10px;
+  background: rgba(16, 16, 20, 0.96);
+  color: var(--hueso);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.5);
+  font-family: system-ui, -apple-system, sans-serif;
+}
+.mapa-llamada-texto { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.mapa-llamada-texto b { font-size: 0.82rem; }
+.mapa-llamada-texto small { color: var(--humo); font-size: 0.72rem; }
+.mapa-llamada-cerrar {
+  border: none;
+  background: none;
+  color: var(--humo);
+  cursor: pointer;
+  font-size: 0.8rem;
+  line-height: 1;
+  padding: 1px 3px;
+}
+.mapa-llamada-cerrar:hover { color: var(--hueso); }
+
 /* La tarjeta de un punto tocado del recorrido: barrio, hora y velocidad. */
 .recorrido-punto {
   width: max-content;
