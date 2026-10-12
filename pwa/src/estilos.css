@@ -2902,7 +2902,8 @@ button.importe.elegido-importe {
  * lo que se consulta, que se cierra con Esc.
  *
  * Todo lo de aquí vive bajo `.mesa`, que solo existe cuando la pantalla pasa
- * de 1100 px y no es el modo agente. El teléfono no ve una sola línea de esto.
+ * de ANCHO_CONSOLA px (840) y no es el modo agente. El teléfono no ve una sola
+ * línea de esto.
  */
 .mesa {
   display: grid;

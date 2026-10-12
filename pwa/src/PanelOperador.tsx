@@ -5612,7 +5612,13 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
 // flota encima y lo que se consulta se abre como una hoja que se cierra con
 // Esc. En el teléfono no cambia absolutamente nada.
 
-const ANCHO_CONSOLA = 1100;
+// 840 y no 1100 (bajado el 12/10): la consola se despacha en ventanas que no
+// siempre están maximizadas —se vio una de 872 px sin recorrido clicable ni
+// tabla, porque caía en la vista estrecha del teléfono—. La mesa es una rejilla
+// fluida (raíl de 76 px + resto flexible), así que entra sin romperse bastante
+// por debajo de 1100; 840 cubre un portátil a media pantalla y deja la vista de
+// teléfono para tabletas y móviles de verdad.
+const ANCHO_CONSOLA = 840;
 
 // Los pictogramas del raíl. Emoji del sistema y no SVG a propósito: esto es
 // una herramienta interna de escritorio, y seis dibujos que ya vienen con el
