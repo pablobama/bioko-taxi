@@ -3922,6 +3922,13 @@ button.importe.elegido-importe {
   color: var(--humo);
   font-size: 0.74rem;
 }
+.op-fila-coche {
+  display: block;
+  margin-top: 1px;
+  color: var(--humo);
+  font-weight: 400;
+  font-size: 0.78rem;
+}
 
 /* La columna por la que se busca. Monoespaciada porque son claves y estados
    que se comparan letra a letra. */

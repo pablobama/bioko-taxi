@@ -2648,14 +2648,22 @@ function FilaConductor({
   alAbrir: (id: number) => void;
 }) {
   const estado = conductor.estado_verificacion;
+  // Una fila, más datos: arriba la identidad (nombre, apellido y el coche con
+  // su nº y matrícula); abajo el contacto, estado, saldo y tipo de registro.
+  // Así se ve lo mismo que en la consola sin tener que abrir la ficha.
+  const coche = [conductor.numero_taxi, conductor.matricula, conductor.marca]
+    .filter(Boolean).join(' · ');
   return (
     <button type="button" className="oferta oferta-boton" onClick={() => alAbrir(conductor.id)}>
-      <span className="oferta-ruta">{conductor.nombre}</span>
+      <span className="oferta-ruta">
+        {conductor.nombre}{conductor.apellido ? ` ${conductor.apellido}` : ''}
+        {coche && <small className="op-fila-coche">{coche}</small>}
+      </span>
       <span className="nota">
         {conductor.telefono}
-        {conductor.matricula && ` · ${conductor.matricula}`}
-        {conductor.marca && ` · ${conductor.marca}`}
         {' · '}{ETIQUETA_ESTADO[estado] ?? estado}
+        {' · '}{conductor.saldo_xaf.toLocaleString('es-ES')} XAF
+        {conductor.tipo_registro === 'ayuntamiento' ? ' · Ayto.' : ''}
       </span>
     </button>
   );
