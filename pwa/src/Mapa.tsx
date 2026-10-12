@@ -746,6 +746,11 @@ export default function Mapa({
                       stroke="transparent" strokeWidth={16} strokeLinecap="round"
                       style={{ cursor: 'pointer' }}
                       onClick={() => alTocarRecorrido(mlat, mlng)}
+                      // Sin esto el `onPointerDown` del SVG arranca un paneo y
+                      // captura el puntero, y el `onClick` de la línea no llega
+                      // a dispararse: por eso tocar la traza no abría la
+                      // llamada. Los taxis y las esperas ya lo hacían.
+                      onPointerDown={(ev) => ev.stopPropagation()}
                     />
                   );
                 })}
