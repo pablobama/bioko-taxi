@@ -1439,6 +1439,12 @@ export const api = {
       method: 'POST', body: imagen, headers: { 'content-type': imagen.type || 'image/jpeg' },
     }),
 
+  // La foto del dueño (migración 093), igual que la del taxista.
+  subirFotoPropietario: (id: number, imagen: Blob) =>
+    pedirJson<{ subida: boolean }>(`/api/operador/propietarios/${id}/foto`, {
+      method: 'POST', body: imagen, headers: { 'content-type': imagen.type || 'image/jpeg' },
+    }),
+
   // El alta de un taxista hecha por el operador (06/10). Nace verificado
   // —lo verificó quien lo dio de alta— y con el teléfono por confirmar.
   darDeAltaTaxista: (datos: {
@@ -1458,10 +1464,10 @@ export const api = {
     tipoRegistro?: 'recargas' | 'ayuntamiento';
     cantidadPagadaXaf?: number;
   }) =>
-    pedirJson<{ conductorId: number; numeroTaxi: string | null }>('/api/operador/conductores', {
-      method: 'POST',
-      body: JSON.stringify(datos),
-    }),
+    pedirJson<{ conductorId: number; numeroTaxi: string | null; propietarioId: number }>(
+      '/api/operador/conductores',
+      { method: 'POST', body: JSON.stringify(datos) },
+    ),
 
   // Facturación por vehículo en un año (migración 092).
   facturacionOperador: (anio?: number) =>

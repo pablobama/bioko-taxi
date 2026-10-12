@@ -505,6 +505,34 @@ function FilaIncidencia({
 // confirmar — lo confirma el taxista con el código, o con el vale, la primera
 // vez que entra. Sin eso, dar de alta sería regalar la cuenta de un número a
 // quien lo dicte primero.
+// Un recuadro con la foto a un lado de los datos (12/10). Enseña la que se
+// elige, para ver que no está borrosa antes de darla de alta. Va en el alta
+// tanto para el taxista como para el dueño.
+function RecuadroFoto({ foto, alElegir, etiqueta }: {
+  foto: File | null;
+  alElegir: (f: File | null) => void;
+  etiqueta: string;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (foto === null) { setUrl(null); return undefined; }
+    const u = URL.createObjectURL(foto);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [foto]);
+  return (
+    <label className="alta-foto">
+      {url !== null
+        ? <img src={url} alt="" className="alta-foto-previo" />
+        : <span className="alta-foto-vacio"><b>📷</b>{etiqueta}</span>}
+      <input
+        type="file" accept="image/*"
+        onChange={(e) => alElegir(e.target.files?.[0] ?? null)}
+      />
+    </label>
+  );
+}
+
 function AltaDeTaxista({ alCreada, duenoFijado, abiertaInicial = false, alCerrar }: {
   alCreada: (conductorId: number) => void;
   // Con un dueño fijado (desde su ficha, para añadirle otro coche), el alta
@@ -546,8 +574,11 @@ function AltaDeTaxista({ alCreada, duenoFijado, abiertaInicial = false, alCerrar
   // y lo que paga hoy, que entra en su monedero.
   const [tipoRegistro, setTipoRegistro] = useState<'recargas' | 'ayuntamiento'>('recargas');
   const [pagado, setPagado] = useState('');
-  // La foto del taxista, enlazada en el mismo alta (se sube al crearlo).
+  // Las fotos, enlazadas en el mismo alta (se suben al crearlo): la del taxista
+  // y la del dueño nuevo (093). Con dueño que también conduce, la del taxista
+  // vale para los dos.
   const [foto, setFoto] = useState<File | null>(null);
+  const [pFoto, setPFoto] = useState<File | null>(null);
   const [error, setError] = useState('');
   const [ocupado, setOcupado] = useState(false);
 
@@ -619,9 +650,15 @@ function AltaDeTaxista({ alCreada, duenoFijado, abiertaInicial = false, alCerrar
         tipoRegistro,
         cantidadPagadaXaf: pagado.trim() === '' ? undefined : Number(pagado),
       });
-      // La foto, en el mismo acto: si falla, el alta sigue valiendo.
+      // Las fotos, en el mismo acto: si fallan, el alta sigue valiendo.
       if (foto !== null) {
         try { await api.subirFotoConductor(r.conductorId, foto); } catch { /* sin foto, se añade luego */ }
+      }
+      // La del dueño: la tecleada para un dueño nuevo, o —si el taxista es el
+      // dueño— la suya misma, que es la misma persona.
+      const fotoDueno = pFoto ?? (duenoConduce ? foto : null);
+      if (fotoDueno !== null && r.propietarioId) {
+        try { await api.subirFotoPropietario(r.propietarioId, fotoDueno); } catch { /* se añade luego */ }
       }
       setAbierta(false);
       alCreada(r.conductorId);
@@ -695,12 +732,12 @@ function AltaDeTaxista({ alCreada, duenoFijado, abiertaInicial = false, alCerrar
                   </select>
                 )
               ) : (
-                <>
-                  <div className="fila">
+                // Foto del dueño a la izquierda; sus datos, a la derecha.
+                <div className="alta-identidad">
+                  <RecuadroFoto foto={pFoto} alElegir={setPFoto} etiqueta="Foto del dueño" />
+                  <div className="alta-identidad-datos">
                     <input value={pNombre} placeholder="Nombre del dueño" onChange={(e) => setPNombre(e.target.value)} />
                     <input value={pApellido} placeholder="Apellido del dueño" onChange={(e) => setPApellido(e.target.value)} />
-                  </div>
-                  <div className="fila">
                     <input
                       value={pTelefono} inputMode="tel" placeholder="Teléfono del dueño"
                       onChange={(e) => setPTelefono(e.target.value)}
@@ -710,7 +747,7 @@ function AltaDeTaxista({ alCreada, duenoFijado, abiertaInicial = false, alCerrar
                       onChange={(e) => setPDip(e.target.value.replace(/\D/g, '').slice(0, 9))}
                     />
                   </div>
-                </>
+                </div>
               )}
             </>
           )}
@@ -722,19 +759,21 @@ function AltaDeTaxista({ alCreada, duenoFijado, abiertaInicial = false, alCerrar
       <h4 className="alta-titulo">
         {duenoConduce && duenoFijado === undefined ? 'El taxista (que es el dueño)' : 'El taxista que conduce'}
       </h4>
-      <div className="fila">
-        <input value={nombre} placeholder="Nombre" onChange={(e) => setNombre(e.target.value)} />
-        <input value={apellido} placeholder="Apellido" onChange={(e) => setApellido(e.target.value)} />
-      </div>
-      <div className="fila">
-        <input
-          value={telefono} inputMode="tel" placeholder="Teléfono"
-          onChange={(e) => setTelefono(e.target.value)}
-        />
-        <input
-          value={dip} inputMode="numeric" placeholder="DIP (9 dígitos)" maxLength={9}
-          onChange={(e) => setDip(e.target.value.replace(/\D/g, '').slice(0, 9))}
-        />
+      {/* Foto a la izquierda; nombre, apellido, teléfono y DIP a la derecha. */}
+      <div className="alta-identidad">
+        <RecuadroFoto foto={foto} alElegir={setFoto} etiqueta="Foto del taxista" />
+        <div className="alta-identidad-datos">
+          <input value={nombre} placeholder="Nombre" onChange={(e) => setNombre(e.target.value)} />
+          <input value={apellido} placeholder="Apellido" onChange={(e) => setApellido(e.target.value)} />
+          <input
+            value={telefono} inputMode="tel" placeholder="Teléfono"
+            onChange={(e) => setTelefono(e.target.value)}
+          />
+          <input
+            value={dip} inputMode="numeric" placeholder="DIP (9 dígitos)" maxLength={9}
+            onChange={(e) => setDip(e.target.value.replace(/\D/g, '').slice(0, 9))}
+          />
+        </div>
       </div>
 
       <h4 className="alta-titulo">El coche</h4>
@@ -751,30 +790,27 @@ function AltaDeTaxista({ alCreada, duenoFijado, abiertaInicial = false, alCerrar
           <option value="autobus">Autobús</option>
         </select>
       </div>
+      {/* VIN, color, plazas y nº de taxi en la misma fila (12/10). Las plazas
+          (089): vacío, la base pone 4; para furgoneta y autobús conviene
+          ponerlas. El nº de flota (084): vacío, le toca el siguiente; solo se
+          rellena si el coche YA lleva uno pintado. */}
       <div className="fila">
         <input
-          value={vin} placeholder="VIN / nº de bastidor (opcional)"
+          value={vin} placeholder="VIN (opcional)"
           onChange={(e) => setVin(e.target.value)}
         />
-      </div>
-      <div className="fila">
         <input value={color} placeholder="Color (opcional)" onChange={(e) => setColor(e.target.value)} />
-        {/* Las plazas (089): vacío, la base pone 4. Para furgoneta y autobús
-            conviene ponerlas, que 4 se les queda corto. */}
         <input
-          value={plazas} inputMode="numeric" placeholder={`Plazas (vacío: 4, máx ${topePlazasUI(carroceria)})`}
+          value={plazas} inputMode="numeric" placeholder={`Plazas (máx ${topePlazasUI(carroceria)})`}
           maxLength={2}
           onChange={(e) => setPlazas(e.target.value.replace(/\D/g, '').slice(0, 2))}
         />
-      </div>
-      <div className="fila">
-        {/* El número de flota (084). Vacío, le toca el siguiente; se rellena
-            solo cuando el coche YA lleva uno pintado, y el servidor no deja
-            dar ninguno por delante de la secuencia. */}
         <input
-          value={numeroTaxi} placeholder="Nº de taxi (vacío: el siguiente)"
+          value={numeroTaxi} placeholder="Nº (vacío: siguiente)"
           onChange={(e) => setNumeroTaxi(e.target.value)}
         />
+      </div>
+      <div className="fila">
         <label className="casilla">
           <input type="checkbox" checked={aire} onChange={(e) => setAire(e.target.checked)} />
           Aire acondicionado
@@ -789,39 +825,27 @@ function AltaDeTaxista({ alCreada, duenoFijado, abiertaInicial = false, alCerrar
           anual que deja el taxi al día un año; recargas = cuota semanal por el
           monedero. Lo que paga hoy entra en su monedero. */}
       <h4 className="alta-titulo">Registro y pago</h4>
-      <div className="selector-idioma">
-        <button
-          type="button" className={tipoRegistro === 'recargas' ? 'idioma-activo' : undefined}
-          onClick={() => setTipoRegistro('recargas')}
-        >
-          Recargas (semanal)
-        </button>
-        <button
-          type="button" className={tipoRegistro === 'ayuntamiento' ? 'idioma-activo' : undefined}
-          onClick={() => setTipoRegistro('ayuntamiento')}
-        >
-          Ayuntamiento (anual)
-        </button>
-      </div>
+      {/* La cantidad a la izquierda y el tipo de registro a la derecha, en la
+          misma fila (12/10). Ayuntamiento = cuota anual que deja el taxi al día
+          un año; recargas = cuota semanal por el monedero. Lo pagado entra en
+          su monedero. */}
       <div className="fila">
         <input
           value={pagado} inputMode="numeric"
-          placeholder={tipoRegistro === 'ayuntamiento' ? 'Pagado (XAF) · Ayuntamiento 30.000/año' : 'Pagado (XAF) · entra en el monedero'}
+          placeholder={tipoRegistro === 'ayuntamiento' ? 'Pagado (XAF) · Ayto. 30.000/año' : 'Pagado (XAF) · al monedero'}
           onChange={(e) => setPagado(e.target.value.replace(/\D/g, ''))}
         />
+        <select
+          value={tipoRegistro}
+          onChange={(e) => setTipoRegistro(e.target.value as 'recargas' | 'ayuntamiento')}
+        >
+          <option value="recargas">Recargas (semanal)</option>
+          <option value="ayuntamiento">Ayuntamiento (anual)</option>
+        </select>
       </div>
       {tipoRegistro === 'ayuntamiento' && (
         <p className="nota">Con el pago del Ayuntamiento queda al día un año; no se le cobra la cuota semanal.</p>
       )}
-
-      {/* La foto del taxista, en el mismo alta (12/10): se sube al crearlo. */}
-      <h4 className="alta-titulo">Foto (opcional)</h4>
-      <div className="fila">
-        <input
-          type="file" accept="image/*"
-          onChange={(e) => setFoto(e.target.files?.[0] ?? null)}
-        />
-      </div>
 
       <div className="fila">
         <button

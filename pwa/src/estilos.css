@@ -3427,6 +3427,66 @@ button.importe.elegido-importe {
   color: var(--humo);
 }
 
+/* Identidad en el alta (12/10): la foto en un recuadro a la izquierda y los
+   datos (nombre, apellido, teléfono, DIP) apilados a su derecha, alineados a la
+   foto. Vale igual para el taxista y para el dueño. */
+.alta-identidad {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+.alta-identidad-datos {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* El recuadro de la foto es una etiqueta pulsable: toda ella abre el selector
+   de archivo, que se esconde. Enseña la foto elegida, recortada al recuadro. */
+.alta-foto {
+  position: relative;
+  flex: 0 0 auto;
+  width: 112px;
+  align-self: stretch;
+  min-height: 132px;
+  border: 1px dashed var(--borde);
+  border-radius: 14px;
+  background: var(--tarjeta);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: pointer;
+  color: var(--humo);
+}
+.alta-foto input[type='file'] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+.alta-foto-previo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.alta-foto-vacio {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  text-align: center;
+  font-size: 0.74rem;
+  line-height: 1.2;
+}
+.alta-foto-vacio b {
+  font-size: 1.6rem;
+}
+
 /* La ficha del taxista en carpetas (migración 088). */
 .ficha-carpeta {
   display: flex;

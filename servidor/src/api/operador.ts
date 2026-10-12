@@ -998,14 +998,55 @@ export function registrarRutasOperador(
           [conductorId],
         );
       }
-      return { conductorId, numero };
+      return { conductorId, numero, propietarioId };
     });
     // Quién lo dio de alta, en el registro de siempre (067).
     await apuntarCambio(
       req, 'conductor', `${resultado.conductorId}.alta`, null,
       [resultado.numero, nombre, telefono, matricula].filter(Boolean).join(' · '),
     );
-    return { conductorId: resultado.conductorId, numeroTaxi: resultado.numero };
+    // El id del dueño vuelve para poder subirle su foto justo después (093),
+    // igual que la del taxista. Con dueño ya registrado, es el que se eligió.
+    return {
+      conductorId: resultado.conductorId,
+      numeroTaxi: resultado.numero,
+      propietarioId: resultado.propietarioId,
+    };
+  });
+
+  // La foto del dueño (migración 093). Igual que la del taxista: el cuerpo es
+  // la imagen ya reducida en el navegador, y aquí solo se guarda.
+  app.post('/api/operador/propietarios/:id/foto', async (req) => {
+    await exigirPermiso(req, 'taxistas');
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(id)) throw errorHttp(400, 'Id de propietario no válido.');
+    const foto = req.body;
+    if (!Buffer.isBuffer(foto) || foto.length === 0) {
+      throw errorHttp(400, 'El cuerpo tiene que ser la imagen, con content-type image/...');
+    }
+    const tipo = String(req.headers['content-type'] ?? 'image/jpeg');
+    const res = await pool.query(
+      'UPDATE propietario SET foto = $2, foto_tipo = $3 WHERE id = $1',
+      [id, foto, tipo],
+    );
+    if (res.rowCount === 0) throw errorHttp(404, 'Propietario no encontrado.');
+    return { subida: true };
+  });
+
+  app.get('/api/operador/propietarios/:id/foto', async (req, reply) => {
+    await exigirOperador(req);
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(id)) throw errorHttp(400, 'Id de propietario no válido.');
+    const res = await pool.query(
+      'SELECT foto, foto_tipo FROM propietario WHERE id = $1',
+      [id],
+    );
+    if (res.rowCount === 0 || res.rows[0].foto === null) {
+      throw errorHttp(404, 'Ese dueño no tiene foto.');
+    }
+    void reply.header('cache-control', 'private, max-age=600');
+    void reply.type(res.rows[0].foto_tipo ?? 'image/jpeg');
+    return res.rows[0].foto;
   });
 
   // Registro de vehículos (migración 087): todos los coches con sus datos,

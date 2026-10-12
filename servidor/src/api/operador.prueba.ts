@@ -1126,6 +1126,39 @@ test('alta por Ayuntamiento: cuota anual, pago al monedero y VIN (migración 092
   assert.equal(fila!.tipoRegistro, 'ayuntamiento');
 });
 
+test('alta con dueño nuevo: el alta devuelve su id y se le puede subir y leer la foto (093)', async () => {
+  const telefono = telefonoUnico();
+  const res = await app.inject({
+    method: 'POST', url: '/api/operador/conductores', headers: cabeceras(UUID_OPERADOR),
+    payload: {
+      nombre: 'Condu', apellido: 'Ctor', telefono, dip: dipUnico(),
+      // Dueño distinto del que conduce: así se crea un propietario y vuelve su id.
+      duenoConduce: false,
+      propietario: { nombre: 'Due', apellido: 'Ño', telefono: telefonoUnico(), dip: dipUnico() },
+      matricula: `MB-${telefono.slice(-5)}F`, marca: 'Toyota', carroceria: 'turismo',
+    },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  const propietarioId = Number(res.json().propietarioId);
+  assert.ok(Number.isInteger(propietarioId) && propietarioId > 0, 'el alta devuelve el id del dueño');
+
+  const imagen = Buffer.from('bytes-de-una-foto-reducida');
+  const subida = await app.inject({
+    method: 'POST', url: `/api/operador/propietarios/${propietarioId}/foto`,
+    headers: { ...cabeceras(UUID_OPERADOR), 'content-type': 'image/png' },
+    payload: imagen,
+  });
+  assert.equal(subida.statusCode, 200, subida.body);
+  assert.equal(subida.json().subida, true);
+
+  const leida = await app.inject({
+    method: 'GET', url: `/api/operador/propietarios/${propietarioId}/foto`, headers: cabeceras(UUID_OPERADOR),
+  });
+  assert.equal(leida.statusCode, 200);
+  assert.equal(leida.headers['content-type'], 'image/png');
+  assert.ok(leida.rawPayload.equals(imagen), 'devuelve la misma imagen que se subió');
+});
+
 test('alta de pasajero por el operador: verificado y con vale (migración 092)', async () => {
   const telefono = telefonoUnico();
   const res = await app.inject({
