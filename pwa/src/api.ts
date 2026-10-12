@@ -15,6 +15,17 @@ export function enPruebasLocales(): boolean {
   return ['localhost', '127.0.0.1'].includes(window.location.hostname);
 }
 
+// ¿Es un iPhone o iPad? Hace falta para dar las instrucciones CORRECTAS cuando
+// la ubicación está denegada: en iOS no hay candado en la barra (la PWA
+// instalada ni barra tiene) y el permiso de una web no vive en la página de la
+// app, sino en Ajustes › Privacidad y seguridad › Localización. El iPad moderno
+// se hace pasar por Mac, de ahí la segunda condición (pantalla táctil + MacIntel).
+export function esIos(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /iphone|ipad|ipod/i.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints ?? 0) > 1);
+}
+
 export function uuidDispositivo(): string {
   if (enPruebasLocales()) {
     const forzado = new URLSearchParams(window.location.search).get('dispositivo');

@@ -20,7 +20,7 @@ import {
   type ViajeVivo,
   type ViajeOperador, type ViajeResumenOperador, type ZonaOperador,
 } from './api';
-import { abrirEventosOperador, bajarFotoConductor } from './api';
+import { abrirEventosOperador, bajarFotoConductor, esIos } from './api';
 import { ESTILO_CATEGORIA } from './categorias';
 import { metrosEntre } from './geo';
 import { crearT } from './i18n';
@@ -198,6 +198,15 @@ function capturarGps(
       navigator.geolocation.clearWatch(vigilancia);
       clearTimeout(reloj);
       alAvisar('');
+      // Si fue que se denegó el permiso (código 1), en iOS no basta con
+      // «da permiso»: no hay candado en la barra y el ajuste vive en
+      // Ajustes › Privacidad › Localización. Se dice dónde está.
+      if (e.code === e.PERMISSION_DENIED) {
+        alFallar(esIos()
+          ? 'Ubicación denegada. En el iPhone: Ajustes › Privacidad y seguridad › Localización, enciéndela y permite esta app; luego vuelve.'
+          : 'Ubicación denegada. Ábrela en el candado de la barra de direcciones y permítela para esta página.');
+        return;
+      }
       alFallar(`No se pudo coger el GPS: ${e.message}. Da permiso de ubicación y sal a cielo abierto.`);
     },
     { enableHighAccuracy: true, timeout: ESPERA_GPS_MS, maximumAge: 0 },

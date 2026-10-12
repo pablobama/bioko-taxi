@@ -15,6 +15,7 @@ import {
   api,
   coordenadasOportunistas,
   enPruebasLocales,
+  esIos,
   type DestinoSugerido,
   type DetalleSolicitud,
   type EventoSse,
@@ -730,8 +731,10 @@ export default function PanelCliente({
       if (!nueva) {
         // El navegador no la da: o se dijo que no, o el permiso está bloqueado
         // para este sitio. No se puede volver a preguntar desde aquí —lo
-        // impide el propio navegador— así que se dice dónde se arregla.
-        setAviso(t('origen.ubicacionBloqueada'));
+        // impide el propio navegador— así que se dice dónde se arregla. En iOS
+        // las instrucciones son otras: no hay candado en la barra y el permiso
+        // de una web vive en Ajustes, no en la página de la app.
+        setAviso(t(esIos() ? 'origen.ubicacionBloqueadaIos' : 'origen.ubicacionBloqueada'));
         return;
       }
       setCoordenadas(nueva);
