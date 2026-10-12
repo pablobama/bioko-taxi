@@ -3192,6 +3192,69 @@ button.importe.elegido-importe {
   font-weight: 500;
 }
 
+/* El panel de rango a medida (fechas y horas) del recorrido, en el bloque
+   superpuesto de arriba a la izquierda. */
+.recorrido-rango {
+  width: 264px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  background: rgba(16, 16, 20, 0.95);
+}
+.recorrido-rango label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.72rem;
+  color: var(--humo);
+}
+.recorrido-rango input,
+.recorrido-rango select {
+  background: rgba(28, 28, 33, 0.92);
+  color: var(--hueso);
+  border: 1px solid var(--borde);
+  border-radius: 7px;
+  padding: 5px 7px;
+  font-family: inherit;
+  font-size: 0.82rem;
+  color-scheme: dark;
+}
+.recorrido-rango-horas {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  font-size: 0.72rem;
+  color: var(--humo);
+}
+.recorrido-rango-horas select { padding: 4px 5px; }
+.recorrido-rango .principal {
+  margin-top: 2px;
+  padding: 7px;
+  font-size: 0.85rem;
+}
+
+/* La tarjeta de un punto tocado del recorrido: barrio, hora y velocidad. */
+.recorrido-punto {
+  width: max-content;
+  max-width: 264px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 11px;
+  border: 1px solid var(--ambar);
+  border-radius: 10px;
+  background: rgba(16, 16, 20, 0.95);
+  color: var(--hueso);
+}
+.recorrido-punto b { font-size: 0.9rem; }
+.recorrido-punto small { color: var(--humo); font-size: 0.74rem; }
+.recorrido-punto .recorrido-quitar { align-self: flex-start; margin-top: 2px; }
+
 .recorrido-cuadricula {
   display: grid;
   grid-template-columns: repeat(2, max-content);

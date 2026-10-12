@@ -8,7 +8,8 @@ import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import { crearPool, enTransaccion } from '../bd/conexion.js';
 import {
-  actividadDe, apuntarSenal, purgarRastro, recorridoDe, registrarRastro, registrarRastroDiferido,
+  actividadDe, apuntarSenal, puntoMasCercanoEnRango, purgarRastro, recorridoDe,
+  registrarRastro, registrarRastroDiferido,
 } from './rastro.js';
 import { leerParametroEntero } from './parametros.js';
 import { caducarPresencias } from './presencia.js';
@@ -638,4 +639,38 @@ test('actividad: las esperas hunden la media del turno pero no la de conducción
     a.velocidadAlVolanteKmh! > a.velocidadMediaKmh! * 5,
     'con tres cuartos de hora parado, las dos no pueden parecerse',
   );
+});
+
+// BASE es 08:00Z, que en Malabo (UTC+1) son las 09:00. Así enSegundo(0) cae a
+// las 09h y enSegundo(6h) a las 15h, que es lo que filtran estas pruebas.
+test('el filtro de horas se queda solo con lo que pasó en esa franja del día', async () => {
+  const id = await crearConductor();
+  await guardar(id, 0, 0);            // 09h de Malabo
+  await guardar(id, 400, 60);
+  await guardar(id, 800, 6 * 3600);   // 15h de Malabo
+  await guardar(id, 1200, 6 * 3600 + 60);
+  const desde = enSegundo(-100);
+  const hasta = enSegundo(7 * 3600);
+  const todo = await recorridoDe(pool, id, desde, hasta);
+  const manana = await recorridoDe(pool, id, desde, hasta, 1500, { desde: 9, hasta: 10 });
+  const tarde = await recorridoDe(pool, id, desde, hasta, 1500, { desde: 15, hasta: 16 });
+  const vacio = await recorridoDe(pool, id, desde, hasta, 1500, { desde: 2, hasta: 5 });
+  assert.ok(todo.puntos >= 4, `esperaba al menos 4 puntos y hubo ${todo.puntos}`);
+  assert.ok(manana.puntos > 0 && manana.puntos < todo.puntos, 'la mañana es un subconjunto');
+  assert.ok(tarde.puntos > 0 && tarde.puntos < todo.puntos, 'la tarde es un subconjunto');
+  assert.equal(vacio.puntos, 0, 'de madrugada no condujo, así que nada');
+});
+
+test('el punto más cercano a una coordenada trae su hora', async () => {
+  const id = await crearConductor();
+  await guardar(id, 0, 0);       // en (3.80, 8.78), a las 09h
+  await guardar(id, 1000, 60);   // unos 9 m más al norte
+  const desde = enSegundo(-100);
+  const hasta = enSegundo(600);
+  const p = await puntoMasCercanoEnRango(pool, id, 3.80, 8.78, desde, hasta);
+  assert.ok(p !== null, 'hay rastro en ese rango');
+  assert.equal(p!.en.getTime(), enSegundo(0).getTime(), 'el más cercano es el primero');
+  // Fuera del rango no hay nada que devolver.
+  const fuera = await puntoMasCercanoEnRango(pool, id, 3.80, 8.78, enSegundo(10_000), enSegundo(20_000));
+  assert.equal(fuera, null);
 });

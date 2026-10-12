@@ -141,6 +141,11 @@ export interface PropiedadesMapa {
   // quedaba un plano congelado durante todo el trayecto. Esto es lo que sí es
   // suyo: su propia posición, que además ya venía enviando.
   yo?: { lat: number; lng: number } | null;
+  // Tocar un punto del recorrido: devuelve la coordenada del trozo tocado, para
+  // que quien lo use pregunte por el barrio y la hora de ese paso.
+  alTocarRecorrido?: (lat: number, lng: number) => void;
+  // Un punto que se mueve a lo largo del recorrido cuando se reproduce.
+  animacion?: { lat: number; lng: number } | null;
 }
 
 // El plano se prepara una sola vez para toda la vida de la aplicación: son
@@ -177,6 +182,7 @@ export default function Mapa({
   buscando, encuadre = 'persona', paradas, recorrido,
   origenEnVivo = false, etiquetasExtremos = null,
   maxPasadas = 1, rumbo = null, rumboCoche = null, yo = null, alCalcularRuta,
+  alTocarRecorrido, animacion = null,
 }: PropiedadesMapa) {
   const contenedor = useRef<HTMLDivElement>(null);
   const [caja, setCaja] = useState({ ancho: 0, alto: 0 });
@@ -705,25 +711,58 @@ export default function Mapa({
                     anterior y la línea saldría mordida. */}
                 <path d={d} fill="none" stroke="#08080a" strokeWidth={7.5}
                   strokeLinecap="round" strokeLinejoin="round" opacity={0.9} />
-                {/* Y el color, segmento a segmento: cada trozo lleva el de las
-                    veces que pasó por ahí. */}
-                {xy.slice(1).map((q, j) => (
-                  <line
-                    key={j}
-                    x1={xy[j][0]} y1={xy[j][1]} x2={q[0]} y2={q[1]}
-                    stroke={colorDeCalor(
-                      Math.max(tramo[j].n ?? 1, tramo[j + 1].n ?? 1), maxPasadas,
-                    )}
-                    strokeWidth={3.4}
-                    strokeLinecap="round"
-                  />
-                ))}
+                {/* Y el color Y EL GROSOR, segmento a segmento: cada trozo
+                    lleva el de las veces que pasó por ahí. La intensidad se ve
+                    por partida doble —color de calor y línea más gruesa donde
+                    más repite—, para leerse de un vistazo aunque haya pocas
+                    pasadas. */}
+                {xy.slice(1).map((q, j) => {
+                  const pasadas = Math.max(tramo[j].n ?? 1, tramo[j + 1].n ?? 1);
+                  return (
+                    <line
+                      key={j}
+                      x1={xy[j][0]} y1={xy[j][1]} x2={q[0]} y2={q[1]}
+                      stroke={colorDeCalor(pasadas, maxPasadas)}
+                      strokeWidth={anchoDeCalor(pasadas, maxPasadas)}
+                      strokeLinecap="round"
+                    />
+                  );
+                })}
+                {/* Zona de toque ANCHA e invisible por segmento, solo cuando se
+                    puede interrogar el recorrido: una línea de 3 px es imposible
+                    de acertar con el dedo, y el servidor ya ajusta al punto más
+                    cercano, así que basta tocar cerca del trozo. */}
+                {alTocarRecorrido && xy.slice(1).map((q, j) => {
+                  const mlat = (tramo[j].lat + tramo[j + 1].lat) / 2;
+                  const mlng = (tramo[j].lng + tramo[j + 1].lng) / 2;
+                  return (
+                    <line
+                      key={`toque-${j}`}
+                      x1={xy[j][0]} y1={xy[j][1]} x2={q[0]} y2={q[1]}
+                      stroke="transparent" strokeWidth={16} strokeLinecap="round"
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => alTocarRecorrido(mlat, mlng)}
+                    />
+                  );
+                })}
                 <circle cx={xy[0][0]} cy={xy[0][1]} r={4} fill="#7ee081" stroke="#08080a" strokeWidth={1.5} />
                 <circle cx={xy[xy.length - 1][0]} cy={xy[xy.length - 1][1]} r={4}
                   fill="#ff6b6b" stroke="#08080a" strokeWidth={1.5} />
               </g>
             );
           })}
+
+          {/* El punto que recorre la trayectoria al reproducirla: un disco
+              ámbar con halo, bien visible sobre el trazo. */}
+          {animacion && (() => {
+            const [ax, ay] = pantalla(animacion.lat, animacion.lng);
+            return (
+              <g>
+                <circle cx={ax} cy={ay} r={11} fill="#ffb020" opacity={0.25} />
+                <circle cx={ax} cy={ay} r={6} fill="#ffb020" stroke="#08080a" strokeWidth={2} />
+              </g>
+            );
+          })()}
 
           {/* Rutas. En cada fase importa una sola: la del coche viniendo, o la
               del viaje. Dibujar las dos a la vez sería ruido. */}
@@ -1028,4 +1067,15 @@ export function colorDeCalor(pasadas: number, maxPasadas: number): string {
   if (maxPasadas <= 1) return 'hsl(220 90% 62%)';
   const t = Math.min(1, Math.max(0, (pasadas - 1) / (maxPasadas - 1)));
   return `hsl(${(220 * (1 - t)).toFixed(0)} 90% ${(62 - 6 * t).toFixed(0)}%)`;
+}
+
+// El GROSOR por intensidad, para que la ruta de siempre destaque aunque el
+// color no baste (en gama baja, con sol, o para quien no distingue bien el
+// rojo del verde). Va de 3 px lo que hizo una vez a 6 px lo que más repite, por
+// debajo de la funda oscura de 7,5 px que le da borde. Arranca en la segunda
+// pasada, igual que el color.
+export function anchoDeCalor(pasadas: number, maxPasadas: number): number {
+  if (maxPasadas <= 1) return 3;
+  const t = Math.min(1, Math.max(0, (pasadas - 1) / (maxPasadas - 1)));
+  return 3 + 3 * t;
 }

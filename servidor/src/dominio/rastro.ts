@@ -287,16 +287,40 @@ export async function registrarRastroDiferido(
   return { guardados, descartados: puntos.length - guardados };
 }
 
+// Franja de horas del día (en hora de Malabo) para quedarse solo con lo que
+// pasó entre ciertas horas a lo largo del rango —p. ej. la hora punta—. Si
+// `desde <= hasta` es un tramo normal (18–22); si `desde > hasta` cruza la
+// medianoche (22–6).
+export interface FiltroHoras { desde: number; hasta: number }
+
+// La condición SQL del filtro de horas, en hora de Malabo. Devuelve cadena
+// vacía si no hay filtro, para no ensuciar la consulta cuando no se usa. Se
+// exporta para que el conteo de clientes del endpoint use el MISMO filtro.
+export function condicionHoras(filtro: FiltroHoras | undefined, columna: string): string {
+  if (!filtro) return '';
+  // Se fuerzan a enteros 0–23 aquí mismo: van interpolados en el SQL (no como
+  // parámetros, porque forman parte de la expresión), así que no pueden ser
+  // otra cosa que un número de hora bajo ninguna circunstancia.
+  const d = Math.min(23, Math.max(0, Math.trunc(filtro.desde)));
+  const a = Math.min(24, Math.max(0, Math.trunc(filtro.hasta)));
+  const h = `EXTRACT(HOUR FROM ${columna} AT TIME ZONE 'Africa/Malabo')::int`;
+  return d <= a
+    ? ` AND ${h} >= ${d} AND ${h} < ${a}`
+    : ` AND (${h} >= ${d} OR ${h} < ${a})`;
+}
+
 export async function recorridoDe(
   cliente: pg.ClientBase | pg.Pool,
   conductorId: number,
   desde: Date,
   hasta: Date,
   maxPuntos = 1500,
+  filtroHoras?: FiltroHoras,
 ): Promise<Recorrido> {
   const filas = await cliente.query(
     `SELECT lat, lng, creado_en, velocidad_kmh FROM rastro
      WHERE conductor_id = $1 AND creado_en >= $2 AND creado_en < $3
+       ${condicionHoras(filtroHoras, 'creado_en')}
      ORDER BY creado_en`,
     [conductorId, desde, hasta],
   );
@@ -370,6 +394,39 @@ export async function recorridoDe(
     metros: Math.round(metros),
     segundosEnMovimiento: Math.round(segundosEnMovimiento),
     maxPasadas,
+  };
+}
+
+// El punto del rastro más cercano a una coordenada, dentro del rango (y del
+// filtro de horas si lo hay). Lo usa el clic en el recorrido: el operador toca
+// un sitio del trazo y se le dice CUÁNDO pasó por ahí. La distancia se mide en
+// grados al cuadrado —no hace falta metros para ordenar «cuál está más
+// cerca»—, que es barato y suficiente a la escala de Bioko.
+export async function puntoMasCercanoEnRango(
+  cliente: pg.ClientBase | pg.Pool,
+  conductorId: number,
+  lat: number,
+  lng: number,
+  desde: Date,
+  hasta: Date,
+  filtroHoras?: FiltroHoras,
+): Promise<{ lat: number; lng: number; en: Date; velocidadKmh: number | null } | null> {
+  const res = await cliente.query(
+    `SELECT lat, lng, creado_en, velocidad_kmh
+     FROM rastro
+     WHERE conductor_id = $1 AND creado_en >= $2 AND creado_en < $3
+       ${condicionHoras(filtroHoras, 'creado_en')}
+     ORDER BY (lat - $4) * (lat - $4) + (lng - $5) * (lng - $5)
+     LIMIT 1`,
+    [conductorId, desde, hasta, lat, lng],
+  );
+  if (res.rowCount === 0) return null;
+  const f = res.rows[0] as { lat: number; lng: number; creado_en: Date; velocidad_kmh: number | null };
+  return {
+    lat: Number(f.lat),
+    lng: Number(f.lng),
+    en: new Date(f.creado_en),
+    velocidadKmh: f.velocidad_kmh === null ? null : Number(f.velocidad_kmh),
   };
 }
 

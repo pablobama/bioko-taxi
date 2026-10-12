@@ -12,6 +12,7 @@ import {
   type BandaOperador, type CambioOperador, type ConductorOperador, type EstadisticasOperador,
   type FichaConductorOperador, type FichaPasajeroOperador, type FichaPropietarioOperador, type IncidenciaOperador,
   type ParametroOperador, type PasajeroOperador, type PeriodoRecorrido, type PermisoOperador,
+  type RangoRecorrido,
   type RecargaOperador, type RecorridoOperador, type ReferenciaOperador,
   type PropietarioFicha, type PropietarioRegistro, type SaludOperador, type SinOfertaViva, type SolicitudCentral,
   type TaxiVivo, type TransicionOperador, type VehiculoRegistro,
@@ -1591,7 +1592,7 @@ function RecorridoConductor({ id }: { id: number }) {
     let vivo = true;
     setCargando(true);
     setError('');
-    api.recorridoConductor(id, periodo)
+    api.recorridoConductor(id, { periodo })
       .then((r) => { if (vivo) setRecorrido(r); })
       .catch((e) => { if (vivo) setError(e.message); })
       .finally(() => { if (vivo) setCargando(false); });
@@ -4322,12 +4323,21 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   // Mes— y un botón para quitarlo, en vez de un mapa pequeño dentro de la
   // ficha.
   const [recorridoMapa, setRecorridoMapa] = useState<{
-    conductorId: number; periodo: PeriodoRecorrido;
+    conductorId: number;
+    // Cómo se pidió (atajo o rango a medida): para re-pedir al cambiar y para
+    // saber qué botón resaltar.
+    rango: RangoRecorrido;
+    // El rango YA RESUELTO en fechas, y las horas si las hay: es lo que necesita
+    // el clic en un punto para preguntar por el mismo tramo.
+    desde: string; hasta: string;
+    horaDesde?: number; horaHasta?: number;
+    // Intensidad: sin esto el mapa pinta todo de una pasada (azul, fino).
+    maxPasadas: number;
     // De quién es el recorrido, cuando se abre desde el buscador (no desde su
     // ficha, donde ya se sabe). Deja ver y abrir la ficha del taxi del
     // historial sin perder el recorrido pintado.
     etiqueta?: { nombre: string; matricula: string | null; numero: string | null };
-    tramos: Array<Array<{ lat: number; lng: number }>>;
+    tramos: Array<Array<{ lat: number; lng: number; n: number }>>;
     // El resumen del periodo, para las cuadrículas superpuestas sobre el mapa.
     // Son las cifras del coche CIRCULANDO (al volante): la velocidad y el
     // tiempo descuentan las esperas, que para un taxista son media jornada y
@@ -4337,6 +4347,19 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
       velocidadAlVolanteKmh: number | null; clientesLlevados: number;
     };
   } | null>(null);
+  // La tarjeta de un punto tocado del recorrido: barrio y hora de ese paso.
+  const [puntoInfo, setPuntoInfo] = useState<
+    { lat: number; lng: number; barrio: string | null; hora: string; velocidadKmh: number | null } | null
+  >(null);
+  // Reproducción de la trayectoria: hasta qué punto del trazo se ha avanzado
+  // (0 = nada, 1 = entero). null cuando no se está reproduciendo.
+  const [animacion, setAnimacion] = useState<number | null>(null);
+  // El panel de rango a medida (fechas y horas), y los borradores de sus campos.
+  const [panelRango, setPanelRango] = useState(false);
+  const [rangoDesde, setRangoDesde] = useState('');
+  const [rangoHasta, setRangoHasta] = useState('');
+  const [rangoHoraDesde, setRangoHoraDesde] = useState('');
+  const [rangoHoraHasta, setRangoHoraHasta] = useState('');
   // UNA carrera, enfocada en el mapa del despacho (08/10): al pulsarla en los
   // registros, el plano se queda solo con ese viaje —su recorrido, y los
   // extremos con la hora y el barrio de salida y de llegada—, sin la flota
@@ -4349,13 +4372,21 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
 
   async function verRecorridoConductor(
     id: number,
-    periodo: PeriodoRecorrido = 'dia',
+    rango: RangoRecorrido = { periodo: 'dia' },
     etiqueta?: { nombre: string; matricula: string | null; numero: string | null },
   ) {
     try {
-      const r = await api.recorridoConductor(id, periodo);
+      const r = await api.recorridoConductor(id, rango);
       setRecorridoMapa({
-        conductorId: id, periodo, etiqueta, tramos: r.tramos,
+        conductorId: id,
+        rango,
+        desde: r.desde,
+        hasta: r.hasta,
+        horaDesde: 'periodo' in rango ? undefined : rango.horaDesde,
+        horaHasta: 'periodo' in rango ? undefined : rango.horaHasta,
+        maxPasadas: r.maxPasadas,
+        etiqueta,
+        tramos: r.tramos,
         resumen: {
           metros: r.metros,
           segundosEnMovimiento: r.segundosEnMovimiento,
@@ -4363,13 +4394,58 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
           clientesLlevados: r.clientesLlevados,
         },
       });
+      setPuntoInfo(null);
+      setAnimacion(null);
       setAvisoTraza(r.tramos.length === 0
-        ? 'Ese taxista no tiene recorrido en ese periodo.' : '');
+        ? 'Ese taxista no tiene recorrido en ese rango.' : '');
       setHojaAbierta(false);
     } catch (e) {
       setAvisoTraza(e instanceof Error ? e.message : 'No se pudo cargar el recorrido.');
     }
   }
+
+  // Toca un punto del trazo → barrio y hora de ese paso. Usa el mismo rango y
+  // filtro de horas que el recorrido que se está viendo.
+  async function verPuntoRecorrido(lat: number, lng: number) {
+    if (recorridoMapa === null) return;
+    try {
+      const { punto } = await api.puntoRecorrido(recorridoMapa.conductorId, {
+        lat, lng, desde: recorridoMapa.desde, hasta: recorridoMapa.hasta,
+        horaDesde: recorridoMapa.horaDesde, horaHasta: recorridoMapa.horaHasta,
+      });
+      if (punto === null) { setPuntoInfo(null); return; }
+      setPuntoInfo({
+        lat: punto.lat, lng: punto.lng, barrio: punto.barrio,
+        hora: punto.en, velocidadKmh: punto.velocidadKmh,
+      });
+    } catch {
+      setPuntoInfo(null);
+    }
+  }
+
+  // Dónde está el punto que recorre la trayectoria, según el avance (0–1).
+  function puntoAnimado(): { lat: number; lng: number } | null {
+    if (animacion === null || recorridoMapa === null) return null;
+    const pts = recorridoMapa.tramos.flat();
+    if (pts.length === 0) return null;
+    const idx = Math.min(pts.length - 1, Math.floor(animacion * (pts.length - 1)));
+    return { lat: pts[idx].lat, lng: pts[idx].lng };
+  }
+
+  // El motor de la reproducción: avanza el punto por el trazo y se para al
+  // final. Un ritmo de secuencia (no de reloj): el mismo tiempo para todo el
+  // recorrido, que es lo que deja ver la forma del día de un vistazo.
+  const animando = animacion !== null;
+  useEffect(() => {
+    if (!animando || recorridoMapa === null) return undefined;
+    const total = recorridoMapa.tramos.reduce((s, t) => s + t.length, 0);
+    if (total < 2) return undefined;
+    const paso = 1 / Math.max(60, total);
+    const reloj = setInterval(() => {
+      setAnimacion((a) => (a === null ? null : (a + paso >= 1 ? 1 : a + paso)));
+    }, 50);
+    return () => clearInterval(reloj);
+  }, [animando, recorridoMapa]);
 
   async function verViajeEnMapa(viaje: ViajeOperador) {
     try {
@@ -4843,6 +4919,9 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                 ];
                 return dibujos.length > 0 ? dibujos : undefined;
               })()}
+              maxPasadas={recorridoMapa?.maxPasadas ?? 1}
+              alTocarRecorrido={recorridoMapa !== null ? (lat, lng) => { void verPuntoRecorrido(lat, lng); } : undefined}
+              animacion={puntoAnimado()}
             />
             )}
             {viajeEnMapa === null && taxisVivos !== null && taxisEnMapa.length === 0 && (
@@ -4915,7 +4994,7 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                         <button
                           key={`reg-${c.id}`} type="button" className="mesa-buscar-fila"
                           onClick={() => {
-                            void verRecorridoConductor(c.id, 'dia', {
+                            void verRecorridoConductor(c.id, { periodo: 'dia' }, {
                               nombre: c.nombre, matricula: c.matricula, numero: c.numero_taxi,
                             });
                             setBusquedaTaxi('');
@@ -4935,6 +5014,73 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                   );
                 })()}
               </div>
+
+              {/* Rango a medida: fechas desde/hasta y, opcional, una franja de
+                  horas del día (la hora punta, la noche…). Se abre con «Rango…»
+                  del chip del recorrido. */}
+              {panelRango && recorridoMapa !== null && (
+                <form
+                  className="recorrido-rango"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (rangoDesde === '' || rangoHasta === '') return;
+                    const hd = rangoHoraDesde === '' ? undefined : Number(rangoHoraDesde);
+                    const hh = rangoHoraHasta === '' ? undefined : Number(rangoHoraHasta);
+                    void verRecorridoConductor(
+                      recorridoMapa.conductorId,
+                      {
+                        desde: new Date(rangoDesde).toISOString(),
+                        hasta: new Date(rangoHasta).toISOString(),
+                        ...(hd !== undefined && hh !== undefined ? { horaDesde: hd, horaHasta: hh } : {}),
+                      },
+                      recorridoMapa.etiqueta,
+                    );
+                    setPanelRango(false);
+                  }}
+                >
+                  <label>Desde
+                    <input type="datetime-local" value={rangoDesde}
+                      onChange={(e) => setRangoDesde(e.target.value)} required />
+                  </label>
+                  <label>Hasta
+                    <input type="datetime-local" value={rangoHasta}
+                      onChange={(e) => setRangoHasta(e.target.value)} required />
+                  </label>
+                  <div className="recorrido-rango-horas">
+                    <span>Solo entre las</span>
+                    <select value={rangoHoraDesde} onChange={(e) => setRangoHoraDesde(e.target.value)}>
+                      <option value="">—</option>
+                      {Array.from({ length: 24 }, (_, h) => (
+                        <option key={h} value={h}>{String(h).padStart(2, '0')}h</option>
+                      ))}
+                    </select>
+                    <span>y las</span>
+                    <select value={rangoHoraHasta} onChange={(e) => setRangoHoraHasta(e.target.value)}>
+                      <option value="">—</option>
+                      {Array.from({ length: 24 }, (_, h) => (
+                        <option key={h} value={h}>{String(h).padStart(2, '0')}h</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button type="submit" className="principal">Ver recorrido</button>
+                </form>
+              )}
+
+              {/* La tarjeta de un punto tocado del trazo: dónde y cuándo pasó. */}
+              {puntoInfo !== null && (
+                <div className="recorrido-punto">
+                  <b>📍 {puntoInfo.barrio ?? 'Fuera de los barrios conocidos'}</b>
+                  <small>
+                    {new Date(puntoInfo.hora).toLocaleString('es-ES', {
+                      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+                    })}
+                    {puntoInfo.velocidadKmh !== null && ` · ${puntoInfo.velocidadKmh.toFixed(0)} km/h`}
+                  </small>
+                  <button type="button" className="recorrido-quitar" onClick={() => setPuntoInfo(null)}>
+                    cerrar ✕
+                  </button>
+                </div>
+              )}
 
               {/* Las cifras del recorrido: el dibujo dice por dónde anduvo;
                   esto, cómo se movió CIRCULANDO —la velocidad y el tiempo al
@@ -5029,15 +5175,35 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                 {(['dia', 'semana', 'mes'] as const).map((per) => (
                   <button
                     key={per} type="button"
-                    className={per === recorridoMapa.periodo ? 'recorrido-per activo' : 'recorrido-per'}
-                    onClick={() => verRecorridoConductor(recorridoMapa.conductorId, per, recorridoMapa.etiqueta)}
+                    className={'periodo' in recorridoMapa.rango && recorridoMapa.rango.periodo === per
+                      ? 'recorrido-per activo' : 'recorrido-per'}
+                    onClick={() => verRecorridoConductor(
+                      recorridoMapa.conductorId, { periodo: per }, recorridoMapa.etiqueta,
+                    )}
                   >
                     {per === 'dia' ? 'Hoy' : per === 'semana' ? 'Semana' : 'Mes'}
                   </button>
                 ))}
+                {/* Rango a medida de fechas y horas. */}
+                <button
+                  type="button"
+                  className={!('periodo' in recorridoMapa.rango) ? 'recorrido-per activo' : 'recorrido-per'}
+                  onClick={() => setPanelRango((v) => !v)}
+                >
+                  Rango…
+                </button>
+                {/* Reproducir la trayectoria: un punto que la recorre en orden. */}
+                {recorridoMapa.tramos.length > 0 && (
+                  <button
+                    type="button" className="recorrido-per"
+                    onClick={() => setAnimacion((a) => (a === null ? 0 : null))}
+                  >
+                    {animacion === null ? '▶ Reproducir' : '⏹ Parar'}
+                  </button>
+                )}
                 <button
                   type="button" className="recorrido-quitar"
-                  onClick={() => setRecorridoMapa(null)}
+                  onClick={() => { setRecorridoMapa(null); setPuntoInfo(null); setAnimacion(null); setPanelRango(false); }}
                 >
                   quitar ✕
                 </button>

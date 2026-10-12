@@ -695,8 +695,23 @@ export interface EstadoSeguimiento {
 // puede ser una pantalla en blanco.
 export type PeriodoRecorrido = 'dia' | 'semana' | 'mes';
 
+// Cómo se pide un recorrido: un atajo, o un rango de fechas con filtro de horas.
+export type RangoRecorrido =
+  | { periodo: PeriodoRecorrido }
+  | { desde: string; hasta: string; horaDesde?: number; horaHasta?: number };
+
+// Lo que devuelve tocar un punto del trazo: dónde y cuándo pasó.
+export interface PuntoRecorrido {
+  lat: number;
+  lng: number;
+  en: string;
+  velocidadKmh: number | null;
+  barrio: string | null;
+}
+
 export interface RecorridoOperador {
-  periodo: PeriodoRecorrido;
+  // «rango» cuando se pidió con fechas/horas a medida en vez de un atajo.
+  periodo: PeriodoRecorrido | 'rango';
   desde: string;
   hasta: string;
   // Puntos que hay de verdad, antes de aligerar para dibujarlos.
@@ -705,8 +720,9 @@ export interface RecorridoOperador {
   // Cuántos clientes llevó en el periodo: carreras completadas.
   clientesLlevados: number;
   // Tiempo en servicio del periodo. Sale del registro de estados y no del
-  // rastro: el rastro tiene agujeros y le quitaría horas trabajadas.
-  segundosEnServicio: number;
+  // rastro: el rastro tiene agujeros y le quitaría horas trabajadas. null con
+  // filtro de horas, que no se puede recortar por hora.
+  segundosEnServicio: number | null;
   // De ese turno, cuánto con el coche andando (migración 051). Las dos cifras
   // juntas son las que dicen si el turno fue de trabajo o de espera.
   segundosEnMovimiento: number;
@@ -1684,10 +1700,40 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ periodos }) },
     ),
 
-  recorridoConductor: (conductorId: number, periodo: PeriodoRecorrido) =>
-    pedirJson<RecorridoOperador>(
-      `/api/operador/conductores/${conductorId}/recorrido?periodo=${periodo}`,
-    ),
+  // El recorrido de un taxi: por un atajo (periodo) o por un RANGO a medida de
+  // fechas y horas, con filtro opcional de horas del día (horaDesde/horaHasta,
+  // 0–23). La ficha usa el atajo; el despacho en ordenador, el rango.
+  recorridoConductor: (conductorId: number, rango: RangoRecorrido) => {
+    const partes: string[] = [];
+    if ('periodo' in rango) {
+      partes.push(`periodo=${rango.periodo}`);
+    } else {
+      partes.push(`desde=${encodeURIComponent(rango.desde)}`);
+      partes.push(`hasta=${encodeURIComponent(rango.hasta)}`);
+      if (rango.horaDesde !== undefined) partes.push(`horaDesde=${rango.horaDesde}`);
+      if (rango.horaHasta !== undefined) partes.push(`horaHasta=${rango.horaHasta}`);
+    }
+    return pedirJson<RecorridoOperador>(
+      `/api/operador/conductores/${conductorId}/recorrido?${partes.join('&')}`,
+    );
+  },
+
+  // Un punto del recorrido: dónde (barrio) y cuándo pasó el taxi por el sitio
+  // tocado. Mismo rango/horas que el recorrido que se está viendo.
+  puntoRecorrido: (
+    conductorId: number,
+    p: { lat: number; lng: number; desde: string; hasta: string; horaDesde?: number; horaHasta?: number },
+  ) => {
+    const partes = [
+      `lat=${p.lat}`, `lng=${p.lng}`,
+      `desde=${encodeURIComponent(p.desde)}`, `hasta=${encodeURIComponent(p.hasta)}`,
+    ];
+    if (p.horaDesde !== undefined) partes.push(`horaDesde=${p.horaDesde}`);
+    if (p.horaHasta !== undefined) partes.push(`horaHasta=${p.horaHasta}`);
+    return pedirJson<{ punto: PuntoRecorrido | null }>(
+      `/api/operador/conductores/${conductorId}/punto?${partes.join('&')}`,
+    );
+  },
 
   referenciasOperador: (q?: string, zonaId?: number) => {
     const partes = [

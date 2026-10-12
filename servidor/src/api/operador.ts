@@ -35,12 +35,12 @@ import {
 import { leerParametroEntero } from '../dominio/parametros.js';
 import { emitirVale } from '../dominio/vales.js';
 import { senalesDeTarifa } from '../dominio/precios.js';
-import { actividadDe, recorridoDe } from '../dominio/rastro.js';
+import { actividadDe, condicionHoras, puntoMasCercanoEnRango, recorridoDe } from '../dominio/rastro.js';
 import { inicioDelDiaEnMalabo } from '../dominio/tiempo.js';
 import { confirmarRecarga, rechazarRecarga, recargasDe } from '../dominio/recargas.js';
 import { reputacionDe } from '../dominio/reputacion.js';
 import { normalizarTelefono } from '../dominio/telefono.js';
-import { crearZonaEnGps, situarZona } from '../dominio/zonas.js';
+import { barrioMasCercano, crearZonaEnGps, situarZona } from '../dominio/zonas.js';
 import { crearSolicitud } from '../dominio/transiciones.js';
 
 const PATRON_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1455,43 +1455,75 @@ export function registrarRutasOperador(
     await exigirOperador(req);
     const id = Number((req.params as { id: string }).id);
     if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
-    const { periodo } = (req.query ?? {}) as { periodo?: string };
-    const dias = DIAS_POR_PERIODO[periodo ?? 'dia'];
-    if (dias === undefined) {
-      throw errorHttp(400, 'periodo tiene que ser dia, semana o mes.');
+    // Dos formas de pedir el recorrido: el atajo de siempre (periodo) o un
+    // RANGO a medida (desde/hasta, ISO) con un filtro opcional de HORAS del día
+    // (horaDesde/horaHasta, 0–23). El rango a medida es lo que usa el despacho
+    // en ordenador; el periodo lo sigue usando la ficha.
+    const q = (req.query ?? {}) as {
+      periodo?: string; desde?: string; hasta?: string;
+      horaDesde?: string; horaHasta?: string;
+    };
+    let desde: Date;
+    let hasta: Date;
+    if (q.desde !== undefined || q.hasta !== undefined) {
+      const d = new Date(q.desde ?? '');
+      const h = new Date(q.hasta ?? '');
+      if (Number.isNaN(d.getTime()) || Number.isNaN(h.getTime()) || d >= h) {
+        throw errorHttp(400, 'desde/hasta tienen que ser fechas válidas con desde < hasta.');
+      }
+      desde = d;
+      hasta = h;
+    } else {
+      const dias = DIAS_POR_PERIODO[q.periodo ?? 'dia'];
+      if (dias === undefined) throw errorHttp(400, 'periodo tiene que ser dia, semana o mes.');
+      hasta = new Date();
+      desde = inicioDelDiaEnMalabo(dias, hasta);
     }
-    const hasta = new Date();
-    const desde = inicioDelDiaEnMalabo(dias, hasta);
-    const recorrido = await recorridoDe(pool, id, desde, hasta);
-    const actividad = await actividadDe(pool, id, desde, hasta);
-    // Cuántos clientes llevó en el periodo: carreras que acabaron en
-    // COMPLETADO, contadas por cuándo se pidieron (en una isla de veinte
-    // minutos, la carrera empieza y acaba el mismo día). Es el dato que cierra
-    // el recorrido —no solo por dónde anduvo, sino a cuánta gente llevó—.
+    const horaDesde = q.horaDesde === undefined ? null : Number(q.horaDesde);
+    const horaHasta = q.horaHasta === undefined ? null : Number(q.horaHasta);
+    const filtroHoras = (horaDesde !== null && horaHasta !== null
+      && Number.isFinite(horaDesde) && Number.isFinite(horaHasta))
+      ? { desde: horaDesde, hasta: horaHasta }
+      : undefined;
+
+    const recorrido = await recorridoDe(pool, id, desde, hasta, 1500, filtroHoras);
+    // Con filtro de horas, los números del coche circulando salen del propio
+    // recorrido ya filtrado (la actividad del registro de estados no se puede
+    // recortar por hora). Sin filtro, se usan los del registro, más honestos
+    // con los agujeros del rastro.
+    const actividad = filtroHoras ? null : await actividadDe(pool, id, desde, hasta);
+    const segMovimiento = filtroHoras ? recorrido.segundosEnMovimiento : actividad!.segundosEnMovimiento;
+    const velVolante = filtroHoras
+      ? (segMovimiento > 0 ? Math.round((recorrido.metros / segMovimiento) * 3.6 * 10) / 10 : null)
+      : actividad!.velocidadAlVolanteKmh;
+    // Cuántos clientes llevó: carreras COMPLETADO contadas por cuándo se
+    // pidieron, con el MISMO filtro de horas si lo hay.
     const llevados = await pool.query(
       `SELECT count(*)::int AS n
        FROM solicitud s
        WHERE s.conductor_id = $1 AND s.estado = 'COMPLETADO'
-         AND s.creada_en BETWEEN $2 AND $3`,
+         AND s.creada_en >= $2 AND s.creada_en < $3
+         ${condicionHoras(filtroHoras, 's.creada_en')}`,
       [id, desde, hasta],
     );
     return {
-      periodo: periodo ?? 'dia',
+      periodo: q.periodo ?? (filtroHoras || q.desde ? 'rango' : 'dia'),
       desde: recorrido.desde.toISOString(),
       hasta: recorrido.hasta.toISOString(),
       puntos: recorrido.puntos,
       metros: recorrido.metros,
       clientesLlevados: llevados.rows[0].n as number,
       // Tiempo en servicio del periodo. Sale del registro de estados y no del
-      // rastro: el rastro tiene agujeros y le quitaría horas trabajadas.
-      segundosEnServicio: actividad.segundosEnServicio,
+      // rastro: el rastro tiene agujeros y le quitaría horas trabajadas. Con
+      // filtro de horas no se puede recortar, así que no se envía.
+      segundosEnServicio: actividad ? actividad.segundosEnServicio : null,
       // Y de esas horas, cuántas con el coche andando (migración 051). Las dos
       // juntas son las que dicen si el turno fue de trabajo o de espera.
-      segundosEnMovimiento: actividad.segundosEnMovimiento,
-      velocidadMediaKmh: actividad.velocidadMediaKmh,
+      segundosEnMovimiento: segMovimiento,
+      velocidadMediaKmh: actividad ? actividad.velocidadMediaKmh : null,
       // La de conducción: los mismos metros entre el tiempo que el coche se
       // movió de verdad. Es la que no se hunde con las esperas.
-      velocidadAlVolanteKmh: actividad.velocidadAlVolanteKmh,
+      velocidadAlVolanteKmh: velVolante,
       // Sin las horas: al operador le importa el dibujo y cuánto anduvo, y
       // mandar la marca de tiempo de cada punto dobla el tamaño de la
       // respuesta para nada.
@@ -1512,6 +1544,48 @@ export function registrarRutasOperador(
         metros: t.metros,
         parado: t.parado,
       })),
+    };
+  });
+
+  // Un punto del recorrido: el operador toca un sitio del trazo y se le dice
+  // CUÁNDO pasó por ahí y en qué BARRIO. Así el dibujo (que no lleva horas, para
+  // no pesar) se puede interrogar punto a punto bajo demanda. Mismo rango y
+  // mismo filtro de horas que el recorrido que se está viendo.
+  app.get('/api/operador/conductores/:id/punto', async (req) => {
+    await exigirOperador(req);
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(id)) throw errorHttp(400, 'Id de conductor no válido.');
+    const q = (req.query ?? {}) as {
+      lat?: string; lng?: string; desde?: string; hasta?: string;
+      horaDesde?: string; horaHasta?: string;
+    };
+    const lat = Number(q.lat);
+    const lng = Number(q.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      throw errorHttp(400, 'Faltan lat/lng válidos.');
+    }
+    const desde = new Date(q.desde ?? '');
+    const hasta = new Date(q.hasta ?? '');
+    if (Number.isNaN(desde.getTime()) || Number.isNaN(hasta.getTime())) {
+      throw errorHttp(400, 'desde/hasta tienen que ser fechas válidas.');
+    }
+    const horaDesde = q.horaDesde === undefined ? null : Number(q.horaDesde);
+    const horaHasta = q.horaHasta === undefined ? null : Number(q.horaHasta);
+    const filtroHoras = (horaDesde !== null && horaHasta !== null
+      && Number.isFinite(horaDesde) && Number.isFinite(horaHasta))
+      ? { desde: horaDesde, hasta: horaHasta }
+      : undefined;
+    const punto = await puntoMasCercanoEnRango(pool, id, lat, lng, desde, hasta, filtroHoras);
+    if (punto === null) return { punto: null };
+    const barrio = await barrioMasCercano(pool, punto.lat, punto.lng);
+    return {
+      punto: {
+        lat: punto.lat,
+        lng: punto.lng,
+        en: punto.en.toISOString(),
+        velocidadKmh: punto.velocidadKmh,
+        barrio: barrio?.nombre ?? null,
+      },
     };
   });
 
