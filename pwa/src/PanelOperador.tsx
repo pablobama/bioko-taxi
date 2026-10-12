@@ -3005,7 +3005,7 @@ function Viajes({ alVerEnMapa, alVerFichaConductor, alVerFichaPasajero }: {
           columnas obligaban a leer en diagonal. Lo que se consulta de una
           carrera concreta —teléfono, zonas, precio— sale al desplegarla. */}
       {viajes !== null && viajes.length > 0 && (
-        <Tabla cabeceras={['Cuándo', 'Emitido', 'Origen → Destino', 'Taxi', '']}>
+        <Tabla cabeceras={['Cuándo', 'Bajado', 'Origen → Destino', 'Taxi', '']}>
           {viajes.map((v) => (
             <Fragment key={v.id}>
               {/* La fila entera lleva la carrera al mapa del despacho (pedido
@@ -3017,9 +3017,11 @@ function Viajes({ alVerEnMapa, alVerFichaConductor, alVerFichaPasajero }: {
                 onClick={() => (alVerEnMapa ? alVerEnMapa(v) : alternar(v.id))}
               >
                 <td className="tabla-tenue">{cuando(v.creada_en)}</td>
-                {/* Solo la hora: el día ya lo dice «Cuándo», y una carrera no
-                    cruza la medianoche en una isla de veinte minutos. */}
-                <td className="tabla-tenue">{v.emitido_en === null ? '—' : soloHora(v.emitido_en)}</td>
+                {/* La hora en que el pasajero se bajó (fin de la carrera). Solo
+                    la hora: el día ya lo dice «Cuándo», y una carrera no cruza
+                    la medianoche en una isla de veinte minutos. «—» si no llegó
+                    a completarse. */}
+                <td className="tabla-tenue">{v.bajada_en === null ? '—' : soloHora(v.bajada_en)}</td>
                 <td>{v.origen} → {v.destino}</td>
                 <td>{v.matricula ?? v.conductor ?? '—'}</td>
                 <td className="tabla-tenue">
@@ -4722,6 +4724,11 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                     ))}
                   </div>
                 )}
+                {/* El alta hecha por el operador (06/10): con el coche delante,
+                    en vez de esperar a que el taxista se registre solo. Va
+                    ARRIBA del listado (11/10): es lo que el operario viene a
+                    hacer, no algo escondido al final de cincuenta filas. */}
+                <AltaDeTaxista alCreada={(id) => { cargarStats(); setFichaConductor(id); }} />
                 {conductores?.length === 0 && <p className="nota">No hay conductores que encajen.</p>}
                 {/* En el ordenador, tabla (06/10): una lista de cincuenta
                     taxistas se recorre bajando por UNA columna —la matrícula,
@@ -4748,10 +4755,6 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                 {!enConsola && conductores?.map((c) => (
                   <FilaConductor key={c.id} conductor={c} alAbrir={setFichaConductor} />
                 ))}
-                {/* El alta hecha por el operador (06/10): con el coche
-                    delante, en vez de esperar a que el taxista se registre
-                    solo desde su móvil. */}
-                <AltaDeTaxista alCreada={(id) => { cargarStats(); setFichaConductor(id); }} />
               </>
             )
         )}
