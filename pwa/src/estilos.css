@@ -3994,6 +3994,19 @@ button.importe.elegido-importe {
   gap: 8px;
 }
 
+/* Los campos de un formulario (alta de taxista, etc.) comparten fila en la
+   consola ancha en vez de apilarse a lo alto. El input por defecto es
+   width:100%, y con el `flex-wrap` de arriba cada uno caía en su propia línea
+   —se veía en el alta, con Nombre, Apellido, Teléfono y DIP uno debajo de
+   otro— desperdiciando todo el ancho de la mesa. Con una base flexible dos o
+   tres entran en la misma fila y solo se envuelven cuando de verdad no caben. */
+.consola-trabajo .fila > input,
+.consola-trabajo .fila > select {
+  flex: 1 1 180px;
+  width: auto;
+  min-width: 0;
+}
+
 /* Y que no se estiren a un tercio de la fila cada uno, que es lo que hace la
    regla del teléfono: aquí cada botón mide lo que mide su texto. */
 .consola-trabajo .fila button {
