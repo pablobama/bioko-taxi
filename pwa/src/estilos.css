@@ -3910,6 +3910,19 @@ button.importe.elegido-importe {
   color: var(--humo);
 }
 
+/* Filas ricas del operador: un dato principal y una línea de apoyo debajo,
+   para meter varios datos por celda sin multiplicar columnas. */
+.op-fila-ppal {
+  display: block;
+  font-weight: 600;
+}
+.op-fila-sub {
+  display: block;
+  margin-top: 1px;
+  color: var(--humo);
+  font-size: 0.74rem;
+}
+
 /* La columna por la que se busca. Monoespaciada porque son claves y estados
    que se comparan letra a letra. */
 .tabla-clave {

@@ -506,11 +506,15 @@ export interface AparatoOperador {
 export interface ConductorOperador {
   id: number;
   nombre: string;
+  apellido: string | null;
   telefono: string;
   correo: string | null;
   estado_verificacion: string;
   // El número de flota (migración 084): A013. Para siempre.
   numero_taxi: string | null;
+  // Cómo se registra y hasta cuándo está al día (migración 092).
+  tipo_registro: string;
+  suscrito_hasta: string | null;
   // Para ordenar la bandeja por antigüedad: la edad de un alta es su fecha.
   fecha_alta: string;
   matricula: string | null;
@@ -519,6 +523,8 @@ export interface ConductorOperador {
   carroceria: string | null;
   aire_acondicionado: boolean;
   seguro: boolean;
+  // El saldo del monedero, para la lista sin abrir la ficha.
+  saldo_xaf: number;
 }
 
 export interface EstadisticasOperador {

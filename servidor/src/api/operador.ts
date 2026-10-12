@@ -1121,15 +1121,18 @@ export function registrarRutasOperador(
     // Sin paginación de verdad todavía (lista corta en la práctica); el tope
     // es solo para no reventar la pantalla si algún día deja de serlo.
     const filas = await pool.query(
-      `SELECT c.id, c.nombre, c.telefono, c.correo, c.estado_verificacion,
-              c.numero_taxi,
+      `SELECT c.id, c.nombre, c.apellido, c.telefono, c.correo, c.estado_verificacion,
+              c.numero_taxi, c.tipo_registro, c.suscrito_hasta,
               -- Para la bandeja (06/10): lo pendiente se ordena por
               -- antigüedad, y la edad de un alta es su fecha.
               c.fecha_alta,
               v.matricula, v.marca, v.color, v.carroceria,
-              v.aire_acondicionado, v.seguro
+              v.aire_acondicionado, v.seguro,
+              -- El saldo del monedero, para verlo en la lista sin abrir la ficha.
+              COALESCE(sm.saldo_xaf, 0)::int AS saldo_xaf
        FROM conductor c
        LEFT JOIN vehiculo v ON v.conductor_id = c.id
+       LEFT JOIN saldo_monedero sm ON sm.conductor_id = c.id
        WHERE ($1::text IS NULL OR c.estado_verificacion = $1)
          AND ($2::text IS NULL
               OR c.nombre ILIKE '%' || $2 || '%'

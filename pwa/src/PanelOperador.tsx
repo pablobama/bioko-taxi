@@ -4941,17 +4941,31 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                     entera. En el teléfono siguen las tarjetas, que con el
                     pulgar son más fáciles de acertar. */}
                 {enConsola && conductores !== null && conductores.length > 0 && (
-                  <Tabla cabeceras={['Nº', 'Taxi', 'Nombre', 'Teléfono', 'Estado', 'Alta']}>
+                  <Tabla cabeceras={['Taxista', 'Contacto', 'Alta']}>
                     {conductores.map((c) => (
                       <tr
                         key={c.id} className="tabla-desplegable"
                         onClick={() => setFichaConductor(c.id)}
                       >
-                        <td className="tabla-clave">{c.numero_taxi ?? '—'}</td>
-                        <td className="tabla-clave">{c.matricula ?? '—'}</td>
-                        <td>{c.nombre}</td>
-                        <td className="tabla-tenue">{c.telefono}</td>
-                        <td>{ETIQUETA_ESTADO[c.estado_verificacion] ?? c.estado_verificacion}</td>
+                        {/* Una fila, más datos: la identidad (nombre, nº y coche)
+                            en una celda; el contacto, estado, saldo y tipo de
+                            registro en otra; la fecha de alta a la derecha. */}
+                        <td>
+                          <span className="op-fila-ppal">
+                            {c.nombre}{c.apellido ? ` ${c.apellido}` : ''}
+                          </span>
+                          <small className="op-fila-sub">
+                            {[c.numero_taxi, c.matricula, c.marca].filter(Boolean).join(' · ') || 'sin coche'}
+                          </small>
+                        </td>
+                        <td>
+                          <span className="op-fila-ppal">{c.telefono}</span>
+                          <small className="op-fila-sub">
+                            {ETIQUETA_ESTADO[c.estado_verificacion] ?? c.estado_verificacion}
+                            {' · '}{c.saldo_xaf.toLocaleString('es-ES')} XAF
+                            {c.tipo_registro === 'ayuntamiento' ? ' · Ayto.' : ''}
+                          </small>
+                        </td>
                         <td className="tabla-tenue">{cuando(c.fecha_alta)}</td>
                       </tr>
                     ))}
