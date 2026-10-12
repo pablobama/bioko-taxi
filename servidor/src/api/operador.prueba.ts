@@ -1087,6 +1087,73 @@ test('alta por el operador: verificado, número por confirmar y sin robarle el a
   assert.match(repetida.json().error, /Alta del panel/);
 });
 
+test('alta por Ayuntamiento: cuota anual, pago al monedero y VIN (migración 092)', async () => {
+  const telefono = telefonoUnico();
+  const res = await app.inject({
+    method: 'POST', url: '/api/operador/conductores', headers: cabeceras(UUID_OPERADOR),
+    payload: {
+      nombre: 'Ayto', apellido: 'Taxi', telefono, dip: dipUnico(), duenoConduce: true,
+      matricula: `MB-${telefono.slice(-5)}A`, marca: 'Toyota', carroceria: 'turismo',
+      vin: 'VIN-AYTO-1', tipoRegistro: 'ayuntamiento', cantidadPagadaXaf: 30000,
+    },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  const id = Number(res.json().conductorId);
+
+  const c = await pool.query(
+    `SELECT c.tipo_registro, c.suscrito_hasta, v.vin,
+            (SELECT COALESCE(SUM(importe_xaf), 0) FROM apunte a JOIN monedero m ON m.id = a.monedero_id
+             WHERE m.conductor_id = c.id) AS saldo
+     FROM conductor c JOIN vehiculo v ON v.conductor_id = c.id WHERE c.id = $1`,
+    [id],
+  );
+  assert.equal(c.rows[0].tipo_registro, 'ayuntamiento');
+  assert.equal(c.rows[0].vin, 'VIN-AYTO-1');
+  assert.equal(Number(c.rows[0].saldo), 30000, 'el pago del alta entró en el monedero');
+  const dias = (new Date(c.rows[0].suscrito_hasta).getTime() - Date.now()) / 86_400_000;
+  assert.ok(dias > 360 && dias < 370, `la cuota anual deja +1 año, y salió ${dias.toFixed(0)} días`);
+
+  // El taxi aparece en la facturación del año en curso con sus 30.000.
+  const anio = new Date().getUTCFullYear();
+  const fact = await app.inject({
+    method: 'GET', url: `/api/operador/facturacion?anio=${anio}`, headers: cabeceras(UUID_OPERADOR),
+  });
+  assert.equal(fact.statusCode, 200, fact.body);
+  const fila = (fact.json().filas as Array<{ conductorId: number; facturadoXaf: number; tipoRegistro: string }>)
+    .find((f) => f.conductorId === id);
+  assert.ok(fila, 'el taxi está en la facturación');
+  assert.equal(fila!.facturadoXaf, 30000);
+  assert.equal(fila!.tipoRegistro, 'ayuntamiento');
+});
+
+test('alta de pasajero por el operador: verificado y con vale (migración 092)', async () => {
+  const telefono = telefonoUnico();
+  const res = await app.inject({
+    method: 'POST', url: '/api/operador/pasajeros', headers: cabeceras(UUID_OPERADOR),
+    payload: { telefono, nombre: 'Pasa Alta' },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  const dispositivoId = Number(res.json().dispositivoId);
+  assert.ok(res.json().vale?.codigo, 'devuelve un vale para reclamar la cuenta');
+
+  const pc = await pool.query(
+    'SELECT telefono, nombre, telefono_verificado_en FROM perfil_cliente WHERE dispositivo_id = $1',
+    [dispositivoId],
+  );
+  assert.equal(pc.rows[0].telefono, telefono);
+  assert.equal(pc.rows[0].nombre, 'Pasa Alta');
+  assert.notEqual(pc.rows[0].telefono_verificado_en, null, 'lo da por verificado el operador');
+
+  // Repetir con el mismo teléfono reutiliza el dispositivo, no crea otro.
+  const otra = await app.inject({
+    method: 'POST', url: '/api/operador/pasajeros', headers: cabeceras(UUID_OPERADOR),
+    payload: { telefono },
+  });
+  assert.equal(otra.statusCode, 200, otra.body);
+  assert.equal(Number(otra.json().dispositivoId), dispositivoId);
+  assert.equal(otra.json().yaExistia, true);
+});
+
 // El propietario (migración 087): el dueño distinto del conductor, la flota
 // —dos coches del mismo DIP reutilizan la ficha— y las validaciones del DIP y
 // de los tipos nuevos de vehículo.

@@ -11,6 +11,7 @@ import {
   type AccesoOperador, type AparatoOperador,
   type BandaOperador, type CambioOperador, type ConductorOperador, type EstadisticasOperador,
   type FichaConductorOperador, type FichaPasajeroOperador, type FichaPropietarioOperador, type IncidenciaOperador,
+  type FacturacionOperador,
   type ParametroOperador, type PasajeroOperador, type PeriodoRecorrido, type PermisoOperador,
   type RangoRecorrido,
   type RecargaOperador, type RecorridoOperador, type ReferenciaOperador,
@@ -540,6 +541,13 @@ function AltaDeTaxista({ alCreada, duenoFijado, abiertaInicial = false, alCerrar
   const [plazas, setPlazas] = useState('');
   const [aire, setAire] = useState(false);
   const [seguro, setSeguro] = useState(false);
+  const [vin, setVin] = useState('');
+  // Registro y pago (migración 092): ayuntamiento (anual) o recargas (semanal),
+  // y lo que paga hoy, que entra en su monedero.
+  const [tipoRegistro, setTipoRegistro] = useState<'recargas' | 'ayuntamiento'>('recargas');
+  const [pagado, setPagado] = useState('');
+  // La foto del taxista, enlazada en el mismo alta (se sube al crearlo).
+  const [foto, setFoto] = useState<File | null>(null);
   const [error, setError] = useState('');
   const [ocupado, setOcupado] = useState(false);
 
@@ -601,13 +609,20 @@ function AltaDeTaxista({ alCreada, duenoFijado, abiertaInicial = false, alCerrar
         ...datosDelDueno(),
         matricula: matricula.trim(),
         marca: marca.trim(),
+        vin: vin.trim() || undefined,
         carroceria,
         color: color.trim() || undefined,
         plazas: plazas.trim() === '' ? undefined : Number(plazas),
         aireAcondicionado: aire,
         seguro,
         numeroTaxi: numeroTaxi.trim() || undefined,
+        tipoRegistro,
+        cantidadPagadaXaf: pagado.trim() === '' ? undefined : Number(pagado),
       });
+      // La foto, en el mismo acto: si falla, el alta sigue valiendo.
+      if (foto !== null) {
+        try { await api.subirFotoConductor(r.conductorId, foto); } catch { /* sin foto, se añade luego */ }
+      }
       setAbierta(false);
       alCreada(r.conductorId);
     } catch (e) {
@@ -626,42 +641,27 @@ function AltaDeTaxista({ alCreada, duenoFijado, abiertaInicial = false, alCerrar
       </p>
       {error && <p className="aviso">{error}</p>}
 
-      <h4 className="alta-titulo">Quién conduce</h4>
-      <div className="fila">
-        <input value={nombre} placeholder="Nombre" onChange={(e) => setNombre(e.target.value)} />
-        <input value={apellido} placeholder="Apellido" onChange={(e) => setApellido(e.target.value)} />
-      </div>
-      <div className="fila">
-        <input
-          value={telefono} inputMode="tel" placeholder="Teléfono"
-          onChange={(e) => setTelefono(e.target.value)}
-        />
-        <input
-          value={dip} inputMode="numeric" placeholder="DIP (9 dígitos)" maxLength={9}
-          onChange={(e) => setDip(e.target.value.replace(/\D/g, '').slice(0, 9))}
-        />
-      </div>
-
-      {/* El dueño del coche. Casi siempre es el mismo que conduce; cuando no,
-          se ELIGE uno ya registrado —así se arma la flota de un dueño— o se
-          teclea uno nuevo. Con el dueño fijado (añadir coche desde su ficha),
-          no se pregunta. */}
+      {/* Primero el dueño, y si el taxista es el dueño (pedido 12/10): con el
+          coche delante, lo natural es empezar por de quién es. Casi siempre es
+          el mismo que conduce; cuando no, se ELIGE uno ya registrado —así se
+          arma la flota de un dueño— o se teclea uno nuevo. Con el dueño fijado
+          (añadir coche desde su ficha), no se pregunta. */}
       {duenoFijado !== undefined ? (
         <p className="nota">
-          El coche será de <strong>{duenoFijado.nombre} {duenoFijado.apellido}</strong>, conducido por el taxista de arriba.
+          El coche será de <strong>{duenoFijado.nombre} {duenoFijado.apellido}</strong>. Debajo, el taxista que lo conduce.
         </p>
       ) : (
         <>
+          <h4 className="alta-titulo">De quién es el coche</h4>
           <label className="casilla">
             <input
               type="checkbox" checked={duenoConduce}
               onChange={(e) => setDuenoConduce(e.target.checked)}
             />
-            El dueño del coche es quien conduce
+            El taxista es el dueño del coche
           </label>
           {!duenoConduce && (
             <>
-              <h4 className="alta-titulo">De quién es el coche</h4>
               <div className="selector-idioma">
                 <button
                   type="button" className={modoDueno === 'existente' ? 'idioma-activo' : undefined}
@@ -717,6 +717,26 @@ function AltaDeTaxista({ alCreada, duenoFijado, abiertaInicial = false, alCerrar
         </>
       )}
 
+      {/* El taxista que conduce. Si es el dueño, estos son sus únicos datos (de
+          ellos sale también el propietario). */}
+      <h4 className="alta-titulo">
+        {duenoConduce && duenoFijado === undefined ? 'El taxista (que es el dueño)' : 'El taxista que conduce'}
+      </h4>
+      <div className="fila">
+        <input value={nombre} placeholder="Nombre" onChange={(e) => setNombre(e.target.value)} />
+        <input value={apellido} placeholder="Apellido" onChange={(e) => setApellido(e.target.value)} />
+      </div>
+      <div className="fila">
+        <input
+          value={telefono} inputMode="tel" placeholder="Teléfono"
+          onChange={(e) => setTelefono(e.target.value)}
+        />
+        <input
+          value={dip} inputMode="numeric" placeholder="DIP (9 dígitos)" maxLength={9}
+          onChange={(e) => setDip(e.target.value.replace(/\D/g, '').slice(0, 9))}
+        />
+      </div>
+
       <h4 className="alta-titulo">El coche</h4>
       <div className="fila">
         <input
@@ -730,6 +750,12 @@ function AltaDeTaxista({ alCreada, duenoFijado, abiertaInicial = false, alCerrar
           <option value="furgoneta">Furgoneta</option>
           <option value="autobus">Autobús</option>
         </select>
+      </div>
+      <div className="fila">
+        <input
+          value={vin} placeholder="VIN / nº de bastidor (opcional)"
+          onChange={(e) => setVin(e.target.value)}
+        />
       </div>
       <div className="fila">
         <input value={color} placeholder="Color (opcional)" onChange={(e) => setColor(e.target.value)} />
@@ -758,6 +784,45 @@ function AltaDeTaxista({ alCreada, duenoFijado, abiertaInicial = false, alCerrar
           Seguro en regla
         </label>
       </div>
+
+      {/* Cómo se registra y qué paga (migración 092). Ayuntamiento = cuota
+          anual que deja el taxi al día un año; recargas = cuota semanal por el
+          monedero. Lo que paga hoy entra en su monedero. */}
+      <h4 className="alta-titulo">Registro y pago</h4>
+      <div className="selector-idioma">
+        <button
+          type="button" className={tipoRegistro === 'recargas' ? 'idioma-activo' : undefined}
+          onClick={() => setTipoRegistro('recargas')}
+        >
+          Recargas (semanal)
+        </button>
+        <button
+          type="button" className={tipoRegistro === 'ayuntamiento' ? 'idioma-activo' : undefined}
+          onClick={() => setTipoRegistro('ayuntamiento')}
+        >
+          Ayuntamiento (anual)
+        </button>
+      </div>
+      <div className="fila">
+        <input
+          value={pagado} inputMode="numeric"
+          placeholder={tipoRegistro === 'ayuntamiento' ? 'Pagado (XAF) · Ayuntamiento 30.000/año' : 'Pagado (XAF) · entra en el monedero'}
+          onChange={(e) => setPagado(e.target.value.replace(/\D/g, ''))}
+        />
+      </div>
+      {tipoRegistro === 'ayuntamiento' && (
+        <p className="nota">Con el pago del Ayuntamiento queda al día un año; no se le cobra la cuota semanal.</p>
+      )}
+
+      {/* La foto del taxista, en el mismo alta (12/10): se sube al crearlo. */}
+      <h4 className="alta-titulo">Foto (opcional)</h4>
+      <div className="fila">
+        <input
+          type="file" accept="image/*"
+          onChange={(e) => setFoto(e.target.files?.[0] ?? null)}
+        />
+      </div>
+
       <div className="fila">
         <button
           type="button" className="principal"
@@ -766,6 +831,92 @@ function AltaDeTaxista({ alCreada, duenoFijado, abiertaInicial = false, alCerrar
           Darlo de alta
         </button>
         <button type="button" className="secundario" onClick={() => { setAbierta(false); alCerrar?.(); }}>
+          Dejarlo
+        </button>
+      </div>
+    </>
+  );
+}
+
+// Alta de pasajero por la central (migración 092). Como la del taxista: la
+// central lo registra con el teléfono delante. Nace verificado y devuelve un
+// «vale» (código corto) para que esa persona reclame la cuenta en su móvil sin
+// depender del SMS a Guinea.
+function AltaDePasajero({ alCreado }: { alCreado: () => void }) {
+  const puede = usarPermisos().puede('despacho');
+  const [abierta, setAbierta] = useState(false);
+  const [telefono, setTelefono] = useState('');
+  const [nombre, setNombre] = useState('');
+  const [correo, setCorreo] = useState('');
+  const [error, setError] = useState('');
+  const [ocupado, setOcupado] = useState(false);
+  const [vale, setVale] = useState<string | null>(null);
+
+  if (!puede) return null;
+  if (!abierta) {
+    return (
+      <button type="button" className="secundario" onClick={() => setAbierta(true)}>
+        Dar de alta un pasajero
+      </button>
+    );
+  }
+
+  async function guardar() {
+    setError(''); setOcupado(true); setVale(null);
+    try {
+      const r = await api.darDeAltaPasajero({
+        telefono: telefono.trim(),
+        nombre: nombre.trim() || undefined,
+        correo: correo.trim() || undefined,
+      });
+      // Si salió un vale, se enseña para que el operador se lo dicte; si ya
+      // existía el teléfono, se avisa sin drama.
+      setVale(r.vale ? r.vale.codigo : null);
+      if (r.vale === null) {
+        setError(r.yaExistia ? 'Ese teléfono ya estaba registrado; listo igual.' : '');
+      }
+      setTelefono(''); setNombre(''); setCorreo('');
+      alCreado();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo dar el alta.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  return (
+    <>
+      <p className="nota">
+        Nace verificado —lo verificas tú—. El «vale» que sale es lo que esa
+        persona escribe en su móvil para reclamar la cuenta, en vez del SMS.
+      </p>
+      {error && <p className="aviso">{error}</p>}
+      {vale !== null && (
+        <p className="nota">
+          Vale para reclamar la cuenta: <strong style={{ fontSize: '1.2rem', letterSpacing: '0.1em' }}>{vale}</strong>
+        </p>
+      )}
+      <div className="fila">
+        <input
+          value={telefono} inputMode="tel" placeholder="Teléfono (+240…)"
+          onChange={(e) => setTelefono(e.target.value)}
+        />
+        <input value={nombre} placeholder="Nombre (opcional)" onChange={(e) => setNombre(e.target.value)} />
+      </div>
+      <div className="fila">
+        <input
+          value={correo} inputMode="email" placeholder="Correo (opcional)"
+          onChange={(e) => setCorreo(e.target.value)}
+        />
+      </div>
+      <div className="fila">
+        <button
+          type="button" className="principal"
+          disabled={telefono.trim().length < 6 || ocupado} onClick={guardar}
+        >
+          Darlo de alta
+        </button>
+        <button type="button" className="secundario" onClick={() => setAbierta(false)}>
           Dejarlo
         </button>
       </div>
@@ -3181,10 +3332,60 @@ function TaxisPorZona() {
 const TIPOS_REGISTRO = [
   ['carreras', 'Carreras'],
   ['vehiculos', 'Vehículos'],
+  ['facturacion', 'Facturación'],
   ['propietarios', 'Propietarios'],
   ['flota', 'Taxis por zona'],
   ['cambios', 'Quién tocó qué'],
 ] as const;
+
+// Facturación por vehículo (migración 092): lo cobrado a cada taxi en el año.
+function RegistroFacturacion() {
+  const ahora = new Date().getFullYear();
+  const [anio, setAnio] = useState(ahora);
+  const [datos, setDatos] = useState<FacturacionOperador | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    setDatos(null); setError('');
+    api.facturacionOperador(anio).then(setDatos)
+      .catch((e) => setError(e instanceof Error ? e.message : 'No se pudo cargar.'));
+  }, [anio]);
+  const anios = [ahora, ahora - 1, ahora - 2, ahora - 3];
+  return (
+    <>
+      <div className="selector-idioma">
+        {anios.map((a) => (
+          <button
+            key={a} type="button" className={a === anio ? 'idioma-activo' : undefined}
+            onClick={() => setAnio(a)}
+          >
+            {a}
+          </button>
+        ))}
+      </div>
+      {error && <p className="aviso">{error}</p>}
+      {datos === null && !error && <p className="nota">Cargando…</p>}
+      {datos !== null && (
+        <>
+          <p className="nota">
+            Total facturado en {datos.anio}: <strong>{datos.totalXaf.toLocaleString('es-ES')} XAF</strong>
+          </p>
+          <Tabla cabeceras={['Nº', 'Matrícula', 'Taxista', 'Registro', 'Pagos', 'Facturado (XAF)']}>
+            {datos.filas.map((f) => (
+              <tr key={f.conductorId}>
+                <td className="tabla-clave">{f.numeroTaxi ?? '—'}</td>
+                <td className="tabla-clave">{f.matricula ?? '—'}</td>
+                <td>{f.nombre}{f.apellido ? ` ${f.apellido}` : ''}</td>
+                <td className="tabla-tenue">{f.tipoRegistro === 'ayuntamiento' ? 'Ayuntamiento' : 'Recargas'}</td>
+                <td className="tabla-tenue">{f.pagos}</td>
+                <td className="tabla-clave">{f.facturadoXaf.toLocaleString('es-ES')}</td>
+              </tr>
+            ))}
+          </Tabla>
+        </>
+      )}
+    </>
+  );
+}
 
 // El registro de todos los vehículos (migración 087): el coche, de quién es y
 // quién lo conduce, en una tabla que se recorre comparando.
@@ -3201,11 +3402,12 @@ function RegistroVehiculos({ alVerFichaConductor }: {
   if (lista === null) return <p className="nota">Cargando…</p>;
   if (lista.length === 0) return <p className="nota">Ningún vehículo todavía.</p>;
   return (
-    <Tabla cabeceras={['Nº', 'Matrícula', 'Tipo', 'Marca', 'Conductor', 'Dueño', 'Extras']}>
+    <Tabla cabeceras={['Nº', 'Matrícula', 'VIN', 'Tipo', 'Marca', 'Conductor', 'Dueño', 'Extras']}>
       {lista.map((v) => (
         <tr key={v.matricula}>
           <td className="tabla-clave">{v.numero_taxi ?? '—'}</td>
           <td className="tabla-clave">{v.matricula}</td>
+          <td className="tabla-tenue">{v.vin ?? '—'}</td>
           <td>{v.carroceria ? (ETIQUETA_CARROCERIA[v.carroceria] ?? v.carroceria) : '—'}</td>
           <td>{v.marca ?? '—'}{v.color ? ` · ${v.color}` : ''}</td>
           <td>
@@ -3222,7 +3424,8 @@ function RegistroVehiculos({ alVerFichaConductor }: {
           </td>
           <td>{v.dueno === null ? '—' : `${v.dueno} ${v.dueno_apellido ?? ''}`.trim()}</td>
           <td className="tabla-tenue">
-            {[v.aire_acondicionado ? 'aire' : null, v.seguro ? 'seguro' : null,
+            {[v.tipo_registro === 'ayuntamiento' ? 'Ayto.' : null,
+              v.aire_acondicionado ? 'aire' : null, v.seguro ? 'seguro' : null,
               v.plazas ? `${v.plazas} pl.` : null].filter(Boolean).join(' · ') || '—'}
           </td>
         </tr>
@@ -3376,6 +3579,7 @@ function Registros({
         />
       )}
       {tipo === 'vehiculos' && <RegistroVehiculos alVerFichaConductor={alVerFichaConductor} />}
+      {tipo === 'facturacion' && <RegistroFacturacion />}
       {tipo === 'propietarios' && <RegistroPropietarios alAbrir={alVerFichaPropietario} />}
       {tipo === 'flota' && <TaxisPorZona />}
       {tipo === 'cambios' && <Cambios />}
@@ -4152,11 +4356,12 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
       .catch((e) => setError(e.message));
   }, [filtroConductor, busquedaConductor]);
 
+  const [recargaPasajeros, setRecargaPasajeros] = useState(0);
   useEffect(() => {
     api.pasajerosOperador(busquedaPasajero || undefined)
       .then((r) => setPasajeros(r.pasajeros))
       .catch((e) => setError(e.message));
-  }, [busquedaPasajero]);
+  }, [busquedaPasajero, recargaPasajeros]);
 
   function cargarIncidencias() {
     api.incidenciasOperador('pendientes')
@@ -4765,6 +4970,8 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
             : (
               <>
                 <Buscador alBuscar={setBusquedaPasajero} />
+                {/* El alta de pasajero por la central, arriba del listado. */}
+                <AltaDePasajero alCreado={() => setRecargaPasajeros((n) => n + 1)} />
                 {pasajeros?.length === 0 && <p className="nota">No hay pasajeros que encajen.</p>}
                 {enConsola && pasajeros !== null && pasajeros.length > 0 && (
                   <Tabla cabeceras={['Nombre', 'Teléfono', 'Viajes', 'Strikes', 'Estado']}>

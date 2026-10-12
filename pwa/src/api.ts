@@ -255,14 +255,34 @@ export interface VehiculoRegistro {
   plazas: number | null;
   aire_acondicionado: boolean;
   seguro: boolean;
+  vin: string | null;
   conductor_id: number;
   conductor: string;
   conductor_apellido: string | null;
   conductor_telefono: string;
   numero_taxi: string | null;
+  tipo_registro: string;
   dueno: string | null;
   dueno_apellido: string | null;
   dueno_dip: string | null;
+}
+
+// Facturación por vehículo en un año (migración 092).
+export interface FacturacionOperador {
+  anio: number;
+  totalXaf: number;
+  filas: Array<{
+    conductorId: number;
+    nombre: string;
+    apellido: string | null;
+    numeroTaxi: string | null;
+    tipoRegistro: string;
+    matricula: string | null;
+    marca: string | null;
+    facturadoXaf: number;
+    pagos: number;
+    ultimoPago: string | null;
+  }>;
 }
 
 export interface PropietarioRegistro {
@@ -1423,16 +1443,33 @@ export const api = {
     duenoConduce: boolean;
     propietarioId?: number;
     propietario?: { nombre: string; apellido: string; telefono: string; dip: string };
-    matricula: string; marca: string;
+    matricula: string; marca: string; vin?: string;
     carroceria: string; color?: string; plazas?: number;
     aireAcondicionado?: boolean; seguro?: boolean;
     // El número que el coche ya lleva pintado; vacío, el siguiente (084).
     numeroTaxi?: string;
+    // Cómo se registra y qué pagó (migración 092).
+    tipoRegistro?: 'recargas' | 'ayuntamiento';
+    cantidadPagadaXaf?: number;
   }) =>
     pedirJson<{ conductorId: number; numeroTaxi: string | null }>('/api/operador/conductores', {
       method: 'POST',
       body: JSON.stringify(datos),
     }),
+
+  // Facturación por vehículo en un año (migración 092).
+  facturacionOperador: (anio?: number) =>
+    pedirJson<FacturacionOperador>(
+      `/api/operador/facturacion${anio ? `?anio=${anio}` : ''}`,
+    ),
+
+  // Alta de pasajero por la central (migración 092). Devuelve un «vale» para
+  // que esa persona reclame la cuenta en su móvil sin depender del SMS.
+  darDeAltaPasajero: (datos: { telefono: string; nombre?: string; correo?: string }) =>
+    pedirJson<{ dispositivoId: number; yaExistia: boolean; vale: { codigo: string; caducaEn: string } | null }>(
+      '/api/operador/pasajeros',
+      { method: 'POST', body: JSON.stringify(datos) },
+    ),
 
   // Cambiar el número con el que entra alguien (05/10). No es editar un dato
   // de contacto: es cambiarle la llave, y el número nuevo queda sin verificar.

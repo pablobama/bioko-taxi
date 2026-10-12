@@ -67,7 +67,11 @@ async function renovarSuscripcionesCaducadas(
     `SELECT id FROM conductor
      WHERE suscrito_hasta IS NOT NULL
        AND suscrito_hasta < now()
-       AND suscrito_hasta > now() - interval '30 days'`,
+       AND suscrito_hasta > now() - interval '30 days'
+       -- Los de Ayuntamiento pagan la cuota ANUAL, no la semanal (migración
+       -- 092): no se les cobra por el monedero. Cuando se les acaba el año,
+       -- simplemente dejan de recibir hasta que la central registre el pago.
+       AND tipo_registro <> 'ayuntamiento'`,
   );
   for (const fila of vencidos.rows) {
     try {

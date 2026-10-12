@@ -38,6 +38,7 @@ import { senalesDeTarifa } from '../dominio/precios.js';
 import { actividadDe, condicionHoras, puntoMasCercanoEnRango, recorridoDe } from '../dominio/rastro.js';
 import { inicioDelDiaEnMalabo } from '../dominio/tiempo.js';
 import { confirmarRecarga, rechazarRecarga, recargasDe } from '../dominio/recargas.js';
+import { recargar } from '../dominio/monedero.js';
 import { reputacionDe } from '../dominio/reputacion.js';
 import { normalizarTelefono } from '../dominio/telefono.js';
 import { barrioMasCercano, crearZonaEnGps, situarZona } from '../dominio/zonas.js';
@@ -834,11 +835,16 @@ export function registrarRutasOperador(
       };
       // El vehículo.
       matricula?: string; marca?: string; carroceria?: string; color?: string;
-      plazas?: number;
+      plazas?: number; vin?: string;
       aireAcondicionado?: boolean; seguro?: boolean;
       // El número que el coche ya lleva pintado, si lo lleva. Vacío: el
       // siguiente de la secuencia (migración 084).
       numeroTaxi?: string;
+      // Cómo se registra y qué pagó (migración 092). «ayuntamiento» (cuota
+      // anual que sustituye la semanal) o «recargas» (el modelo de siempre). El
+      // importe pagado entra en el monedero como recarga.
+      tipoRegistro?: string;
+      cantidadPagadaXaf?: number;
     };
     const nombre = cuerpo.nombre?.trim();
     const apellido = cuerpo.apellido?.trim();
@@ -856,6 +862,15 @@ export function registrarRutasOperador(
     }
     if (!CARROCERIAS_VEHICULO.includes(carroceria)) {
       throw errorHttp(400, `Carrocería no válida. Opciones: ${CARROCERIAS_VEHICULO.join(', ')}.`);
+    }
+    const tipoRegistro = cuerpo.tipoRegistro === 'ayuntamiento' ? 'ayuntamiento' : 'recargas';
+    const vin = cuerpo.vin?.trim().toUpperCase() || null;
+    let pagadoXaf = 0;
+    if (cuerpo.cantidadPagadaXaf !== undefined && cuerpo.cantidadPagadaXaf !== null) {
+      if (!Number.isInteger(cuerpo.cantidadPagadaXaf) || cuerpo.cantidadPagadaXaf < 0) {
+        throw errorHttp(400, 'La cantidad pagada tiene que ser un número de XAF (0 o más).');
+      }
+      pagadoXaf = cuerpo.cantidadPagadaXaf;
     }
     // Las plazas (migración 089): opcionales en el alta —si no vienen, la base
     // pone 4—, con el tope del tipo de coche.
@@ -941,9 +956,9 @@ export function registrarRutasOperador(
       }
 
       const creado = await cliente.query(
-        `INSERT INTO conductor (telefono, nombre, apellido, dip, estado_verificacion)
-         VALUES ($1, $2, $3, $4, 'verificado') RETURNING id`,
-        [telefono, nombre, apellido, dip],
+        `INSERT INTO conductor (telefono, nombre, apellido, dip, estado_verificacion, tipo_registro)
+         VALUES ($1, $2, $3, $4, 'verificado', $5) RETURNING id`,
+        [telefono, nombre, apellido, dip, tipoRegistro],
       );
       const conductorId: number = Number(creado.rows[0].id);
       // El número de flota (084): el de la secuencia, o el que el coche ya
@@ -954,12 +969,12 @@ export function registrarRutasOperador(
         : await asignarNumeroSiguiente(cliente, conductorId);
       await cliente.query(
         `INSERT INTO vehiculo
-           (conductor_id, propietario_id, matricula, marca, carroceria, color, plazas, aire_acondicionado, seguro)
-         VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, 4), $8, $9)`,
+           (conductor_id, propietario_id, matricula, marca, carroceria, color, plazas, aire_acondicionado, seguro, vin)
+         VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, 4), $8, $9, $10)`,
         [
           conductorId, propietarioId, matricula, marca, carroceria,
           cuerpo.color?.trim() || null, plazasAlta,
-          cuerpo.aireAcondicionado ?? false, cuerpo.seguro ?? false,
+          cuerpo.aireAcondicionado ?? false, cuerpo.seguro ?? false, vin,
         ],
       );
       await cliente.query(
@@ -971,6 +986,18 @@ export function registrarRutasOperador(
          ON CONFLICT (conductor_id) DO NOTHING`,
         [conductorId],
       );
+      // Lo que pagó entra en el monedero como recarga (migración 092). Y si va
+      // por Ayuntamiento, su cuota anual sustituye a la semanal: queda al día un
+      // año de golpe, y la renovación automática lo deja en paz (arranque.ts).
+      if (pagadoXaf > 0) {
+        await recargar(cliente, conductorId, pagadoXaf, `alta-pago-${conductorId}`);
+      }
+      if (tipoRegistro === 'ayuntamiento') {
+        await cliente.query(
+          "UPDATE conductor SET suscrito_hasta = now() + interval '1 year' WHERE id = $1",
+          [conductorId],
+        );
+      }
       return { conductorId, numero };
     });
     // Quién lo dio de alta, en el registro de siempre (067).
@@ -987,9 +1014,9 @@ export function registrarRutasOperador(
     await exigirOperador(req);
     const res = await pool.query(
       `SELECT v.matricula, v.marca, v.carroceria, v.color, v.plazas,
-              v.aire_acondicionado, v.seguro,
+              v.aire_acondicionado, v.seguro, v.vin,
               c.id::int AS conductor_id, c.nombre AS conductor, c.apellido AS conductor_apellido,
-              c.telefono AS conductor_telefono, c.numero_taxi,
+              c.telefono AS conductor_telefono, c.numero_taxi, c.tipo_registro,
               p.nombre AS dueno, p.apellido AS dueno_apellido, p.dip AS dueno_dip
        FROM vehiculo v
        JOIN conductor c ON c.id = v.conductor_id
@@ -998,6 +1025,49 @@ export function registrarRutasOperador(
        LIMIT 500`,
     );
     return { vehiculos: res.rows };
+  });
+
+  // Facturación por vehículo (migración 092): lo cobrado a cada taxi en el año
+  // que se pida —recargas confirmadas y el pago del alta/Ayuntamiento, que son
+  // apuntes positivos de tipo «recarga»—. El dinero cuelga del conductor (su
+  // monedero), y se enseña con su coche. Por año en curso por defecto.
+  app.get('/api/operador/facturacion', async (req) => {
+    await exigirOperador(req);
+    const q = (req.query ?? {}) as { anio?: string };
+    const anio = Number(q.anio);
+    const ahora = new Date();
+    const año = Number.isInteger(anio) && anio >= 2020 && anio <= 2100 ? anio : ahora.getUTCFullYear();
+    const desde = new Date(Date.UTC(año, 0, 1));
+    const hasta = new Date(Date.UTC(año + 1, 0, 1));
+    const res = await pool.query(
+      `SELECT c.id::int AS conductor_id, c.nombre, c.apellido, c.numero_taxi, c.tipo_registro,
+              v.matricula, v.marca,
+              COALESCE(SUM(a.importe_xaf) FILTER (WHERE a.tipo = 'recarga' AND a.importe_xaf > 0), 0)::bigint AS facturado_xaf,
+              count(a.id) FILTER (WHERE a.tipo = 'recarga' AND a.importe_xaf > 0)::int AS pagos,
+              max(a.creado_en) FILTER (WHERE a.tipo = 'recarga' AND a.importe_xaf > 0) AS ultimo_pago
+       FROM conductor c
+       JOIN monedero m ON m.conductor_id = c.id
+       LEFT JOIN apunte a ON a.monedero_id = m.id AND a.creado_en >= $1 AND a.creado_en < $2
+       LEFT JOIN vehiculo v ON v.conductor_id = c.id
+       GROUP BY c.id, c.nombre, c.apellido, c.numero_taxi, c.tipo_registro, v.matricula, v.marca
+       ORDER BY facturado_xaf DESC, c.numero_taxi NULLS LAST
+       LIMIT 500`,
+      [desde, hasta],
+    );
+    const filas = res.rows.map((f) => ({
+      conductorId: Number(f.conductor_id),
+      nombre: f.nombre as string,
+      apellido: f.apellido as string | null,
+      numeroTaxi: f.numero_taxi as string | null,
+      tipoRegistro: f.tipo_registro as string,
+      matricula: f.matricula as string | null,
+      marca: f.marca as string | null,
+      facturadoXaf: Number(f.facturado_xaf),
+      pagos: Number(f.pagos),
+      ultimoPago: f.ultimo_pago ? new Date(f.ultimo_pago).toISOString() : null,
+    }));
+    const totalXaf = filas.reduce((s, f) => s + f.facturadoXaf, 0);
+    return { anio: año, totalXaf, filas };
   });
 
   // Registro de propietarios (migración 087): cada dueño con sus datos y los
@@ -1716,6 +1786,66 @@ export function registrarRutasOperador(
       [q?.trim() || null],
     );
     return { pasajeros: filas.rows };
+  });
+
+  // Alta de pasajero por la central (migración 092). Igual que el alta de
+  // taxista: la central lo registra con el coche —aquí el teléfono— delante,
+  // sin esperar a que se registre solo. Nace con un dispositivo sintético y el
+  // teléfono dado por verificado (la central responde por él); si el teléfono
+  // ya tenía dispositivo, se reutiliza. Devuelve además un «vale» (código
+  // corto) para que esa persona reclame la cuenta en su propio móvil cuando se
+  // instale la app, sin depender del SMS a Guinea.
+  app.post('/api/operador/pasajeros', async (req) => {
+    await exigirPermiso(req, 'despacho');
+    const cuerpo = (req.body ?? {}) as { telefono?: string; nombre?: string; correo?: string };
+    const telefono = normalizarTelefono(cuerpo.telefono?.trim());
+    if (!telefono) {
+      throw errorHttp(400, `Hace falta el teléfono del pasajero (recibido: «${cuerpo.telefono ?? ''}»).`);
+    }
+    const nombre = cuerpo.nombre?.trim() || null;
+    const correo = cuerpo.correo?.trim() || null;
+
+    const resultado = await enTransaccion(pool, async (cliente) => {
+      // ¿Ya existe ese teléfono? Se reutiliza su dispositivo (salvo bloqueado).
+      const existente = await cliente.query(
+        `SELECT d.id, d.bloqueado_en
+         FROM perfil_cliente pc JOIN dispositivo d ON d.id = pc.dispositivo_id
+         WHERE pc.telefono = $1 AND pc.telefono_vigente AND d.tipo = 'cliente'
+         ORDER BY d.id DESC LIMIT 1`,
+        [telefono],
+      );
+      if ((existente.rowCount ?? 0) > 0) {
+        if (existente.rows[0].bloqueado_en !== null) {
+          throw errorHttp(403, 'Ese teléfono está bloqueado por incidencias. Revisa su ficha en Pasajeros.');
+        }
+        return { dispositivoId: existente.rows[0].id as number, yaExistia: true };
+      }
+      const dispositivo = await cliente.query(
+        `INSERT INTO dispositivo (uuid_persistente, tipo) VALUES ($1, 'cliente') RETURNING id`,
+        [randomUUID()],
+      );
+      const dispositivoId = Number(dispositivo.rows[0].id);
+      await cliente.query(
+        `INSERT INTO perfil_cliente (dispositivo_id, telefono, nombre, correo, telefono_verificado_en)
+         VALUES ($1, $2, $3, $4, now())`,
+        [dispositivoId, telefono, nombre, correo],
+      );
+      return { dispositivoId, yaExistia: false };
+    });
+
+    // El vale para reclamar la cuenta en su propio móvil (como el SMS, pero sin
+    // SMS). No bloquea el alta si falla.
+    let vale: { codigo: string; caducaEn: string } | null = null;
+    try {
+      const v = await emitirVale(pool, telefono, uuidDesde(req));
+      vale = { codigo: v.codigo, caducaEn: v.caducaEn.toISOString() };
+    } catch { /* el alta vale aunque el vale no salga */ }
+
+    await apuntarCambio(
+      req, 'pasajero', `${resultado.dispositivoId}.alta`, null,
+      [telefono, nombre].filter(Boolean).join(' · '),
+    );
+    return { dispositivoId: resultado.dispositivoId, yaExistia: resultado.yaExistia, vale };
   });
 
   app.get('/api/operador/pasajeros/:dispositivoId', async (req) => {
