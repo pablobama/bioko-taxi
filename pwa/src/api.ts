@@ -566,6 +566,8 @@ export interface PropietarioFicha {
   apellido: string;
   telefono: string;
   dip: string;
+  // Si tiene foto subida (migración 093), para decidir si pedirla.
+  tiene_foto: boolean;
 }
 
 export interface FichaConductorOperador {
@@ -585,6 +587,8 @@ export interface FichaConductorOperador {
   color: string | null;
   carroceria: string | null;
   plazas: number | null;
+  // El bastidor (migración 092). Null si no se anotó.
+  vin: string | null;
   aire_acondicionado: boolean;
   seguro: boolean;
   es_agente: boolean;
@@ -1993,6 +1997,19 @@ export async function bajarVozRadio(
 export async function bajarFotoConductor(id: number): Promise<Blob | null> {
   await asegurarSecreto();
   const respuesta = await fetch(`/api/operador/conductores/${id}/foto`, {
+    headers: {
+      'x-dispositivo': uuidDispositivo(),
+      ...(secretoDispositivo() !== null ? { 'x-secreto': secretoDispositivo()! } : {}),
+    },
+  });
+  if (!respuesta.ok) return null;
+  return respuesta.blob();
+}
+
+// La foto del dueño (migración 093), igual que la del taxista.
+export async function bajarFotoPropietario(id: number): Promise<Blob | null> {
+  await asegurarSecreto();
+  const respuesta = await fetch(`/api/operador/propietarios/${id}/foto`, {
     headers: {
       'x-dispositivo': uuidDispositivo(),
       ...(secretoDispositivo() !== null ? { 'x-secreto': secretoDispositivo()! } : {}),

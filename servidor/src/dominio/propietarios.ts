@@ -85,6 +85,8 @@ export interface PropietarioListado {
   apellido: string;
   telefono: string;
   dip: string;
+  // Si tiene foto subida (migración 093), para decidir si pedirla.
+  tiene_foto: boolean;
 }
 
 // El dueño de un coche, para enseñarlo en la ficha del conductor.
@@ -93,7 +95,7 @@ export async function propietarioDeVehiculo(
   conductorId: number,
 ): Promise<PropietarioListado | null> {
   const res = await cliente.query(
-    `SELECT p.id, p.nombre, p.apellido, p.telefono, p.dip
+    `SELECT p.id, p.nombre, p.apellido, p.telefono, p.dip, (p.foto IS NOT NULL) AS tiene_foto
      FROM vehiculo v JOIN propietario p ON p.id = v.propietario_id
      WHERE v.conductor_id = $1`,
     [conductorId],
@@ -106,5 +108,6 @@ export async function propietarioDeVehiculo(
     apellido: f.apellido,
     telefono: f.telefono,
     dip: f.dip,
+    tiene_foto: f.tiene_foto === true,
   };
 }

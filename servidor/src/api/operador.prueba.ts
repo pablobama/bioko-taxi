@@ -1136,9 +1136,11 @@ test('alta con dueño nuevo: el alta devuelve su id y se le puede subir y leer l
       duenoConduce: false,
       propietario: { nombre: 'Due', apellido: 'Ño', telefono: telefonoUnico(), dip: dipUnico() },
       matricula: `MB-${telefono.slice(-5)}F`, marca: 'Toyota', carroceria: 'turismo',
+      vin: 'VIN-FICHA-1',
     },
   });
   assert.equal(res.statusCode, 200, res.body);
+  const conductorId = Number(res.json().conductorId);
   const propietarioId = Number(res.json().propietarioId);
   assert.ok(Number.isInteger(propietarioId) && propietarioId > 0, 'el alta devuelve el id del dueño');
 
@@ -1157,6 +1159,16 @@ test('alta con dueño nuevo: el alta devuelve su id y se le puede subir y leer l
   assert.equal(leida.statusCode, 200);
   assert.equal(leida.headers['content-type'], 'image/png');
   assert.ok(leida.rawPayload.equals(imagen), 'devuelve la misma imagen que se subió');
+
+  // La ficha del conductor trae ahora el VIN y si el dueño tiene foto, que es
+  // lo que la mini-ficha del recorrido usa para pintarlos.
+  const fichaRes = await app.inject({
+    method: 'GET', url: `/api/operador/conductores/${conductorId}`, headers: cabeceras(UUID_OPERADOR),
+  });
+  assert.equal(fichaRes.statusCode, 200, fichaRes.body);
+  const ficha = fichaRes.json();
+  assert.equal(ficha.vin, 'VIN-FICHA-1');
+  assert.equal(ficha.propietario.tiene_foto, true, 'la ficha dice que el dueño tiene foto');
 });
 
 test('alta de pasajero por el operador: verificado y con vale (migración 092)', async () => {

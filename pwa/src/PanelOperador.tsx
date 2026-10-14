@@ -20,7 +20,7 @@ import {
   type ViajeVivo,
   type ViajeOperador, type ViajeResumenOperador, type ZonaOperador,
 } from './api';
-import { abrirEventosOperador, bajarFotoConductor, esIos } from './api';
+import { abrirEventosOperador, bajarFotoConductor, bajarFotoPropietario, esIos } from './api';
 import { ESTILO_CATEGORIA } from './categorias';
 import { metrosEntre } from './geo';
 import { crearT } from './i18n';
@@ -4631,9 +4631,10 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   // La ficha del taxista del recorrido (conductor, coche y dueño), cargada al
   // abrirlo para que la mini-ficha plegable del panel abra al instante. Plegada
   // de serie, para no tapar el mapa.
-  const [fichaExpandida, setFichaExpandida] = useState(false);
+  const [fichaExpandida, setFichaExpandida] = useState(true);
   const [fichaRecorrido, setFichaRecorrido] = useState<FichaConductorOperador | null>(null);
   const [fotoRecorrido, setFotoRecorrido] = useState<string | null>(null);
+  const [fotoDuenoRecorrido, setFotoDuenoRecorrido] = useState<string | null>(null);
   // La tarjeta de un punto tocado del recorrido: barrio y hora de ese paso.
   const [puntoInfo, setPuntoInfo] = useState<
     { lat: number; lng: number; barrio: string | null; hora: string; velocidadKmh: number | null } | null
@@ -4786,21 +4787,27 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
     return () => { vivo = false; };
   }, [conductorDelRecorrido]);
 
-  // La foto, en cambio, solo se baja al EXPANDIR la ficha: pesa, y en una red
-  // que se paga por megabyte no se gasta en una foto que a lo mejor nadie abre.
-  // Se libera al plegar o al cambiar de taxista.
+  // Las fotos (del taxista y del dueño) solo se bajan al EXPANDIR la ficha:
+  // pesan, y en una red que se paga por megabyte no se gastan en algo que a lo
+  // mejor nadie abre. Se liberan al plegar o al cambiar de taxista.
   useEffect(() => {
     setFotoRecorrido(null);
-    if (!fichaExpandida || fichaRecorrido === null || !fichaRecorrido.tiene_foto) return undefined;
-    const id = fichaRecorrido.id;
+    setFotoDuenoRecorrido(null);
+    if (!fichaExpandida || fichaRecorrido === null) return undefined;
     let vivo = true;
-    let url: string | null = null;
-    bajarFotoConductor(id)
-      .then((blob) => {
-        if (vivo && blob !== null) { url = URL.createObjectURL(blob); setFotoRecorrido(url); }
-      })
-      .catch(() => undefined);
-    return () => { vivo = false; if (url !== null) URL.revokeObjectURL(url); };
+    const urls: string[] = [];
+    if (fichaRecorrido.tiene_foto) {
+      bajarFotoConductor(fichaRecorrido.id).then((blob) => {
+        if (vivo && blob !== null) { const u = URL.createObjectURL(blob); urls.push(u); setFotoRecorrido(u); }
+      }).catch(() => undefined);
+    }
+    const dueno = fichaRecorrido.propietario;
+    if (dueno !== null && dueno.tiene_foto) {
+      bajarFotoPropietario(dueno.id).then((blob) => {
+        if (vivo && blob !== null) { const u = URL.createObjectURL(blob); urls.push(u); setFotoDuenoRecorrido(u); }
+      }).catch(() => undefined);
+    }
+    return () => { vivo = false; urls.forEach((u) => URL.revokeObjectURL(u)); };
   }, [fichaExpandida, fichaRecorrido]);
 
   async function verViajeEnMapa(viaje: ViajeOperador) {
@@ -5603,12 +5610,21 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                           fichaRecorrido.seguro ? 'seguro' : null,
                         ].filter(Boolean).join(' · ') || 'sin coche'}
                       </div>
-                      {fichaRecorrido.propietario !== null && (
+                      {fichaRecorrido.vin !== null && fichaRecorrido.vin !== '' && (
                         <div className="recorrido-ficha-linea">
-                          <span className="recorrido-ficha-etq">Dueño</span>
-                          {fichaRecorrido.propietario.nombre} {fichaRecorrido.propietario.apellido}
-                          {' · '}{fichaRecorrido.propietario.telefono}
-                          {' · DIP '}{fichaRecorrido.propietario.dip}
+                          <span className="recorrido-ficha-etq">VIN</span>{fichaRecorrido.vin}
+                        </div>
+                      )}
+                      {fichaRecorrido.propietario !== null && (
+                        <div className="recorrido-ficha-persona">
+                          {fotoDuenoRecorrido !== null
+                            ? <img src={fotoDuenoRecorrido} alt="" className="recorrido-ficha-foto" />
+                            : <span className="recorrido-ficha-foto recorrido-ficha-foto-vacia">🙂</span>}
+                          <div className="recorrido-ficha-datos">
+                            <span className="recorrido-ficha-etq">Dueño</span>
+                            <b>{fichaRecorrido.propietario.nombre} {fichaRecorrido.propietario.apellido}</b>
+                            <small>{fichaRecorrido.propietario.telefono} · DIP {fichaRecorrido.propietario.dip}</small>
+                          </div>
                         </div>
                       )}
                     </div>

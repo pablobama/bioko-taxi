@@ -1198,7 +1198,7 @@ export function registrarRutasOperador(
       `SELECT c.id, c.nombre, c.apellido, c.dip, c.telefono, c.correo, c.estado_verificacion,
               (c.foto IS NOT NULL) AS tiene_foto,
               c.numero_taxi, c.suscrito_hasta, c.es_agente, c.recibe_en_cualquier_zona,
-              v.matricula, v.marca, v.color, v.carroceria, v.plazas,
+              v.matricula, v.marca, v.color, v.carroceria, v.plazas, v.vin,
               v.aire_acondicionado, v.seguro,
               p.estado AS presencia,
               COALESCE(sm.saldo_xaf, 0)::int AS saldo_xaf
