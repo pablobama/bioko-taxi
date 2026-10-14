@@ -5376,9 +5376,70 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                 })()}
               </div>
 
+              {/* Los controles del recorrido, agrupados con sus cifras en el
+                  panel de la izquierda (antes saturaban la barra de arriba):
+                  de quién es, el periodo, el rango a medida, reproducir y
+                  quitar. */}
+              {recorridoMapa !== null && (
+                <div className="recorrido-controles">
+                  {recorridoMapa.etiqueta ? (
+                    <button
+                      type="button" className="recorrido-quien"
+                      onClick={() => {
+                        setEnGente('conductores');
+                        setFichaConductor(recorridoMapa.conductorId);
+                        setSeccion('gente');
+                        setHojaAbierta(true);
+                      }}
+                    >
+                      {recorridoMapa.etiqueta.numero !== null && <b>{recorridoMapa.etiqueta.numero}</b>}
+                      {recorridoMapa.etiqueta.matricula ?? 'sin matrícula'}
+                      <small>{recorridoMapa.etiqueta.nombre} · ver ficha</small>
+                    </button>
+                  ) : (
+                    <small className="recorrido-controles-tit">Recorrido</small>
+                  )}
+                  <div className="recorrido-controles-botones">
+                    {(['dia', 'semana', 'mes'] as const).map((per) => (
+                      <button
+                        key={per} type="button"
+                        className={'periodo' in recorridoMapa.rango && recorridoMapa.rango.periodo === per
+                          ? 'recorrido-per activo' : 'recorrido-per'}
+                        onClick={() => verRecorridoConductor(
+                          recorridoMapa.conductorId, { periodo: per }, recorridoMapa.etiqueta,
+                        )}
+                      >
+                        {per === 'dia' ? 'Hoy' : per === 'semana' ? 'Semana' : 'Mes'}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className={!('periodo' in recorridoMapa.rango) ? 'recorrido-per activo' : 'recorrido-per'}
+                      onClick={() => setPanelRango((v) => !v)}
+                    >
+                      Rango…
+                    </button>
+                    {recorridoMapa.tramos.length > 0 && (
+                      <button
+                        type="button" className="recorrido-per"
+                        onClick={() => setAnimacion((a) => (a === null ? 0 : null))}
+                      >
+                        {animacion === null ? '▶ Reproducir' : '⏹ Parar'}
+                      </button>
+                    )}
+                    <button
+                      type="button" className="recorrido-quitar"
+                      onClick={() => { setRecorridoMapa(null); setPuntoInfo(null); setAnimacion(null); setPanelRango(false); }}
+                    >
+                      quitar ✕
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Rango a medida: fechas desde/hasta y, opcional, una franja de
                   horas del día (la hora punta, la noche…). Se abre con «Rango…»
-                  del chip del recorrido. */}
+                  de los controles del recorrido. */}
               {panelRango && recorridoMapa !== null && (
                 <form
                   className="recorrido-rango"
@@ -5530,64 +5591,9 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                 <small>{trazas.size === 1 ? 'viaje dibujado · quitar' : 'viajes dibujados · quitar'}</small>
               </button>
             )}
-            {recorridoMapa !== null && (
-              <span className="mesa-chip mesa-chip-recorrido">
-                {/* De quién es, cuando se abrió desde el buscador. La matrícula
-                    es un botón: abre su ficha completa sin perder el recorrido. */}
-                {recorridoMapa.etiqueta ? (
-                  <button
-                    type="button" className="recorrido-quien"
-                    onClick={() => {
-                      setEnGente('conductores');
-                      setFichaConductor(recorridoMapa.conductorId);
-                      setSeccion('gente');
-                      setHojaAbierta(true);
-                    }}
-                  >
-                    {recorridoMapa.etiqueta.numero !== null && <b>{recorridoMapa.etiqueta.numero}</b>}
-                    {recorridoMapa.etiqueta.matricula ?? 'sin matrícula'}
-                    <small>{recorridoMapa.etiqueta.nombre} · ver ficha</small>
-                  </button>
-                ) : (
-                  <small>Recorrido</small>
-                )}
-                {(['dia', 'semana', 'mes'] as const).map((per) => (
-                  <button
-                    key={per} type="button"
-                    className={'periodo' in recorridoMapa.rango && recorridoMapa.rango.periodo === per
-                      ? 'recorrido-per activo' : 'recorrido-per'}
-                    onClick={() => verRecorridoConductor(
-                      recorridoMapa.conductorId, { periodo: per }, recorridoMapa.etiqueta,
-                    )}
-                  >
-                    {per === 'dia' ? 'Hoy' : per === 'semana' ? 'Semana' : 'Mes'}
-                  </button>
-                ))}
-                {/* Rango a medida de fechas y horas. */}
-                <button
-                  type="button"
-                  className={!('periodo' in recorridoMapa.rango) ? 'recorrido-per activo' : 'recorrido-per'}
-                  onClick={() => setPanelRango((v) => !v)}
-                >
-                  Rango…
-                </button>
-                {/* Reproducir la trayectoria: un punto que la recorre en orden. */}
-                {recorridoMapa.tramos.length > 0 && (
-                  <button
-                    type="button" className="recorrido-per"
-                    onClick={() => setAnimacion((a) => (a === null ? 0 : null))}
-                  >
-                    {animacion === null ? '▶ Reproducir' : '⏹ Parar'}
-                  </button>
-                )}
-                <button
-                  type="button" className="recorrido-quitar"
-                  onClick={() => { setRecorridoMapa(null); setPuntoInfo(null); setAnimacion(null); setPanelRango(false); }}
-                >
-                  quitar ✕
-                </button>
-              </span>
-            )}
+            {/* Los controles del recorrido ya NO viven aquí (12/10): saturaban
+                el tope mezclados con el estado en vivo. Están en el panel de la
+                izquierda, con sus cifras, su leyenda y sus salidas. */}
             {viajeEnMapa !== null && (
               <span className="mesa-chip mesa-chip-recorrido">
                 <small>

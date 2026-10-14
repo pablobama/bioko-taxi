@@ -3066,6 +3066,33 @@ button.importe.elegido-importe {
   font-weight: 700;
 }
 
+/* Los controles del recorrido, ya en el panel de la izquierda (12/10) y no en
+   la barra de arriba: una tarjeta translúcida como las cifras, con quién es
+   arriba y los botones (periodo, rango, reproducir, quitar) debajo. */
+.recorrido-controles {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: max-content;
+  max-width: 300px;
+  padding: 8px 10px;
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  background: rgba(16, 16, 20, 0.78);
+}
+.recorrido-controles-tit {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--humo);
+}
+.recorrido-controles-botones {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 4px;
+}
+
 /* Las cifras del recorrido, superpuestas sobre el mapa: velocidad media,
    tiempo, kilómetros y clientes llevados. Translúcidas y en una esquina, para
    no tapar el dibujo. */
