@@ -14,7 +14,7 @@ import {
   type FacturacionOperador,
   type ParametroOperador, type PasajeroOperador, type PeriodoRecorrido, type PermisoOperador,
   type RangoRecorrido,
-  type RecargaOperador, type RecorridoOperador, type ReferenciaOperador, type SalidaRecorrido,
+  type RecargaOperador, type RecorridoOperador, type ReferenciaOperador,
   type PropietarioFicha, type PropietarioRegistro, type SaludOperador, type SinOfertaViva, type SolicitudCentral,
   type TaxiVivo, type TransicionOperador, type VehiculoRegistro,
   type ViajeVivo,
@@ -4627,10 +4627,13 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
       metros: number; segundosEnMovimiento: number;
       velocidadAlVolanteKmh: number | null; clientesLlevados: number;
     };
-    // Un renglón por salida (087): para LEER el recorrido además de verlo —a
-    // qué hora salió, cuánto duró y cuánto anduvo cada tramo.
-    salidas: SalidaRecorrido[];
   } | null>(null);
+  // La ficha del taxista del recorrido (conductor, coche y dueño), cargada al
+  // abrirlo para que la mini-ficha plegable del panel abra al instante. Plegada
+  // de serie, para no tapar el mapa.
+  const [fichaExpandida, setFichaExpandida] = useState(false);
+  const [fichaRecorrido, setFichaRecorrido] = useState<FichaConductorOperador | null>(null);
+  const [fotoRecorrido, setFotoRecorrido] = useState<string | null>(null);
   // La tarjeta de un punto tocado del recorrido: barrio y hora de ese paso.
   const [puntoInfo, setPuntoInfo] = useState<
     { lat: number; lng: number; barrio: string | null; hora: string; velocidadKmh: number | null } | null
@@ -4677,7 +4680,6 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
           velocidadAlVolanteKmh: r.velocidadAlVolanteKmh,
           clientesLlevados: r.clientesLlevados,
         },
-        salidas: r.salidas,
       });
       setPuntoInfo(null);
       setAnimacion(null);
@@ -4769,6 +4771,37 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
     }, 50);
     return () => clearInterval(reloj);
   }, [animando, recorridoMapa]);
+
+  // La ficha del taxista del recorrido. El JSON se precarga al abrir el
+  // recorrido (es barato) para que la mini-ficha abra sin esperar; se rehace
+  // solo al cambiar de taxista, no de periodo.
+  const conductorDelRecorrido = recorridoMapa?.conductorId ?? null;
+  useEffect(() => {
+    if (conductorDelRecorrido === null) { setFichaRecorrido(null); return undefined; }
+    let vivo = true;
+    setFichaRecorrido(null);
+    api.fichaConductorOperador(conductorDelRecorrido)
+      .then((f) => { if (vivo) setFichaRecorrido(f); })
+      .catch(() => { if (vivo) setFichaRecorrido(null); });
+    return () => { vivo = false; };
+  }, [conductorDelRecorrido]);
+
+  // La foto, en cambio, solo se baja al EXPANDIR la ficha: pesa, y en una red
+  // que se paga por megabyte no se gasta en una foto que a lo mejor nadie abre.
+  // Se libera al plegar o al cambiar de taxista.
+  useEffect(() => {
+    setFotoRecorrido(null);
+    if (!fichaExpandida || fichaRecorrido === null || !fichaRecorrido.tiene_foto) return undefined;
+    const id = fichaRecorrido.id;
+    let vivo = true;
+    let url: string | null = null;
+    bajarFotoConductor(id)
+      .then((blob) => {
+        if (vivo && blob !== null) { url = URL.createObjectURL(blob); setFotoRecorrido(url); }
+      })
+      .catch(() => undefined);
+    return () => { vivo = false; if (url !== null) URL.revokeObjectURL(url); };
+  }, [fichaExpandida, fichaRecorrido]);
 
   async function verViajeEnMapa(viaje: ViajeOperador) {
     try {
@@ -5527,23 +5560,59 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                 </div>
               )}
 
-              {/* Las salidas, para LEER el recorrido además de verlo: a qué hora
-                  arrancó cada tramo, cuánto duró y cuánto anduvo. Las paradas no
-                  se listan —no son salidas—; de la más reciente a la primera. */}
-              {recorridoMapa !== null && recorridoMapa.salidas.some((s) => !s.parado) && (
-                <div className="recorrido-salidas">
-                  <h5>Salidas</h5>
-                  <ul>
-                    {recorridoMapa.salidas
-                      .filter((s) => !s.parado)
-                      .slice(-12).reverse()
-                      .map((s, i) => (
-                        <li key={`${s.desde}-${i}`}>
-                          <b>{soloHora(s.desde)}</b>
-                          <span>{duracion(s.segundos)} · {(s.metros / 1000).toFixed(1)} km</span>
-                        </li>
-                      ))}
-                  </ul>
+              {/* La ficha del conductor, su coche y el dueño (si lo tiene),
+                  plegable para no tapar el mapa. Plegada de serie —ahorra
+                  espacio— y se abre cuando interesa mirar quién es. */}
+              {recorridoMapa !== null && (
+                <div className="recorrido-ficha">
+                  <button
+                    type="button" className="recorrido-ficha-toggle"
+                    aria-expanded={fichaExpandida}
+                    onClick={() => setFichaExpandida((v) => !v)}
+                  >
+                    Ficha {fichaExpandida ? '▴' : '▾'}
+                  </button>
+                  {fichaExpandida && (fichaRecorrido === null ? (
+                    <small className="recorrido-ficha-cargando">Cargando ficha…</small>
+                  ) : (
+                    <div className="recorrido-ficha-cuerpo">
+                      <div className="recorrido-ficha-persona">
+                        {fotoRecorrido !== null
+                          ? <img src={fotoRecorrido} alt="" className="recorrido-ficha-foto" />
+                          : <span className="recorrido-ficha-foto recorrido-ficha-foto-vacia">🙂</span>}
+                        <div className="recorrido-ficha-datos">
+                          <b>{fichaRecorrido.nombre}{fichaRecorrido.apellido ? ` ${fichaRecorrido.apellido}` : ''}</b>
+                          <small>{fichaRecorrido.telefono}</small>
+                          <small>
+                            {ETIQUETA_ESTADO[fichaRecorrido.estado_verificacion] ?? fichaRecorrido.estado_verificacion}
+                            {' · '}{fichaRecorrido.saldo_xaf.toLocaleString('es-ES')} XAF
+                            {fichaRecorrido.dip !== null && ` · DIP ${fichaRecorrido.dip}`}
+                          </small>
+                        </div>
+                      </div>
+                      <div className="recorrido-ficha-linea">
+                        <span className="recorrido-ficha-etq">Coche</span>
+                        {[
+                          fichaRecorrido.numero_taxi !== null ? `nº ${fichaRecorrido.numero_taxi}` : null,
+                          fichaRecorrido.matricula,
+                          fichaRecorrido.marca,
+                          fichaRecorrido.color,
+                          fichaRecorrido.carroceria,
+                          fichaRecorrido.plazas !== null ? `${fichaRecorrido.plazas} plazas` : null,
+                          fichaRecorrido.aire_acondicionado ? 'A/A' : null,
+                          fichaRecorrido.seguro ? 'seguro' : null,
+                        ].filter(Boolean).join(' · ') || 'sin coche'}
+                      </div>
+                      {fichaRecorrido.propietario !== null && (
+                        <div className="recorrido-ficha-linea">
+                          <span className="recorrido-ficha-etq">Dueño</span>
+                          {fichaRecorrido.propietario.nombre} {fichaRecorrido.propietario.apellido}
+                          {' · '}{fichaRecorrido.propietario.telefono}
+                          {' · DIP '}{fichaRecorrido.propietario.dip}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

@@ -3368,41 +3368,83 @@ button.importe.elegido-importe {
 }
 .recorrido-leyenda i + i { margin-left: -4px; }
 
-/* Las salidas: una lista corta y legible, con su propio scroll para no empujar
-   el mapa cuando hay muchas. */
-.recorrido-salidas {
+/* La mini-ficha del recorrido: plegable para no tapar el mapa. El botón es la
+   pestaña; el cuerpo, una tarjeta como las demás, con la persona (foto +
+   datos), el coche y el dueño. */
+.recorrido-ficha {
   width: max-content;
-  max-width: 260px;
+  max-width: 300px;
+}
+.recorrido-ficha-toggle {
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  background: rgba(16, 16, 20, 0.78);
+  color: var(--humo);
+  font-family: inherit;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+.recorrido-ficha-cargando {
+  display: block;
+  padding: 6px 2px;
+  color: var(--humo);
+  font-size: 0.74rem;
+}
+.recorrido-ficha-cuerpo {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   padding: 8px 10px;
   border: 1px solid var(--borde);
   border-radius: 10px;
   background: rgba(16, 16, 20, 0.78);
 }
-.recorrido-salidas h5 {
-  margin: 0 0 4px;
-  font-size: 0.66rem;
+.recorrido-ficha-persona {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.recorrido-ficha-foto {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--tinta);
+}
+.recorrido-ficha-foto-vacia {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+}
+.recorrido-ficha-datos {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.recorrido-ficha-datos b { color: var(--hueso); font-size: 0.84rem; }
+.recorrido-ficha-datos small { color: var(--humo); font-size: 0.72rem; }
+.recorrido-ficha-linea {
+  font-size: 0.74rem;
+  line-height: 1.35;
+  color: var(--hueso);
+}
+.recorrido-ficha-etq {
+  display: inline-block;
+  margin-right: 5px;
+  font-size: 0.6rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--humo);
 }
-.recorrido-salidas ul {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 168px;
-  overflow-y: auto;
-}
-.recorrido-salidas li {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 0.76rem;
-}
-.recorrido-salidas li b { color: var(--hueso); font-weight: 700; }
-.recorrido-salidas li span { color: var(--humo); }
 
 .mesa-chip-aviso b {
   color: var(--ambar-claro);
