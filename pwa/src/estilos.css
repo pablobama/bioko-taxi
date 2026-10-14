@@ -3387,13 +3387,28 @@ button.importe.elegido-importe {
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 60;
-  width: min(92vw, 400px);
+  width: min(94vw, 520px);
   max-width: none;
-  max-height: 86dvh;
+  max-height: 88dvh;
   overflow-y: auto;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
   background: rgba(16, 16, 20, 0.98);
 }
+/* Centrada se lee a distancia: todo un punto más grande que acoplada. */
+.centrada .recorrido-ficha-barra { padding: 11px 12px 11px 16px; }
+.centrada .recorrido-ficha-titulo { font-size: 0.72rem; }
+.centrada .recorrido-ficha-icono { font-size: 1.1rem; padding: 5px 9px; }
+.centrada .recorrido-ficha-cuerpo { gap: 13px; padding: 15px 16px 17px; }
+.centrada .recorrido-ficha-persona { gap: 14px; }
+.centrada .recorrido-ficha-nombre { font-size: 1.2rem; }
+.centrada .recorrido-ficha-nombre small { font-size: 0.78rem; }
+.centrada .recorrido-ficha-chip { font-size: 0.82rem; padding: 2px 10px; }
+.centrada .recorrido-ficha-tel { font-size: 0.88rem; }
+.centrada .recorrido-ficha-datos > b { font-size: 1.05rem; }
+.centrada .recorrido-ficha-datos > small { font-size: 0.86rem; }
+.centrada .recorrido-ficha-seccion { font-size: 0.94rem; padding-top: 11px; }
+.centrada .recorrido-ficha-etq { font-size: 0.68rem; }
+.centrada .recorrido-ficha-dueno { padding-top: 13px; }
 .recorrido-ficha-barra {
   display: flex;
   align-items: center;
@@ -3453,7 +3468,7 @@ button.importe.elegido-importe {
   background: var(--tinta);
   border: 1px solid var(--borde);
 }
-.centrada .recorrido-ficha-foto { width: 64px; height: 64px; }
+.centrada .recorrido-ficha-foto { width: 92px; height: 92px; border-radius: 12px; }
 .recorrido-ficha-foto-vacia {
   display: flex;
   align-items: center;
