@@ -3368,82 +3368,167 @@ button.importe.elegido-importe {
 }
 .recorrido-leyenda i + i { margin-left: -4px; }
 
-/* La mini-ficha del recorrido: plegable para no tapar el mapa. El botón es la
-   pestaña; el cuerpo, una tarjeta como las demás, con la persona (foto +
-   datos), el coche y el dueño. */
+/* La ficha del recorrido: una tarjeta con cabecera (plegar / centrar), la
+   persona con su foto, el coche y —si es otra persona— el dueño. Acoplada a su
+   lado por defecto; centrada y en primer plano cuando se pide. */
 .recorrido-ficha {
   width: max-content;
   max-width: 300px;
-}
-.recorrido-ficha-toggle {
-  width: 100%;
-  text-align: left;
-  padding: 6px 10px;
   border: 1px solid var(--borde);
-  border-radius: 10px;
-  background: rgba(16, 16, 20, 0.78);
-  color: var(--humo);
-  font-family: inherit;
-  font-size: 0.66rem;
+  border-radius: 12px;
+  background: rgba(14, 14, 18, 0.9);
+  overflow: hidden;
+}
+/* Centrada: flota en medio de la pantalla, más grande y por encima de todo,
+   para leerla a gusto. El mapa se sigue viendo detrás, atenuado por la sombra. */
+.recorrido-ficha.centrada {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 60;
+  width: min(92vw, 400px);
+  max-width: none;
+  max-height: 86dvh;
+  overflow-y: auto;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+  background: rgba(16, 16, 20, 0.98);
+}
+.recorrido-ficha-barra {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 8px 7px 11px;
+  border-bottom: 1px solid var(--borde);
+}
+.recorrido-ficha-titulo {
+  font-size: 0.64rem;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
+  color: var(--humo);
+  font-weight: 700;
+}
+.recorrido-ficha-acciones {
+  display: flex;
+  gap: 2px;
+}
+.recorrido-ficha-icono {
+  border: none;
+  background: none;
+  color: var(--humo);
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 7px;
   cursor: pointer;
+}
+.recorrido-ficha-icono:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--hueso);
 }
 .recorrido-ficha-cargando {
   display: block;
-  padding: 6px 2px;
+  padding: 10px 11px;
   color: var(--humo);
   font-size: 0.74rem;
 }
 .recorrido-ficha-cuerpo {
-  margin-top: 6px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
-  border: 1px solid var(--borde);
-  border-radius: 10px;
-  background: rgba(16, 16, 20, 0.78);
+  gap: 9px;
+  padding: 10px 11px 11px;
 }
 .recorrido-ficha-persona {
   display: flex;
-  gap: 8px;
-  align-items: center;
+  gap: 10px;
+  align-items: flex-start;
 }
 .recorrido-ficha-foto {
-  width: 44px;
-  height: 44px;
+  width: 52px;
+  height: 52px;
   flex: 0 0 auto;
-  border-radius: 8px;
+  border-radius: 10px;
   object-fit: cover;
   background: var(--tinta);
+  border: 1px solid var(--borde);
 }
+.centrada .recorrido-ficha-foto { width: 64px; height: 64px; }
 .recorrido-ficha-foto-vacia {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.4rem;
+  font-size: 1.5rem;
 }
 .recorrido-ficha-datos {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 3px;
   min-width: 0;
 }
-.recorrido-ficha-datos b { color: var(--hueso); font-size: 0.84rem; }
-.recorrido-ficha-datos small { color: var(--humo); font-size: 0.72rem; }
-.recorrido-ficha-linea {
-  font-size: 0.74rem;
-  line-height: 1.35;
+.recorrido-ficha-datos > b { color: var(--hueso); font-size: 0.86rem; }
+.recorrido-ficha-datos > small { color: var(--humo); font-size: 0.72rem; }
+/* El nombre es un enlace a la ficha completa, sin parecer un botón: el «ver
+   ficha» pequeño debajo lo deja claro sin ruido. */
+.recorrido-ficha-nombre {
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
+  font-family: inherit;
+  color: var(--hueso);
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.recorrido-ficha-nombre small {
+  font-size: 0.64rem;
+  font-weight: 400;
+  color: var(--ambar-claro);
+}
+.recorrido-ficha-nombre:hover small { text-decoration: underline; }
+.recorrido-ficha-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 1px;
+}
+.recorrido-ficha-chip {
+  font-size: 0.68rem;
+  padding: 1px 7px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--borde);
   color: var(--hueso);
 }
+.recorrido-ficha-tel {
+  font-size: 0.72rem;
+  color: var(--humo);
+}
+.recorrido-ficha-seccion {
+  display: flex;
+  gap: 8px;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  color: var(--hueso);
+  padding-top: 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.recorrido-ficha-dueno {
+  padding-top: 9px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
 .recorrido-ficha-etq {
-  display: inline-block;
-  margin-right: 5px;
+  flex: 0 0 auto;
   font-size: 0.6rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--humo);
+  padding-top: 1px;
 }
 
 .mesa-chip-aviso b {

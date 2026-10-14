@@ -4632,6 +4632,9 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
   // abrirlo para que la mini-ficha plegable del panel abra al instante. Plegada
   // de serie, para no tapar el mapa.
   const [fichaExpandida, setFichaExpandida] = useState(true);
+  // Dónde se enseña la ficha: acoplada a su lado (por defecto) o centrada y en
+  // primer plano, para leerla a gusto sin el mapa de fondo compitiendo.
+  const [fichaCentrada, setFichaCentrada] = useState(false);
   const [fichaRecorrido, setFichaRecorrido] = useState<FichaConductorOperador | null>(null);
   const [fotoRecorrido, setFotoRecorrido] = useState<string | null>(null);
   const [fotoDuenoRecorrido, setFotoDuenoRecorrido] = useState<string | null>(null);
@@ -4802,7 +4805,9 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
       }).catch(() => undefined);
     }
     const dueno = fichaRecorrido.propietario;
-    if (dueno !== null && dueno.tiene_foto) {
+    // Solo si es OTRA persona: si conduce su propio coche, su foto ya es la del
+    // taxista y no se baja dos veces.
+    if (dueno !== null && dueno.tiene_foto && dueno.dip !== fichaRecorrido.dip) {
       bajarFotoPropietario(dueno.id).then((blob) => {
         if (vivo && blob !== null) { const u = URL.createObjectURL(blob); urls.push(u); setFotoDuenoRecorrido(u); }
       }).catch(() => undefined);
@@ -5422,23 +5427,8 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                   quitar. */}
               {recorridoMapa !== null && (
                 <div className="recorrido-controles">
-                  {recorridoMapa.etiqueta ? (
-                    <button
-                      type="button" className="recorrido-quien"
-                      onClick={() => {
-                        setEnGente('conductores');
-                        setFichaConductor(recorridoMapa.conductorId);
-                        setSeccion('gente');
-                        setHojaAbierta(true);
-                      }}
-                    >
-                      {recorridoMapa.etiqueta.numero !== null && <b>{recorridoMapa.etiqueta.numero}</b>}
-                      {recorridoMapa.etiqueta.matricula ?? 'sin matrícula'}
-                      <small>{recorridoMapa.etiqueta.nombre} · ver ficha</small>
-                    </button>
-                  ) : (
-                    <small className="recorrido-controles-tit">Recorrido</small>
-                  )}
+                  {/* Solo los filtros: de quién es el recorrido ya lo dice la
+                      ficha de abajo, así que aquí no se repite. */}
                   <div className="recorrido-controles-botones">
                     {(['dia', 'semana', 'mes'] as const).map((per) => (
                       <button
@@ -5567,18 +5557,33 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                 </div>
               )}
 
-              {/* La ficha del conductor, su coche y el dueño (si lo tiene),
-                  plegable para no tapar el mapa. Plegada de serie —ahorra
-                  espacio— y se abre cuando interesa mirar quién es. */}
+              {/* La ficha del conductor, su coche y el dueño. Dos botones: uno
+                  pliega, otro la CENTRA en primer plano para leerla a gusto o la
+                  devuelve a su lado. El dueño solo aparece si es OTRA persona
+                  —si conduce su propio coche, su ficha es la de arriba—. */}
               {recorridoMapa !== null && (
-                <div className="recorrido-ficha">
-                  <button
-                    type="button" className="recorrido-ficha-toggle"
-                    aria-expanded={fichaExpandida}
-                    onClick={() => setFichaExpandida((v) => !v)}
-                  >
-                    Ficha {fichaExpandida ? '▴' : '▾'}
-                  </button>
+                <div className={fichaCentrada ? 'recorrido-ficha centrada' : 'recorrido-ficha'}>
+                  <div className="recorrido-ficha-barra">
+                    <span className="recorrido-ficha-titulo">Ficha del taxi</span>
+                    <div className="recorrido-ficha-acciones">
+                      <button
+                        type="button" className="recorrido-ficha-icono"
+                        aria-label={fichaCentrada ? 'Llevar la ficha a un lado' : 'Centrar la ficha'}
+                        title={fichaCentrada ? 'A un lado' : 'Centrar'}
+                        onClick={() => { setFichaCentrada((v) => !v); setFichaExpandida(true); }}
+                      >
+                        {fichaCentrada ? '⤡' : '⤢'}
+                      </button>
+                      <button
+                        type="button" className="recorrido-ficha-icono"
+                        aria-label={fichaExpandida ? 'Plegar la ficha' : 'Desplegar la ficha'}
+                        aria-expanded={fichaExpandida}
+                        onClick={() => setFichaExpandida((v) => !v)}
+                      >
+                        {fichaExpandida ? '▴' : '▾'}
+                      </button>
+                    </div>
+                  </div>
                   {fichaExpandida && (fichaRecorrido === null ? (
                     <small className="recorrido-ficha-cargando">Cargando ficha…</small>
                   ) : (
@@ -5588,19 +5593,36 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                           ? <img src={fotoRecorrido} alt="" className="recorrido-ficha-foto" />
                           : <span className="recorrido-ficha-foto recorrido-ficha-foto-vacia">🙂</span>}
                         <div className="recorrido-ficha-datos">
-                          <b>{fichaRecorrido.nombre}{fichaRecorrido.apellido ? ` ${fichaRecorrido.apellido}` : ''}</b>
-                          <small>{fichaRecorrido.telefono}</small>
-                          <small>
-                            {ETIQUETA_ESTADO[fichaRecorrido.estado_verificacion] ?? fichaRecorrido.estado_verificacion}
-                            {' · '}{fichaRecorrido.saldo_xaf.toLocaleString('es-ES')} XAF
+                          <button
+                            type="button" className="recorrido-ficha-nombre"
+                            onClick={() => {
+                              setEnGente('conductores');
+                              setFichaConductor(recorridoMapa.conductorId);
+                              setSeccion('gente');
+                              setHojaAbierta(true);
+                            }}
+                          >
+                            {fichaRecorrido.nombre}{fichaRecorrido.apellido ? ` ${fichaRecorrido.apellido}` : ''}
+                            <small>ver ficha completa →</small>
+                          </button>
+                          <div className="recorrido-ficha-chips">
+                            {fichaRecorrido.numero_taxi !== null && (
+                              <span className="recorrido-ficha-chip">nº {fichaRecorrido.numero_taxi}</span>
+                            )}
+                            <span className="recorrido-ficha-chip">
+                              {ETIQUETA_ESTADO[fichaRecorrido.estado_verificacion] ?? fichaRecorrido.estado_verificacion}
+                            </span>
+                            <span className="recorrido-ficha-chip">{fichaRecorrido.saldo_xaf.toLocaleString('es-ES')} XAF</span>
+                          </div>
+                          <small className="recorrido-ficha-tel">
+                            {fichaRecorrido.telefono}
                             {fichaRecorrido.dip !== null && ` · DIP ${fichaRecorrido.dip}`}
                           </small>
                         </div>
                       </div>
-                      <div className="recorrido-ficha-linea">
+                      <div className="recorrido-ficha-seccion">
                         <span className="recorrido-ficha-etq">Coche</span>
-                        {[
-                          fichaRecorrido.numero_taxi !== null ? `nº ${fichaRecorrido.numero_taxi}` : null,
+                        <span>{[
                           fichaRecorrido.matricula,
                           fichaRecorrido.marca,
                           fichaRecorrido.color,
@@ -5608,15 +5630,17 @@ export default function PanelOperador({ modo = 'operador', alVolver }: {
                           fichaRecorrido.plazas !== null ? `${fichaRecorrido.plazas} plazas` : null,
                           fichaRecorrido.aire_acondicionado ? 'A/A' : null,
                           fichaRecorrido.seguro ? 'seguro' : null,
-                        ].filter(Boolean).join(' · ') || 'sin coche'}
+                        ].filter(Boolean).join(' · ') || 'sin coche'}</span>
                       </div>
                       {fichaRecorrido.vin !== null && fichaRecorrido.vin !== '' && (
-                        <div className="recorrido-ficha-linea">
-                          <span className="recorrido-ficha-etq">VIN</span>{fichaRecorrido.vin}
+                        <div className="recorrido-ficha-seccion">
+                          <span className="recorrido-ficha-etq">VIN</span>
+                          <span>{fichaRecorrido.vin}</span>
                         </div>
                       )}
-                      {fichaRecorrido.propietario !== null && (
-                        <div className="recorrido-ficha-persona">
+                      {fichaRecorrido.propietario !== null
+                        && fichaRecorrido.propietario.dip !== fichaRecorrido.dip && (
+                        <div className="recorrido-ficha-persona recorrido-ficha-dueno">
                           {fotoDuenoRecorrido !== null
                             ? <img src={fotoDuenoRecorrido} alt="" className="recorrido-ficha-foto" />
                             : <span className="recorrido-ficha-foto recorrido-ficha-foto-vacia">🙂</span>}
